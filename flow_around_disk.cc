@@ -133,42 +133,62 @@ public:
   ///  Output x, y, u, v, p, theta at Nplot^DIM plot points
   // Start of output function
   void output(std::ostream &outfile, const unsigned &nplot)
-    {    
-      //vector of local coordinates
-      Vector<double> s(Dim);
+    {
 
-      // get a pointer to the bulk element
-      ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(this->bulk_element_pt());
+      // Get pointer to assocated bulk element
+      ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(bulk_element_pt());
+   
+      // Elemental dimension
+      unsigned dim_el = dim();
+
+      unsigned dim_bulk = dim_el + 1;
+      
+      //Local coordinates
+      Vector<double> s(dim_el);
+
+      Vector<double> s_bulk(dim_bulk);
+   
+      //Eulerian coordinates
+      Vector<double> x(dim_bulk, 0.0);
+
+      // Velocity from bulk element
+      Vector<double> velocity(dim_bulk);
       
       // Tecplot header info
       outfile << this->tecplot_zone_string(nplot);
-   
+
       // Loop over plot points
       unsigned num_plot_points=this->nplot_points(nplot);
       for (unsigned iplot=0; iplot<num_plot_points; iplot++)
       {
 	// Get local coordinates of plot point
-	this->get_s_plot(iplot, nplot, s);
+	this->get_s_plot(iplot,nplot,s);
      
-	// Output the position of the plot point
-	for(unsigned i=0; i<Dim; i++) 
+	this->get_local_coordinate_in_bulk(s,s_bulk);
+     
+	//Get x position from bulk
+	bulk_el_pt->interpolated_x(s_bulk,x);
+	
+	bulk_el_pt->interpolated_u_nst(s_bulk,velocity);
+	
+	// output Eulerian coordinates
+	for(unsigned i=0; i<dim_bulk; i++)
 	{
-	  outfile << this->interpolated_x(s,i) << " ";
+	  outfile << x[i] << " ";
+	}
+
+	// output fluid velocities
+	for(unsigned i=0; i<dim_bulk; i++)
+	{
+	  outfile << velocity[i] << " ";
 	}
      
-	// Output the fluid velocities at the plot point
-	for(unsigned i=0; i<Dim; i++) 
-	{
-	  outfile << bulk_el_pt->interpolated_u_nst(s,i) << " ";
-	}
-     
-	// Output the fluid pressure at the plot point
-	outfile << bulk_el_pt->interpolated_p_nst(s)  << std::endl;
+	// Output the fluid pressure
+	outfile << bulk_el_pt->interpolated_p_nst(s_bulk) << std::endl;
       }
-      outfile << std::endl;
-   
-      // Write tecplot footer (e.g. FE connectivity lists)
+
       this->write_tecplot_zone_footer(outfile,nplot);
+      
     } //End of output function
    
 private:
@@ -176,7 +196,6 @@ private:
 };
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
-
 
 //=========================================================================
 /// Class that solves Navier-Stokes flow around a 2D disk using Gmsh mesh
@@ -201,12 +220,6 @@ public:
       }
       delete Outer_boundary_pt;
     }
-
-  // function to populate the vectors Elements_on_upper[lower]_disk_surface_pt
-  // with the elements which have at least one node on the disk.
-  // (These will be used when the plate nodes are duplicated, so that we
-  // know which elements need to be told that their node pointers have changed).
-  void identify_elements_on_upper_and_lower_disk_sufaces();
   
   /// Actions before adapt (empty)
   void actions_before_adapt()
@@ -240,7 +253,15 @@ private:
 
   /// Helper function to apply boundary conditions
   void apply_boundary_conditions();
- 
+
+  // function to populate the vectors Elements_on_upper[lower]_disk_surface_pt
+  // with the elements which have at least one node on the disk.
+  // (These will be used when the plate nodes are duplicated, so that we
+  // know which elements need to be told that their node pointers have changed).
+  void identify_elements_on_upper_and_lower_disk_sufaces();
+
+  void duplicate_plate_nodes_and_add_boundaries();
+  
 #ifdef DO_TETGEN
 
   /// Bulk mesh
@@ -274,10 +295,10 @@ private:
   unsigned Torus_region_id;
 
   /// First boundary ID for disk that is surrounded by torus
-  unsigned First_disk_with_torus_boundary_id;
+  unsigned First_disk_boundary_id;
  
   /// Last boundary ID for disk that is surrounded by torus
-  unsigned Last_disk_with_torus_boundary_id;
+  unsigned Last_disk_boundary_id;
 
   /// First boundary ID for torus surrounding edge of disk
   unsigned First_torus_boundary_id;
@@ -307,7 +328,9 @@ private:
   /// \short a map which takes a node on a disk boundary and returns a set of
   /// the elements on the upper surface which share this node, and the index
   /// of this node within that element
-  std::map<Node*, std::set<std::pair<ELEMENT*, unsigned> > > Disk_node_to_upper_element_and_index_map;
+  std::map<Node*, std::set<std::pair<ELEMENT*, unsigned> > >
+  Disk_node_to_upper_disk_element_and_index_map;
+  
   // Volumes
   //--------
 
@@ -431,13 +454,37 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
 
   /// Keep track of (zero-based) IDs
   Torus_region_id = one_based_torus_region_id-1; 
-  First_disk_with_torus_boundary_id = 
+  First_disk_boundary_id = 
     first_one_based_disk_with_torus_boundary_id-1;
-  Last_disk_with_torus_boundary_id = 
+  Last_disk_boundary_id = 
     last_one_based_disk_with_torus_boundary_id-1;
   First_torus_boundary_id = first_one_based_torus_boundary_id-1;
   Last_torus_boundary_id = last_one_based_torus_boundary_id-1;
 
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  // QUEHACERES debug
+
+  oomph_info << "First_disk_boundary_id:                            "
+	     << First_disk_boundary_id << "\n"
+	     << "Last_disk_boundary_id:                             "
+	     << Last_disk_boundary_id << "\n"
+	     << "One_based_boundary_id_for_disk_within_torus[0]:    "
+	     << One_based_boundary_id_for_disk_within_torus[0] << "\n"
+	     << "One_based_boundary_id_for_disk_within_torus[end]:  "
+	     << One_based_boundary_id_for_disk_within_torus
+    [One_based_boundary_id_for_disk_within_torus.size()-1] << "\n"
+	     << "One_based_boundary_id_for_disk_outside_torus[0]:   "
+	     << One_based_boundary_id_for_disk_outside_torus[0] << "\n"
+	     << "One_based_boundary_id_for_disk_outside_torus[end]: "
+	     << One_based_boundary_id_for_disk_outside_torus
+    [One_based_boundary_id_for_disk_outside_torus.size()-1] << "\n\n"
+	     << "First_torus_boundary_id:                           "
+	     << First_torus_boundary_id << "\n"
+	     << "Last_torus_boundary_id:                            "
+	     << Last_torus_boundary_id << "\n";
+
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  
   // Look, we can visualise the faceted surface!
   disk_with_torus_pt->output("warped_disk_with_torus_faceted_surface.dat");
  
@@ -538,12 +585,64 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   // Setup equation numbering scheme
   oomph_info <<"Number of equations: " << assign_eqn_numbers() << std::endl; 
 
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  // QUEHACERES debug
+    char filename[100];
+  ofstream some_file;
+  sprintf(filename, "%s/disk_boundary_ids_in_torus.dat", Doc_info.directory().c_str());
+  some_file.open(filename);
+
+  for(Vector<unsigned>::iterator it=One_based_boundary_id_for_disk_within_torus.begin();
+      it != One_based_boundary_id_for_disk_within_torus.end(); it++)
+  {
+    unsigned ibound = (*it)-1;
+    unsigned nnode = Bulk_mesh_pt->nboundary_node(ibound);
+
+    for(unsigned j=0; j<nnode; j++)
+    {
+      Node* node_pt = Bulk_mesh_pt->boundary_node_pt(ibound, j);
+      for(unsigned i=0; i<3; i++)
+      {
+	some_file << node_pt->x(i) << " ";
+      }
+      some_file << std::endl;
+    }
+    some_file << "\n\n";
+  }
+
+  some_file.close();
+
+  sprintf(filename, "%s/disk_boundary_ids_outside_torus.dat", Doc_info.directory().c_str());
+  some_file.open(filename);
+
+  for(Vector<unsigned>::iterator it=One_based_boundary_id_for_disk_outside_torus.begin();
+      it != One_based_boundary_id_for_disk_outside_torus.end(); it++)
+  {
+    unsigned ibound = (*it)-1;
+    unsigned nnode = Bulk_mesh_pt->nboundary_node(ibound);
+
+    for(unsigned j=0; j<nnode; j++)
+    {
+      Node* node_pt = Bulk_mesh_pt->boundary_node_pt(ibound, j);
+      for(unsigned i=0; i<3; i++)
+      {
+	some_file << node_pt->x(i) << " ";
+      }
+      some_file << std::endl;
+    }
+    some_file <<"\n\n";
+  }
+
+  some_file.close();  
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 }
 
 //========================================================================
 /// \short Function to populate the vectors
 /// Elements_on_upper[lower]_disk_surface_pt
-/// with the elements which have at least one node on the disk.
+/// with the elements which have at least one node on the disk, and also a
+/// map which maps each disk node to its associated upper disk elements
+/// and the nodal index of the node within each of these elements. 
 /// (These will be used when the plate nodes are duplicated, so that we
 /// know which elements need to be told that their node pointers have changed).
 //========================================================================
@@ -577,27 +676,6 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
   Elements_on_upper_disk_surface_pt.clear();
   Elements_on_lower_disk_surface_pt.clear();
 
-  // vector which concatenates the disk boundary IDs for the regions inside
-  // and outside the disk, to save keep repeating the loops for each
-  // region separately
-  Vector<unsigned> one_based_boundary_id_for_disk;
-
-  // preallocate memory
-  one_based_boundary_id_for_disk.reserve(
-    One_based_boundary_id_for_disk_within_torus.size() +
-    One_based_boundary_id_for_disk_outside_torus.size() ); 
-  
-  one_based_boundary_id_for_disk.insert(
-    one_based_boundary_id_for_disk.end(),
-    One_based_boundary_id_for_disk_within_torus.begin(),
-    One_based_boundary_id_for_disk_within_torus.end() );
-  
-  one_based_boundary_id_for_disk.insert(
-    one_based_boundary_id_for_disk.end(),
-    One_based_boundary_id_for_disk_outside_torus.begin(),
-    One_based_boundary_id_for_disk_outside_torus.end() );
-
-
   // Step 1:
   // populate the vectors of elements which specify the elements which are on
   // the upper and lower surfaces of the disk. The strategy is to loop over
@@ -608,12 +686,9 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
   // the elements which have nodes or edges on the disk but no faces; these
   // will be found afterwards by brute force
   
-  for(vector<unsigned>::iterator b_it = one_based_boundary_id_for_disk.begin();
-      b_it != one_based_boundary_id_for_disk.end(); b_it++)
-  {
-    // dereference the iterator for easier notation
-    unsigned ibound = *b_it;
-    
+  for (unsigned ibound = First_disk_boundary_id;
+        ibound <= Last_disk_boundary_id; ibound++)
+  { 
     unsigned nel = Bulk_mesh_pt->nboundary_element(ibound);
     for(unsigned e=0; e<nel; e++)
     { 
@@ -643,12 +718,12 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 	{
 	  Node* node_pt = el_pt->node_pt(j);
 	  
-	  if(node_pt->is_on_boundary())
+	  if(node_pt->is_on_boundary(ibound))
 	  {
 	    // add this boundary node to the map of nodes to upper plate elements
 	    // and their associated indices
 	    std::pair<ELEMENT*, unsigned> entry(el_pt, j);
-	    Disk_node_to_upper_element_and_index_map[node_pt].insert(entry);
+	    Disk_node_to_upper_disk_element_and_index_map[node_pt].insert(entry);
 	  }
 	}
       }
@@ -663,15 +738,16 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
     }
   }
 
+  // QUEHACERES move this to after so that we output all of them including the touching elems
   // =================================================================
   // QUEHACERES debug - output the elements with faces on the disk
   // =================================================================
   
   // just output the vertices for now
   unsigned nplot = 2;
-
-  ofstream some_file;
   char filename[100];
+  ofstream some_file;
+  
   sprintf(filename, "%s/elements_on_upper_disk_surface.dat", Doc_info.directory().c_str());
   some_file.open(filename);
   
@@ -694,68 +770,10 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 
   some_file.close();
 
-
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-  // QUEHACERES debug
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-
-  sprintf(filename, "%s/disk_nodes.dat", Doc_info.directory().c_str());
-  some_file.open(filename);
-
-  for(vector<unsigned>::iterator b_it = one_based_boundary_id_for_disk.begin();
-      b_it != one_based_boundary_id_for_disk.end(); b_it++)
-  {
-    // deref the iterator to save notation 
-    unsigned ibound = *b_it;
-    
-    unsigned nboundary_node = Bulk_mesh_pt->nboundary_node(ibound);
-    for(unsigned n=0; n<nboundary_node; n++)
-    {
-      // get a pointer to this boundary node
-      Node* node_of_interest_pt = Bulk_mesh_pt->boundary_node_pt(ibound, n);
-
-      for(unsigned i=0; i<3; i++)
-      {
-	some_file << node_of_interest_pt->x(i) << " ";
-      }
-
-      // get azimuthal angle
-      double phi = atan2pi(node_of_interest_pt->x(2), node_of_interest_pt->x(1));
-
-      // get the binormal at this point
-      Vector<double> r(3), tangent(3), normal(3), binormal(3);
-      Warped_disk_with_boundary_pt->
-	boundary_triad(0, phi, r, tangent, normal, binormal);
-
-      for(unsigned i=0; i<3; i++)
-      {
-	some_file << binormal[i] << " ";
-      }
-	
-      some_file << "\n";
-    }
-  }
-  some_file.close();
-
-   sprintf(filename, "%s/disk_elements.dat", Doc_info.directory().c_str());
-  some_file.open(filename);
-
-  for(vector<unsigned>::iterator b_it = one_based_boundary_id_for_disk.begin();
-      b_it != one_based_boundary_id_for_disk.end(); b_it++)
-  {
-    // deref the iterator to save notation 
-    unsigned ibound = *b_it;
-    
-    unsigned nboundary_el = Bulk_mesh_pt->nboundary_element(ibound);
-    for(unsigned e=0; e<nboundary_el; e++)
-    {
-      // get a pointer to this boundary node
-      ELEMENT* el_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->boundary_element_pt(ibound, e));
-    }
-  }
-  some_file.close();
-  exit(1);
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  oomph_info << "number of elements with faces on the upper disk surface: "
+	     << Elements_on_upper_disk_surface_pt.size() << "\n"
+	     << "number of elements with faces on the lower disk surface: "
+	     << Elements_on_lower_disk_surface_pt.size() << "\n\n";
   
   // =================================================================
   // now the fiddly bit - identify the elements which have nodes on the disk
@@ -786,35 +804,43 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
   // get the dimensionality of this problem
   unsigned dim = dynamic_cast<FiniteElement*>(Bulk_mesh_pt->element_pt(0))->
     node_pt(0)->ndim();
+
+  unsigned weird_shit_counter_upper = 0;
+  unsigned weird_shit_counter_lower = 0;
+  unsigned no_weird_shit_counter    = 0;
+
+  // QUEHACERES debug, store any weird elements here so we can output them
+  Vector<ELEMENT*> dodgy_upper_element_pt;
+  Vector<ELEMENT*> dodgy_lower_element_pt;
+
+  Vector<Vector<double> > dodgy_upper_element_nodal_distance;
+  Vector<Vector<double> > dodgy_lower_element_nodal_distance;
   
-  for(vector<unsigned>::iterator b_it = one_based_boundary_id_for_disk.begin();
-      b_it != one_based_boundary_id_for_disk.end(); b_it++)
-  {
-    // deref the iterator to save notation 
-    unsigned ibound = *b_it;
+  for (unsigned ibound = First_disk_boundary_id;
+       ibound <= Last_disk_boundary_id; ibound++)
+  { 
     
     unsigned nboundary_node = Bulk_mesh_pt->nboundary_node(ibound);
     for(unsigned n=0; n<nboundary_node; n++)
     {
       // get a pointer to this boundary node
       Node* node_of_interest_pt = Bulk_mesh_pt->boundary_node_pt(ibound, n);
+      
+      // compute the x-y radius of this point
+      double nodal_radius = 0;
+      for(unsigned i=0; i<2; i++)
+      {
+      	nodal_radius += pow(node_of_interest_pt->x(i), 2);
+      }
+      nodal_radius = sqrt(nodal_radius);
 
-      // QUEHACERES come back to this
-      // // compute the radius of this point
-      // double nodal_radius;
-      // for(unsigned i=0; i<dim; i++)
-      // {
-      // 	nodal_radius += pow(node_of_interest_pt->x(i), 2);
-      // }
-      // nodal_radius = sqrt(nodal_radius);
+      // tolerance on the radius to allow for floating-point roundoff
+      double tol = 1e-10;
 
-      // // tolerance on the radius to allow for floating-point roundoff
-      // double tol = 1e-10;
-
-      // // if this node is on the outer boundary then we ignore it, as we don't want
-      // // to duplicate this node
-      // if(abs(nodal_radius - 1.0) < tol)
-      // 	continue;
+      // if this node is on the outer boundary then we ignore it, as we don't want
+      // to duplicate this node
+      if(abs(nodal_radius - 1.0) < tol)
+      	continue;
       
       // vector to store the outer unit normal for the upper surface at this node
       Vector<double> unit_normal(3);
@@ -895,9 +921,6 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
       // now we use our map to get a set of all the elements associated with the
       // node of interest, and for each, we check if we've already added it to
       // our list
-      
-      // nel = Bulk_mesh_pt->nelement();      
-      // for(unsigned e=0; e<nel; e++)
 
       // get the set of elements associated with this node
       std::set<ELEMENT*> element_set = node_to_element_map[node_of_interest_pt];
@@ -907,6 +930,24 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 	  element_iter++)
       {
 	ELEMENT* el_pt = *element_iter;// dynamic_cast<ELEMENT*>(Bulk_mesh_pt->element_pt(e));
+
+	// now check if this element is already in our lists of
+	// upper and lower elements
+	typename std::set<ELEMENT*>::iterator it_upper =
+	  std::find(Elements_on_upper_disk_surface_pt.begin(),
+		    Elements_on_upper_disk_surface_pt.end(), el_pt);
+
+	typename std::set<ELEMENT*>::iterator it_lower =
+	  std::find(Elements_on_lower_disk_surface_pt.begin(),
+		    Elements_on_lower_disk_surface_pt.end(), el_pt);
+
+	// if we've already found it then skil it.
+	if(it_upper != Elements_on_upper_disk_surface_pt.end() ||
+	   it_lower != Elements_on_lower_disk_surface_pt.end() )
+	{
+	  continue;
+	}
+	
 	unsigned nnode = el_pt->nnode();
 	 
 	// Now we need to figure out if this element is on the upper
@@ -923,6 +964,9 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 
 	unsigned npositive = 0;
 	unsigned nnegative = 0;
+
+	Vector<double> nodal_distance;
+	nodal_distance.clear();
 	
 	for(unsigned k=0; k<nnode; k++)
 	{
@@ -948,38 +992,14 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 	    normal_distance += dx * unit_normal[i];
 	  }
 
+	  nodal_distance.push_back(normal_distance);
+	  
 	  // add to the counters (N.B. a zero distance would contribute to
 	  // the negative count, which is ok since negative means upper surface)
 	  if(normal_distance > 0)
 	    npositive++;
 	  else
 	    nnegative++;
-
-	  // QUEHACERES reconsider, probably delete
-	  // // if we haven't set the sign already, set it
-	  // if (sign_of_distance_in_normal_dir == 0)
-	  //   sign_of_distance_in_normal_dir = (normal_distance > 0) ? 1 : -1;
-
-	  // // now check if anything weird has happened with this node,
-	  // // i.e. it's normal distance is different from the others
-	  // if( (normal_distance > 0 && sign_of_distance_in_normal_dir < 0) ||
-	  //     (normal_distance < 0 && sign_of_distance_in_normal_dir > 0) )
-	  // {
-	  //   std::ostringstream error_message;
-	  
-	  //   // weird shit has happened, shout then die
-	  //   error_message << "\nWeird shit has happened: Found a node "
-	  // 		  << "which is on a different side to the disk to "
-	  // 		  << "the others in this element\n"
-	  // 		  << "previous normal distance: " << previous_normal_distance
-	  // 		  << "\ncurrent normal distance: " << normal_distance << "\n\n";
-
-	  //   throw OomphLibError(error_message.str(),
-	  // 			OOMPH_CURRENT_FUNCTION,
-	  // 			OOMPH_EXCEPTION_LOCATION);
-	  // }
-
-	  // previous_normal_distance = normal_distance;
 	}
 
 	// since the unit normal is in the outward direction, a negative
@@ -987,23 +1007,9 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 	// on the upper side of the disk (since the outer unit normal we
 	// got was for the upper surface).
 	bool element_is_on_upper_surface = nnegative > npositive;
-	
-	// QUEHACERES delete?
-	// bool element_is_on_upper_surface = sign_of_distance_in_normal_dir < 0;
 		  
 	if(element_is_on_upper_surface)
 	{
-	  // we can now fill in the entry into our map which gives the set of
-	  // elements and associated nodal indices for each boundary node
-	  Disk_node_to_upper_element_and_index_map[node_of_interest_pt].insert(
-	    std::pair<ELEMENT*, unsigned>(el_pt, index_of_boundary_node));
-	    
-	  // Let's add this element to our list of upper elements
-	  Elements_on_upper_disk_surface_pt.insert(el_pt);
-	  
-	  // add to our debug vector too
-	  Nonboundary_elements_with_node_on_upper_disk_surface_pt.push_back(el_pt);
-
 	  // a non-boundary element can only have at most one edge touching the
 	  // disk surface (if it had a face it would be considered a normal
 	  // boundary element), so for a Taylor Hood element (NNODE_1D=3) on
@@ -1013,50 +1019,64 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 	  // gone wrong, throw an error
 	  if(npositive > 2)
 	  {
-	    std::ostringstream error_message;
+	    // std::ostringstream error_message;
+	    	    
+	    // // weird shit has happened, shout then die
+	    // oomph_info << "\nWeird shit has happened: Found an element "
+	    // 	       << "which is seemingly on the top surface but "
+	    // 	       << "has more than two nodes with a positive "
+	    // 	       << "distance in the outer surface normal direction\n"
+	    // 	       << "current nodal position: ";
 	    
+	    // for(unsigned i=0; i<dim; i++)
+	    //   oomph_info << node_of_interest_pt->x(i) << " ";
+
+	    // double nodal_radius = 0;
+	    // for(unsigned i=0; i<dim-1; i++)
+	    // {
+	    //   nodal_radius += pow(node_of_interest_pt->x(i), 2);
+	    // }
+	    // nodal_radius = sqrt(nodal_radius);
+	    // oomph_info << "\nx-y radius: " << nodal_radius << "\n";
+
+	    // oomph_info << "npositive: " << npositive << "\n";
+	    // oomph_info << "nnegative: " << nnegative << "\n\n";
 	    
-	    // weird shit has happened, shout then die
-	    oomph_info << "\nWeird shit has happened: Found an element "
-		       << "which is seemingly on the top surface but "
-		       << "has more than two nodes with a positive "
-		       << "distance in the outer surface normal direction\n"
-		       << "current nodal position: ";
+	    // oomph_info << "outer unit normal at this point: ";
 
-	    for(unsigned i=0; i<dim; i++)
-	      oomph_info << node_of_interest_pt->x(i) << " ";
+	    // for(unsigned i=0; i<dim; i++)
+	    // {
+	    //   oomph_info << unit_normal[i] << " ";
+	    // }
+	    // oomph_info << "\n\n";
 
-	    double nodal_radius = 0;
-	    for(unsigned i=0; i<dim-1; i++)
-	    {
-	      nodal_radius += pow(node_of_interest_pt->x(i), 2);
-	    }
-	    nodal_radius = sqrt(nodal_radius);
-	    oomph_info << "\nx-y radius: " << nodal_radius << "\n";
-	    oomph_info << "outer unit normal at this point: ";
-
-	    for(unsigned i=0; i<dim; i++)
-	    {
-	      oomph_info << unit_normal[i] << " ";
-	    }
-	    oomph_info << "\n\n";
-	    
 	    // throw OomphLibError(error_message.str(),
 	    // 			OOMPH_CURRENT_FUNCTION,
 	    // 			OOMPH_EXCEPTION_LOCATION);
+
+	    // add this element to our list of dodgy ones so we can output later
+	    dodgy_upper_element_pt.push_back(el_pt);
+
+	    // add the vector of nodal distances to our upper vector
+	    dodgy_upper_element_nodal_distance.push_back(nodal_distance);
 	  }
+	  
+	  // we can now fill in the entry into our map which gives the set of
+	  // elements and associated nodal indices for each boundary node
+	  Disk_node_to_upper_disk_element_and_index_map[node_of_interest_pt].insert(
+	    std::pair<ELEMENT*, unsigned>(el_pt, index_of_boundary_node));
+	    
+	  // Let's add this element to our list of upper elements
+	  Elements_on_upper_disk_surface_pt.insert(el_pt);
+	  
+	  // add to our debug vector too
+	  Nonboundary_elements_with_node_on_upper_disk_surface_pt.push_back(el_pt);
 	  
 	  // no breaking, because this non-boundary element may have multiple
 	  // nodes on the boundary
 	}
 	else
 	{
-	  // Let's add this element to our list of lower elements
-	  Elements_on_lower_disk_surface_pt.insert(el_pt);
-
-	  // add to our debug vector too
-	  Nonboundary_elements_with_node_on_lower_disk_surface_pt.push_back(el_pt);
-
 	  // a non-boundary element can only have at most one edge touching the
 	  // disk surface (if it had a face it would be considered a normal
 	  // boundary element), so for a Taylor Hood element (NNODE_1D=3) on
@@ -1065,39 +1085,55 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 	  // normal direction... if this has happened then something weird has
 	  // gone wrong, throw an error	  if(npositive > 2)
 	  if(nnegative > 2)
-	  {
-	    std::ostringstream error_message;
+	  {	    
+	    // std::ostringstream error_message;
 	  
-	    // weird shit has happened, shout then die
-	    oomph_info << "\nWeird shit has happened: Found an element "
-		       << "which is seemingly on the lower surface but "
-		       << "has more than two nodes with a negative "
-		       << "distance in the outer surface normal direction\n"
-		       << "current nodal position: ";
+	    // // weird shit has happened, shout then die
+	    // oomph_info << "\nWeird shit has happened: Found an element "
+	    // 	       << "which is seemingly on the lower surface but "
+	    // 	       << "has more than two nodes with a negative "
+	    // 	       << "distance in the outer surface normal direction\n"
+	    // 	       << "current nodal position: ";
 	    
-	    for(unsigned i=0; i<dim; i++)
-	      oomph_info << node_of_interest_pt->x(i) << " ";
+	    // for(unsigned i=0; i<dim; i++)
+	    //   oomph_info << node_of_interest_pt->x(i) << " ";
 
-	    double nodal_radius = 0;
-	    for(unsigned i=0; i<dim-1; i++)
-	    {
-	      nodal_radius += pow(node_of_interest_pt->x(i), 2);
-	    }
-	    nodal_radius = sqrt(nodal_radius);
+	    // double nodal_radius = 0;
+	    // for(unsigned i=0; i<dim-1; i++)
+	    // {
+	    //   nodal_radius += pow(node_of_interest_pt->x(i), 2);
+	    // }
+	    // nodal_radius = sqrt(nodal_radius);
 	    
-	    oomph_info << "\nx-y radius: " << nodal_radius << "\n";
-	    oomph_info << "outer unit normal at this point: ";
+	    // oomph_info << "\nx-y radius: " << nodal_radius << "\n";
+	    
+	    // oomph_info << "npositive: " << npositive << "\n";
+	    // oomph_info << "nnegative: " << nnegative << "\n\n";
+	    
+	    // oomph_info << "outer unit normal at this point: ";
 
-	    for(unsigned i=0; i<dim; i++)
-	    {
-	      oomph_info << unit_normal[i] << " ";
-	    }
-	    oomph_info << "\n\n";
+	    // for(unsigned i=0; i<dim; i++)
+	    // {
+	    //   oomph_info << unit_normal[i] << " ";
+	    // }
+	    // oomph_info << "\n\n";
 
 	    // throw OomphLibError(error_message.str(),
 	    // 			OOMPH_CURRENT_FUNCTION,
 	    // 			OOMPH_EXCEPTION_LOCATION);
+	    
+	    // add this element to our list of dodgy ones so we can output later
+	    dodgy_lower_element_pt.push_back(el_pt);
+
+	    // add the vector of nodal distances to our upper vector
+	    dodgy_upper_element_nodal_distance.push_back(nodal_distance);
 	  }
+
+	  // Let's add this element to our list of lower elements
+	  Elements_on_lower_disk_surface_pt.insert(el_pt);
+
+	  // add to our debug vector too
+	  Nonboundary_elements_with_node_on_lower_disk_surface_pt.push_back(el_pt);
 	  
 	  // no breaking, because this non-boundary element may have multiple
 	  // nodes on the boundary
@@ -1112,7 +1148,7 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
     } // end loop over boundary nodes
     
   } // end loop over boundaries
-
+  
   // =================================================================
   // QUEHACERES debug - now output the elements with nodes but
   // no faces on the disk
@@ -1142,6 +1178,104 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 
   some_file.close();
 
+  // -------------------------------------------------------------
+  // output the dodgy stuff
+  // -------------------------------------------------------------
+  if(!dodgy_upper_element_pt.empty())
+  {
+    oomph_info << "Found some weird elements which are apparently not proper "
+	       << "boundary elements (i.e. they don't have a whole face on "
+	       << "the disk) but which seem to have more than 3 nodes on/very "
+	       << "close to its surface. These have been output to "
+	       << Doc_info.directory() << "/dodgy_upper_elements.dat, and the "
+	       << "distances of each node frome the surface in the surface normal "
+	       << "direction has been output to "
+	       << Doc_info.directory() << "/dodgy_upper_element_nodal_distances.dat, "
+	       << "you may want to check them!\n";
+    
+    sprintf(filename, "%s/dodgy_upper_elements.dat", Doc_info.directory().c_str());
+    some_file.open(filename);
+   
+    for(typename Vector<ELEMENT*>::iterator dodgy_it = dodgy_upper_element_pt.begin();
+	dodgy_it != dodgy_upper_element_pt.end(); dodgy_it++)
+    {
+      (*dodgy_it)->output(some_file, nplot);
+    }
+    some_file.close();
+
+    sprintf(filename, "%s/dodgy_upper_element_nodal_distances.dat", Doc_info.directory().c_str());
+    some_file.open(filename);
+   
+    for(Vector<Vector<double> >::iterator dodgy_it = dodgy_upper_element_nodal_distance.begin();
+	dodgy_it != dodgy_upper_element_nodal_distance.end(); dodgy_it++)
+    {
+      // get the vector of distances
+      Vector<double> distances = *dodgy_it;
+
+      for(Vector<double>::iterator it = distances.begin(); 
+	    it != distances.end(); it++)
+      {
+	some_file << *it << std::endl;
+      }
+
+      some_file << std::endl;
+    }
+    some_file.close();
+  }
+  
+  if(!dodgy_lower_element_pt.empty())
+  {
+    oomph_info << "Found some weird elements which are apparently not proper "
+	       << "boundary elements (i.e. they don't have a whole face on "
+	       << "the disk) but which seem to have more than 3 nodes on/very "
+	       << "close to its surface. These have been output to "
+	       << Doc_info.directory() << "/dodgy_upper_elements.dat, and the "
+	       << "distances of each node frome the surface in the surface normal "
+	       << "direction has been output to "
+	       << Doc_info.directory() << "/dodgy_lower_element_nodal_distances.dat, "
+	       << "you may want to check them!\n";
+
+    sprintf(filename, "%s/dodgy_lower_elements.dat", Doc_info.directory().c_str());
+    some_file.open(filename);
+    
+  
+    for(typename Vector<ELEMENT*>::iterator dodgy_it = dodgy_lower_element_pt.begin();
+	dodgy_it != dodgy_lower_element_pt.end(); dodgy_it++)
+    {
+      (*dodgy_it)->output(some_file, nplot);
+    }
+    some_file.close();
+
+    sprintf(filename, "%s/dodgy_lower_element_nodal_distances.dat", Doc_info.directory().c_str());
+    some_file.open(filename);
+   
+    for(Vector<Vector<double> >::iterator dodgy_it = dodgy_lower_element_nodal_distance.begin();
+	dodgy_it != dodgy_lower_element_nodal_distance.end(); dodgy_it++)
+    {
+      // get the vector of distances
+      Vector<double> distances = *dodgy_it;
+
+      for(Vector<double>::iterator it = distances.begin();
+	  it != distances.end(); it++)
+      {
+	some_file << *it << std::endl;
+      }
+
+      some_file << std::endl;
+    }
+    some_file.close();
+  }
+}
+
+//========================================================================
+/// \short QUEHACERES add useful description here
+//========================================================================
+template<class ELEMENT>
+FlowAroundDiskProblem<ELEMENT>::duplicate_plate_nodes_and_add_boundaries()
+{
+  // @@@@@@@@@@@@@@@@@@@@@@
+  // QUEHACERES start here
+  // @@@@@@@@@@@@@@@@@@@@@
 }
 
 //========================================================================
@@ -1155,6 +1289,8 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
   // have nodes on the disk and are identified as being on the upper or
   // lower disk surface
   identify_elements_on_upper_and_lower_disk_sufaces();
+
+  // QUEHACERES duplicate plate nodes here before BCs
   
   // Apply bcs
   apply_boundary_conditions();
@@ -1165,30 +1301,17 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
 //========================================================================
 template<class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
-{
+{  
   ofstream pin_file;
   pin_file.open("pinned_nodes.dat");
 
   // Identify boundary ids of pinned nodes 
   Vector<unsigned> pinned_boundary_id;
-  
-  // for (unsigned ibound = First_disk_with_torus_boundary_id;
-  //      ibound <= Last_disk_with_torus_boundary_id; ibound++)
-  // {
-  //   pinned_boundary_id.push_back(ibound);
-  // }
 
-  for(Vector<unsigned>::iterator b =
-	One_based_boundary_id_for_disk_within_torus.begin();
-      b != One_based_boundary_id_for_disk_within_torus.end(); b++)
+  for (unsigned ibound = First_disk_boundary_id;
+       ibound <= Last_disk_boundary_id; ibound++)
   {
-    pinned_boundary_id.push_back(*b);
-  }
-    for(Vector<unsigned>::iterator b =
-	One_based_boundary_id_for_disk_outside_torus.begin();
-      b != One_based_boundary_id_for_disk_outside_torus.end(); b++)
-  {
-    pinned_boundary_id.push_back(*b);
+    pinned_boundary_id.push_back(ibound);
   }
   
   for (unsigned ibound = First_boundary_id_for_outer_boundary;
@@ -1207,10 +1330,10 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
     {
       std::ostringstream error_message;
       error_message << "No boundary nodes on boundary " 
-		    << ibound << "! Something's gone wrong!\n";
+  		    << ibound << "! Something's gone wrong!\n";
       throw OomphLibError(error_message.str(),
-			  OOMPH_CURRENT_FUNCTION,
-			  OOMPH_EXCEPTION_LOCATION);
+  			  OOMPH_CURRENT_FUNCTION,
+  			  OOMPH_EXCEPTION_LOCATION);
     }    
     for (unsigned inod=0; inod<num_nod; inod++)
     {
@@ -1227,26 +1350,26 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
       x[2] = node_pt->x(2);
 
       // Zero BC on outer boundary; unit BC elsewhere
-      if ((ibound >= First_disk_with_torus_boundary_id) &&
-	  (ibound <= Last_disk_with_torus_boundary_id))
+      if ((ibound >= First_disk_boundary_id) &&
+  	  (ibound <= Last_disk_boundary_id))
       {
 	
-	node_pt->set_value(0, Global_Parameters::disk_velocity[0]);
-	node_pt->set_value(1, Global_Parameters::disk_velocity[1]);
-	node_pt->set_value(2, Global_Parameters::disk_velocity[2]);
+  	node_pt->set_value(0, Global_Parameters::disk_velocity[0]);
+  	node_pt->set_value(1, Global_Parameters::disk_velocity[1]);
+  	node_pt->set_value(2, Global_Parameters::disk_velocity[2]);
       }
       else
       {
-	// outer boundaries
-	node_pt->set_value(0, -1.0);
-	node_pt->set_value(1, -1.0);
-	node_pt->set_value(2, -1.0);
+  	// outer boundaries
+  	node_pt->set_value(0, -1.0);
+  	node_pt->set_value(1, -1.0);
+  	node_pt->set_value(2, -1.0);
       }
       
       pin_file << x[0] << " " 
-	       << x[1] << " " 
-	       << x[2] << " " 
-	       << std::endl;
+  	       << x[1] << " " 
+  	       << x[2] << " " 
+  	       << std::endl;
     }
   }
  
@@ -1483,7 +1606,6 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   }
   some_file.close();
   oomph_info << "Torus surface area: " <<  torus_surface_area << std::endl;
-
  
   // Attach face elements to part of disk inside torus
   //--------------------------------------------------
@@ -1586,6 +1708,118 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   // 			 << std::endl;
   // volumes_and_areas_file.close();
 
+  // Attach face elements to part of disk inside torus
+  //--------------------------------------------------
+  sprintf(filename,"%s/face_elements_on_disk%i.dat",
+	  Doc_info.directory().c_str(),
+	  Doc_info.number());
+  some_file.open(filename);
+ 
+  for (unsigned b=First_disk_boundary_id; b<=Last_disk_boundary_id; b++)
+  {
+    unsigned nel = Bulk_mesh_pt->nboundary_element(b);
+    for (unsigned e=0; e<nel; e++)
+    {
+      FiniteElement* el_pt = 
+	Bulk_mesh_pt->boundary_element_pt(b,e);
+     
+      // What is the index of the face of the bulk element at the boundary
+      int face_index = Bulk_mesh_pt->
+	face_index_at_boundary(b,e);
+
+      // Build the corresponding surface element
+      NavierStokesFaceElement<ELEMENT>* surface_element_pt =
+      	new NavierStokesFaceElement<ELEMENT>(el_pt, face_index);
+     
+      // Output
+      surface_element_pt->output(some_file, nplot);
+     
+      // ...and we're done!
+      delete surface_element_pt;
+    }
+  }
+  some_file.close();
+
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  // QUEHACERES debug
+  sprintf(filename,"%s/nodal_values_on_disk_from_face_elements%i.dat",
+	  Doc_info.directory().c_str(),
+	  Doc_info.number());
+  some_file.open(filename);
+ 
+  for (unsigned b=First_disk_boundary_id; b<=Last_disk_boundary_id; b++)
+  {
+    unsigned nel = Bulk_mesh_pt->nboundary_element(b);
+    for (unsigned e=0; e<nel; e++)
+    {
+      FiniteElement* el_pt = 
+	Bulk_mesh_pt->boundary_element_pt(b,e);
+     
+      // What is the index of the face of the bulk element at the boundary
+      int face_index = Bulk_mesh_pt->
+	face_index_at_boundary(b,e);
+
+      // Build the corresponding surface power element
+      NavierStokesFaceElement<ELEMENT>* surface_element_pt =
+      	new NavierStokesFaceElement<ELEMENT>(el_pt, face_index);
+     
+      // Output
+      for(unsigned j=0; j<surface_element_pt->nnode(); j++)
+      {
+	Node* node_pt = surface_element_pt->node_pt(j);
+
+	for(unsigned i=0; i<3; i++)
+	{
+	  some_file << node_pt->x(i) << " ";
+	}
+	for(unsigned i=0; i<node_pt->nvalue(); i++)
+	{
+	  some_file << node_pt->value(i) << " ";
+	}
+	some_file << std::endl;
+      }
+     
+      // ...and we're done!
+      delete surface_element_pt;
+    }
+  }
+  some_file.close();
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  
+  // -------------------------------------------------------------
+  // output the main map to check we've assembled it correctly
+  // -------------------------------------------------------------
+
+  sprintf(filename, "%s/upper_disk_elements_from_nodal_map.dat", Doc_info.directory().c_str());
+  some_file.open(filename);
+
+  for (unsigned ibound = First_disk_boundary_id;
+       ibound <= Last_disk_boundary_id; ibound++)
+  {     
+    unsigned nboundary_node = Bulk_mesh_pt->nboundary_node(ibound);
+    for(unsigned n=0; n<nboundary_node; n++)
+    {
+      // get a pointer to this boundary node
+      Node* node_pt = Bulk_mesh_pt->boundary_node_pt(ibound, n);
+
+      // get the set of all upper disk elements associated with this node
+      std::set<std::pair<ELEMENT*, unsigned> > elem_set =
+	Disk_node_to_upper_disk_element_and_index_map[node_pt];
+	
+      typename std::set<std::pair<ELEMENT*, unsigned> >::iterator it;
+  
+      for(it = elem_set.begin(); it != elem_set.end(); it++)
+      {
+	// get the element and the nodal index
+	std::pair<ELEMENT*, unsigned> element_index_pair = *it;
+
+	// output the element
+	element_index_pair.first->output(some_file, nplot);
+      }
+    }
+  }
+
+  some_file.close();
 
   // Output solution
   //----------------
