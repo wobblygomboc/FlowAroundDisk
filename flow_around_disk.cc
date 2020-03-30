@@ -33,12 +33,17 @@
 //Generic routines
 #include "generic.h"
 
-// QUEHACERES delete
-// // Poisson
-#include "poisson.h"
+// ==============================
+#define USE_SINGULAR_ELEMENTS
+#define USE_FD_JACOBIAN
+// ==============================
 
+#ifdef USE_SINGULAR_ELEMENTS
 // singular elements
 #include "navier_stokes_sing_face_element.h"
+#else
+#include "navier_stokes.h"
+#endif
 
 // The mesh
 #include "meshes/triangle_mesh.h"
@@ -51,16 +56,23 @@
 // Get the faceted surfaces
 #include "tetmesh_faceted_surfaces.h"
 
+// the analytic solution for flow around an edge
+#include "moffat_solution.h"
+
 // Tetgen or Gmsh
 #define DO_TETGEN
 
 
 using namespace oomph;
 
+template<class ELEMENT>
+class FlowAroundDiskProblem;
+
 ///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
 
+#ifndef USE_SINGULAR_ELEMENTS
 double atan2pi(const double& y, const double& x)
 {
   // Polar angle
@@ -74,19 +86,23 @@ double atan2pi(const double& y, const double& x)
 
   return theta;
 }
+#endif
 
 //=============================================================
 /// Namespace for problem parameters
 //=============================================================
 namespace Global_Parameters
 {
+  // QUEHACERES debug
+  unsigned el_counter = 0;
+  
   string output_directory = "RESLT";
   
   /// (Half-)width of the box
   double Box_half_width = 1.5;
 
   /// (Half)height of the box
-  double Box_half_length = 1.0;
+  double Box_half_height = 1.0;
 
   /// Specify how to call gmsh from the command line
   std::string Gmsh_command_line_invocation="/home/mheil/gmesh/bin/bin/gmsh";
@@ -95,14 +111,418 @@ namespace Global_Parameters
   Vector<double> disk_velocity(3, 0.0);
 
   // amplitude and wavenumber of the warped disk
-  double epsilon = 0.1;
+  double Epsilon = 0.1;
   unsigned n = 5;
 
+  // size of the radially aligned disks used for outputting the solution at points
+  // around the disk edge
+  double disk_on_disk_radius = 0.2;
+  
+  // fake amplitude to impose for debug
+  double singular_amplitude_for_debug = 0;
+  
+  bool Split_corner_elements = true;
+  
   // offset for boundary ID numbering, essentially the newly created upper
   // disk boundaries will be numbered as the corresponding lower disk boundary
   // plus this offset. The offset will be determined during the duplication
   // of plate nodes.
   unsigned upper_disk_boundary_offset = 0;
+  
+  // store the warped disk object so that we can use it to get
+  // surface normals
+  WarpedCircularDiskWithAnnularInternalBoundary* Warped_disk_with_boundary_pt;  
+}
+
+///////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////
+
+namespace Analytic_Functions
+{
+  // secant, for mathematica output
+  double Sec(const double& theta)
+  {
+    return 1.0/cos(theta);
+  }
+
+  double delta(const unsigned& i, const unsigned& j)
+  {
+    return static_cast<double>(i == j);
+  }
+
+  // reflect an angle \theta\in[0,2\pi] w.r.t. the z-axis
+  double reflect_angle_wrt_z_axis(const double& theta)
+  {
+    // double theta_reflected = 0;
+    // if(theta < 0)
+    // {
+    //   theta_reflected = -MathematicalConstants::Pi - theta;
+    // }
+    // else
+    // {
+    //   theta_reflected = MathematicalConstants::Pi - theta;
+    // }
+    // return theta_reflected;
+
+    double tol = -1e-8;
+    if(theta < tol)
+    {
+      std::ostringstream error_message;
+      error_message << "This function should only be passed positive angles in [0,2\pi]\n\n";
+
+      throw OomphLibError(error_message.str(),
+                              OOMPH_CURRENT_FUNCTION,
+                              OOMPH_EXCEPTION_LOCATION);
+    }
+    
+    double theta_flipped;
+
+    // shorthand
+    const double pi = MathematicalConstants::Pi;
+          
+    if(theta < pi)
+    {
+      theta_flipped = pi - theta;
+    }
+    else
+    {
+      theta_flipped = pi + (2.0*pi - theta);
+    }
+
+    return theta_flipped;
+  }  
+
+  // QUEHACERES delete
+  typedef Vector<double> EdgeCoordinateVelocity;
+
+  /// \short Function to convert 2D Polar derivatives (du/dr, du/dtheta, dv/dr, dv/dtheta)
+  // to Cartesian derivatives (dux/dx, dux/dy, duy/dx, duy/dy)
+  DenseMatrix<double> polar_to_cartesian_derivatives_2d(const DenseMatrix<double> grad_u_polar,
+							const Vector<double> u_polar,
+							const double r, double theta)
+  {
+    // shorthand for polar components
+    double u = u_polar[0];
+    double v = u_polar[1];
+
+    double du_dr     = grad_u_polar(0,0);
+    double du_dtheta = grad_u_polar(0,1);
+    double dv_dr     = grad_u_polar(1,0);
+    double dv_dtheta = grad_u_polar(1,1);
+       
+    // output cartesian tensor du_i/dx_j
+    DenseMatrix<double> du_dx(2, 2, 0.0);
+
+    // dux_dx
+    du_dx(0,0) = cos(theta) * (du_dr*cos(theta) - dv_dr*sin(theta))
+      -(1.0/r)*sin(theta) * (du_dtheta*cos(theta) - u*sin(theta) -
+    			     dv_dtheta*sin(theta) - v*cos(theta));
+  
+    // dux_dy
+    du_dx(0,1) = sin(theta) * (du_dr*cos(theta) - dv_dr*sin(theta))
+      +(1.0/r)*cos(theta) * (du_dtheta*cos(theta) - u*sin(theta) -
+    			     dv_dtheta*sin(theta) - v*cos(theta));
+
+    // duy_dx
+    du_dx(1,0) = cos(theta) * (du_dr*sin(theta) + dv_dr*cos(theta))
+      -(1.0/r)*sin(theta) * (du_dtheta*sin(theta) + u*cos(theta) +
+    			     dv_dtheta*cos(theta) - v*sin(theta));
+
+    // duy_dy
+    du_dx(1,1) = sin(theta) * (du_dr*sin(theta) + dv_dr*cos(theta))
+      +(1.0/r)*cos(theta) * (du_dtheta*sin(theta) + u*cos(theta) +
+    			     dv_dtheta*cos(theta) - v*sin(theta));
+
+    return du_dx;
+  }
+
+  Vector<double> polar_velocity_to_cartesian(const double& zeta,
+					     const double& alpha,
+					     const Vector<double>& u_polar)
+  {
+    // velocity in Cartesian
+    Vector<double> u_cartesian(3);
+
+    // QUEHACERES from the tinternets
+    // u_cartesian[0] = u_polar[0]*cos(alpha)*cos(zeta) + u_polar[1]*sin(alpha)*cos(zeta);
+    // u_cartesian[1] = u_polar[0]*cos(alpha)*sin(zeta) + u_polar[1]*sin(alpha)*sin(zeta);
+    // u_cartesian[2] = u_polar[0]*sin(alpha)           - u_polar[1]*cos(alpha);
+      
+    // QUEHACERES own derivation
+    u_cartesian[0] = u_polar[0]*cos(alpha)*cos(zeta) - u_polar[1]*sin(alpha)*cos(zeta);
+    u_cartesian[1] = u_polar[0]*cos(alpha)*sin(zeta) - u_polar[1]*sin(alpha)*sin(zeta);
+    u_cartesian[2] = u_polar[0]*sin(alpha) + u_polar[1]*cos(alpha);
+      
+    // QUEHACERES probs wrong
+    // u_cartesian[0] = speed * cos(phi + angle_of_normal + angle_of_velocity_rzp) * cos(zeta);
+    // u_cartesian[1] = speed * cos(phi + angle_of_normal + angle_of_velocity_rzp) * sin(zeta);
+    // u_cartesian[2] = speed * sin(phi + angle_of_normal + angle_of_velocity_rzp);
+
+    return u_cartesian;
+  }
+  
+  /// \short Newtonian stress tensor
+  DenseMatrix<double> newtonian_stress(const DenseMatrix<double>& strain_rate,
+				       const double& p)
+  {
+    // \tau_{ij}
+    DenseMatrix<double> stress(2,2);
+    
+    for(unsigned i=0; i<2; i++)
+    {
+      for(unsigned j=0; j<2; j++)
+      {
+	// Newtonian constitutive relation
+	stress(i,j) = -p*Analytic_Functions::delta(i,j) + 2.0*strain_rate(i,j);
+      }
+    }
+
+    return stress;
+  }
+
+  void singular_fct_and_gradient(const Vector<double>& x,
+				 const double& A, const double& B,
+				 Vector<double>& u_cartesian,
+				 DenseMatrix<double>& du_dx)
+  {
+    const double infinity = 103;
+      
+    // compute the (\rho,\zeta,\phi) coordinates
+    double zeta = atan2pi(x[1], x[0]);
+      
+    double b_dummy = 0;
+    Vector<double> r_disk_edge(3);
+    Vector<double> tangent_dummy(3);
+    Vector<double> binormal_dummy(3);
+    Vector<double> normal(3);
+
+    // get the unit normal from the disk-like geometric object at this zeta
+    Global_Parameters::Warped_disk_with_boundary_pt->
+      boundary_triad(b_dummy, zeta, r_disk_edge, tangent_dummy,
+		     normal, binormal_dummy);
+    
+    // shorthands
+    double rho  = sqrt(pow(x[0]-r_disk_edge[0], 2) +
+		       pow(x[1]-r_disk_edge[1], 2) +
+		       pow(x[2]-r_disk_edge[2], 2));
+
+    // compute the rho vector, the vector from the edge of the disk at this
+    // zeta to the point in question
+    Vector<double> rho_vector(3);
+    rho_vector[0] = x[0] - r_disk_edge[0];
+    rho_vector[1] = x[1] - r_disk_edge[1];
+    rho_vector[2] = x[2] - r_disk_edge[2];
+
+    // angle of the rho vector with respect to the x-y plane of the global
+    // Cartesian coordinate system
+    double angle_of_rho_wrt_xy_plane =
+      atan2pi(rho_vector[2], sqrt(rho_vector[0]*rho_vector[0] +
+				  rho_vector[1]*rho_vector[1]));
+
+    // the angle the edge of the sheet makes with the x-y plane
+    double angle_of_normal_wrt_xy_plane = atan2pi(normal[2],
+				   sqrt(normal[0]*normal[0]+normal[1]*normal[1]));
+        
+    // dot product of this vector with the outerward normal
+    double rho_dot_normal = rho_vector[0]*normal[0] +
+                            rho_vector[1]*normal[1] +
+                            rho_vector[2]*normal[2];
+
+    // angle of inclination to the point in question from the outer normal vector
+    double phi = 0;
+    double tol = 1e-8;
+    if(rho > tol)
+    {
+      if((angle_of_rho_wrt_xy_plane < angle_of_normal_wrt_xy_plane) &&
+	(angle_of_rho_wrt_xy_plane > angle_of_normal_wrt_xy_plane - tol) )
+      {
+	phi = 0;
+      }
+      else
+      {
+	if(angle_of_rho_wrt_xy_plane > angle_of_normal_wrt_xy_plane)
+	{
+	  // phi is the angle between the two
+	  phi = angle_of_rho_wrt_xy_plane - angle_of_normal_wrt_xy_plane;
+	}
+	else
+	{
+	  // otherwise it's the obtuse angle between them
+	  phi = 2*MathematicalConstants::Pi -
+	    (angle_of_normal_wrt_xy_plane - angle_of_rho_wrt_xy_plane);
+	}
+      } 
+      // QUEHACERES
+      // double scaled_dot_product = rho_dot_normal/rho;
+      
+      // if(scaled_dot_product*scaled_dot_product <= 1)
+      // {
+      // 	phi = acos(rho_dot_normal/ rho);
+      // }
+      // else
+      // {
+      // 	// catch the case where this rounds to a value slightly > 1 or slightly <-1
+      // 	// if scaled_dot_product ~ -1 then the angle is 0, it's ~1 then its pi
+      // 	phi = (scaled_dot_product > 0) ? 0 : MathematicalConstants::Pi;
+      // }
+    }
+
+    // QUEHACERES don' need to subtract, phi is already the angle from the normal
+    double elevation_relative_to_disk_edge = phi; // - angle_of_normal;
+    
+    // now account for the reflection of the moffat solution, which assumes
+    // the semi-infinite plate is at x>0 not x<0 as we have with this coordinate system
+    double moffat_angle = reflect_angle_wrt_z_axis(elevation_relative_to_disk_edge);  
+
+    // polar derivatives of polar velocity components,
+    // i.e. dur_dr, dur_dphi, duphi_dr, duphi_dphi
+    DenseMatrix<double> u_polar_derivatives(2,2);
+
+    // get the 2D polar Moffat solution (third component is pressure)
+    Vector<double> u_polar(3);
+    moffat_solution(rho, moffat_angle, A, B, u_polar, u_polar_derivatives);
+
+    // QUEHACERES come back to this
+    // convert the polar derivatives to cartesian derivatives
+    du_dx.resize(2,2);
+    // du_dx = polar_to_cartesian_derivatives_2d(u_polar_derivatives, u_polar, rho, phi_reflected);
+    
+    // ----------------
+    // now use the outer normal to convert the rzp velocity into Cartesians
+
+    u_cartesian.resize(3);
+    
+    // do the conversion
+    if(rho > tol)
+    {
+      // total angle of u vector relative to x-y plane
+      // QUEHACERES this probably should be phi_reflected, write comment if it is
+      double alpha = elevation_relative_to_disk_edge + angle_of_normal_wrt_xy_plane;
+
+      // flip sign of the angular velocity component to account for the
+      // reflection of the moffat solution
+      u_polar[1] = -u_polar[1];
+      
+      // convert polar velocities to Cartesian
+      u_cartesian = polar_velocity_to_cartesian(zeta, alpha, u_polar);
+
+      // QUEHACERES account for the flip in elevation angle
+      // u_cartesian[0] = -u_cartesian[0];
+      // u_cartesian[1] = -u_cartesian[1];
+
+      // QUEHACERES fix these once we have 3D derivatives
+      // // sign cancels for terms involving x and y components / coordinates,
+      // // only need to correct the terms in z
+      // du_dx(0,2) = -du_dx(0,2);  // du_x/dz
+      // du_dx(2,0) = -du_dx(2,0);  // du_z/dx
+      // du_dx(1,2) = -du_dx(1,2);  // du_y/dz
+      // du_dx(2,1) = -du_dx(2,1);  // du_z/dy
+      
+      // and finally pressure, which is a scalar so no vector conversions
+      u_cartesian.push_back(u_polar[2]);
+    }
+    else
+    {
+      // zero from no-slip BCs on disk
+      u_cartesian[0] = 0;
+      u_cartesian[1] = 0;
+      u_cartesian[2] = 0;
+
+      // infinite pressure at the edge
+      u_cartesian.push_back(infinity);
+    }
+
+    // QUEHACERES debug
+    if(isnan(u_cartesian[1]))
+    {
+      unsigned breakpoint = 1;
+    }
+    else if(isinf(u_cartesian[1]))
+    {
+      unsigned breakpoint = 1;
+    }
+    Global_Parameters::el_counter++;
+  }
+  
+  void singular_fct_and_gradient_broadside(const EdgeCoordinate& edge_coords,
+					   Vector<double>& u,
+					   DenseMatrix<double>& du_dx)
+  {
+    // parameters for broadside motion
+    double A = 0;
+    double B = 1;
+
+    // forward
+    singular_fct_and_gradient(edge_coords, A, B, u, du_dx);
+  }
+  
+  void singular_fct_and_gradient_in_plane(const EdgeCoordinate& edge_coords,
+					  Vector<double>& u,
+					  DenseMatrix<double>& du_dx)
+  {
+    // parameters for in-plane motion
+    double A = 1;
+    double B = 0;
+
+    // forward
+    singular_fct_and_gradient(edge_coords, A, B, u, du_dx);
+  }
+  
+  DenseMatrix<double> gradient_of_singular_fct_broadside(const EdgeCoordinate& edge_coords)
+  {
+    // dummy solution vector
+    Vector<double> u;
+
+    // velocity gradient tensor
+    DenseMatrix<double> du_dx;
+    
+    // forward
+    singular_fct_and_gradient_broadside(edge_coords, u, du_dx);
+
+    return du_dx;
+  }
+  
+  DenseMatrix<double> gradient_of_singular_fct_in_plane(const EdgeCoordinate& edge_coords)
+  {
+    // dummy solution vector
+    Vector<double> u;
+
+    // velocity gradient tensor
+    DenseMatrix<double> du_dx;
+    
+    // forward
+    singular_fct_and_gradient_in_plane(edge_coords, u, du_dx);
+
+    return du_dx;
+  }
+  Vector<double> singular_fct_broadside(const EdgeCoordinate& edge_coords)
+  {
+    // create a dummy gradient tensor
+    DenseMatrix<double> du_dx;
+
+    // solution vector
+    Vector<double> u;
+    
+    // forward 
+    singular_fct_and_gradient_broadside(edge_coords, u, du_dx);
+    
+    return u;
+  }
+
+   Vector<double> singular_fct_in_plane(const EdgeCoordinate& edge_coords)
+  {
+    // create a dummy gradient tensor
+    DenseMatrix<double> du_dx;
+
+    // solution vector
+    Vector<double> u;
+    
+    // forward 
+    singular_fct_and_gradient_in_plane(edge_coords, u, du_dx);
+    
+    return u;
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -256,6 +676,7 @@ public:
 private:
   unsigned Dim;
 };
+
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -308,6 +729,18 @@ public:
       return Doc_info;
     }
   
+  void subtract_singularity(bool subtract = true)
+    {
+      Subtract_singularity = subtract;
+    }
+
+  // function to directly impose the singular amplitude and bypass the 
+  // proper calculation
+  void impose_fake_singular_amplitude();
+
+  /// Assign nodal values to be the exact singular solution for debug
+  void set_values_to_singular_solution();
+  
 private:
  
   /// Apply BCs and make elements functional
@@ -315,7 +748,14 @@ private:
 
   /// Helper function to apply boundary conditions
   void apply_boundary_conditions();
-
+  
+  /// \short Helper function to create the face elements needed to:
+  /// - impose Dirichlet BCs
+  /// - impose the additional traction required from the augmented region to
+  ///   the surrounding bulk elements
+  /// - compute the reciprocity integral to determine the singular amplitude
+  void create_face_elements();
+  
   // function to populate the vectors Elements_on_upper[lower]_disk_surface_pt
   // with the elements which have at least one node on the disk.
   // (These will be used when the plate nodes are duplicated, so that we
@@ -327,7 +767,17 @@ private:
   /// \short function to populate a map which maps each node in the mesh to
   /// a set of all the elements it is associated with
   void generate_node_to_element_map();
+
+  /// \short function to setup the map from the nodes in the augmented region to their
+  /// coordinates in the edge coordinate system (\rho, \zeta, \phi)
+  void setup_edge_coordinates_map();
   
+  /// Setup disk on disk plots
+  void setup_disk_on_disk_plots();
+
+  // --------------------------------------------------------------------------
+  // Meshes
+  // --------------------------------------------------------------------------
 #ifdef DO_TETGEN
 
   /// Bulk mesh
@@ -340,9 +790,25 @@ private:
 
 #endif
 
-  // Mesh of upper disk elements for output
-  Mesh* Face_mesh_for_upper_disk_pt;
+  /// \short Face element mesh which imposes the necessary traction
+  /// onto the bulk elements on the boundary of the augmented region
+  Mesh* Face_mesh_for_imposed_traction_from_augmented_region_pt;
   
+  /// \short Meshes of face elements used to compute the amplitudes of the singular
+  /// functions (one mesh per singular function)
+  Mesh* Face_mesh_for_singularity_integral_pt;
+ 
+  /// Mesh for (single) element containing singular fct
+  Mesh* Singular_fct_element_mesh_pt;
+
+  /// Mesh of face elements which impose Dirichlet boundary conditions
+  Mesh* Face_mesh_for_bc_pt;
+  
+  // --------------------------------------------------------------------------
+  
+  /// Mesh as geom object representation of mesh
+  MeshAsGeomObject* Mesh_as_geom_object_pt;
+    
   // Create the mesh as Geom Object
   MeshAsGeomObject* Face_mesh_as_geom_object_pt;
   
@@ -351,18 +817,13 @@ private:
 
   /// Inner boundary
   Vector<TetMeshFacetedSurface*> Inner_boundary_pt;
-
+  
   /// First boundary ID for outer boundary
   unsigned First_boundary_id_for_outer_boundary;
-
   
   // Disk with torus round the edges
   //--------------------------------
 
-  // store the warped disk object so that we can use it to get
-  // surface normals
-  WarpedCircularDiskWithAnnularInternalBoundary* Warped_disk_with_boundary_pt;
-  
   /// Region ID for torus around edge of warped disk
   unsigned Torus_region_id;
 
@@ -415,13 +876,57 @@ private:
 
   /// Plot points along a radial line
   Vector<std::pair<GeomObject*,Vector<double> > > Radial_sample_point_pt;
+
+  /// \Short map which takes each of the nodes in the augmented region
+  /// and gives the edge coordinates (\rho, \zeta, \phi).
+  std::map<Node*, Vector<double> >* Node_to_edge_coordinates_map_pt;
   
+  // QUEHACERES taking out the vectorisation for now
+  // ///This is vectorised
+  // /// since the nodes which have zero y-coordinate can have a zeta of either
+  // /// 0 or 2pi, and the interpolation will need to take this into account.
+  
+
+  // -----------------------------------------------------
+  // disk on disk output stuff
+  
+  /// Flag to force update on geom object representations 
+  bool Geom_objects_are_out_of_date;
+  
+  /// The Line Visualiser.
+  LineVisualiser* LV_pt;
+
+  /// \short Number of "disks on disk" around the edge where solution is
+  /// to be visualised
+  unsigned Ndisk_on_disk_plot;
+
+  /// \short Number of azimuthal plot points in "disks on disk" plots 
+  /// around the edge where solution is to be visualised
+  unsigned Nphi_disk_on_disk_plot;
+
+  /// \short Number of radial plot points in "disks on disk" plots 
+  /// around the edge where solution is to be visualised
+  unsigned Nrho_disk_on_disk_plot;
+
+  /// Disk_on_disk_plot_point[k_disk][i_rho][i_phi]
+  Vector<Vector<Vector<std::pair<
+			 Vector<double>,std::pair<GeomObject*,Vector<double> > > > > >
+  Disk_on_disk_plot_point;
+ 
   // Volumes
   //--------
 
   /// Sanity check: Exact bounded volume
   double Exact_bounded_volume;
 
+  /// \short Enumeration for IDs of FaceElements (used to figure out
+  /// who's added what additional nodal data...)
+  enum{Flux_jump_el_id, BC_el_id};
+
+  /// \short Are we augmenting the solution with the singular functions or
+  /// are we doing pure FE?
+  bool Subtract_singularity;
+  
   DocInfo Doc_info;
 };
 
@@ -457,7 +962,7 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   //Make the outer boundary object
   Outer_boundary_pt = new CubicTetMeshFacetedSurface(
     Global_Parameters::Box_half_width,
-    Global_Parameters::Box_half_length,
+    Global_Parameters::Box_half_height,
     outer_boundary_id_offset);
 
   // // Look, we can visualise the faceted surface!
@@ -470,7 +975,7 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   Exact_bounded_volume = 
     2.0*Global_Parameters::Box_half_width*
     2.0*Global_Parameters::Box_half_width*
-    2.0*Global_Parameters::Box_half_length;
+    2.0*Global_Parameters::Box_half_height;
 
  
   // INTERNAL BOUNDARIES
@@ -490,9 +995,9 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   // Thickness of annular region on disk = radius of torus surrounding the
   // edge
   double h_annulus = r_torus;
-  Warped_disk_with_boundary_pt = 
+  Global_Parameters::Warped_disk_with_boundary_pt = 
     new WarpedCircularDiskWithAnnularInternalBoundary(h_annulus,
-						      Global_Parameters::epsilon,
+						      Global_Parameters::Epsilon,
 						      Global_Parameters::n);
   
   // Number of vertices around perimeter of torus
@@ -515,7 +1020,7 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   // Build disk with torus around the edge
   DiskWithTorusAroundEdgeTetMeshFacetedSurface* disk_with_torus_pt = 
     new DiskWithTorusAroundEdgeTetMeshFacetedSurface(
-      Warped_disk_with_boundary_pt,
+      Global_Parameters::Warped_disk_with_boundary_pt,
       half_nsegment,
       r_torus,
       nvertex_torus,
@@ -605,12 +1110,26 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
 
 #ifdef DO_TETGEN
 
-  // And now build it... 
+  // tetgenio tetgen_data;
+  // build_tetgenio(Outer_boundary_pt, Inner_boundary_pt, tetgen_data);
+  
+  if(Global_Parameters::Split_corner_elements)
+    oomph_info << "\n-------\nSplitting corner elements to avoid locking"
+	       << "\n-------\n\n";
+  
+  // And now build it...
+  // Bulk_mesh_pt = new RefineableTetgenMesh<ELEMENT>(tetgen_data,
+  // 						   split_corner_elements,
+  // 						   this->time_stepper_pt());
+  bool use_attributes = false;
+  
   Bulk_mesh_pt =
     new RefineableTetgenMesh<ELEMENT>(Outer_boundary_pt,
-					 Inner_boundary_pt,
-					 initial_element_volume,
-					 this->time_stepper_pt());
+				      Inner_boundary_pt,
+				      initial_element_volume,				      
+				      this->time_stepper_pt(),
+				      use_attributes,
+				      Global_Parameters::Split_corner_elements);
   
   // Problem is linear so we don't need to transfer the solution to the
   // new mesh; we keep it on for self-test purposes...
@@ -624,6 +1143,24 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
 
 #endif
 
+  /// Mesh as geom object representation of mesh
+  Mesh_as_geom_object_pt = 0;
+
+  // Number of "disks on disk" around the edge where solution is
+  // to be visualised
+  Ndisk_on_disk_plot = 4;
+
+  // Number of azimuthal plot points in "disks on disk" plots 
+  // around the edge where solution is to be visualised
+  Nphi_disk_on_disk_plot = 30;
+ 
+  // Number of radial plot points in "disks on disk" plots 
+  // around the edge where solution is to be visualised
+  Nrho_disk_on_disk_plot = 50;
+ 
+  // Geom object representations need to be (re)built
+  Geom_objects_are_out_of_date = true;
+  
   // Set error estimator for bulk mesh
   Z2ErrorEstimator* error_estimator_pt = new Z2ErrorEstimator;
   Bulk_mesh_pt->spatial_error_estimator_pt() = error_estimator_pt;
@@ -641,9 +1178,7 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   Bulk_mesh_pt->output_boundaries(some_file);
   some_file.close();
   // --------------------------------------------------
-
-  Face_mesh_for_upper_disk_pt = new Mesh;
-    
+  
   // populate the vectors which contain pointers to the elements which
   // have nodes on the disk and are identified as being on the upper or
   // lower disk surface. Also populates the face mesh
@@ -655,33 +1190,54 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   // Add sub-meshes
   add_sub_mesh(Bulk_mesh_pt);
 
-  // QUEHACERES
-  // add_sub_mesh(Face_mesh_for_upper_disk_pt);
+#ifdef USE_SINGULAR_ELEMENTS
+   // check we're not doing pure FE
+  if (Subtract_singularity)
+  {
+    // ================================================================
+    // QUEHACERES need to add additional sinuglarities here...
+    // for the time being we'll do just one edge for the case 
+    
+    // Create element that stores the singular fct and its amplitude
+    //---------------------------------------------------------------
+    ScalableSingularityForNavierStokesElement<ELEMENT>* el_pt =
+      new ScalableSingularityForNavierStokesElement<ELEMENT>;
+
+    // Pass fct pointers:
+    el_pt->unscaled_singular_fct_pt() = &Analytic_Functions::singular_fct_broadside;
+    el_pt->gradient_of_unscaled_singular_fct_pt() =
+      &Analytic_Functions::gradient_of_singular_fct_broadside;
+    
+    // Add to mesh
+    Singular_fct_element_mesh_pt = new Mesh;
+    Singular_fct_element_mesh_pt->add_element_pt(el_pt);
+    
+    add_sub_mesh(Singular_fct_element_mesh_pt);
+
+    // Create face elements that compute contribution to amplitude residual
+    //---------------------------------------------------------------------
+    Face_mesh_for_singularity_integral_pt = new Mesh;
+    
+    // Create face elements for imposed traction
+    //-----------------------------------    
+    Face_mesh_for_imposed_traction_from_augmented_region_pt = new Mesh;
+  }
+  
+  // Create face elements for imposition of BC
+  Face_mesh_for_bc_pt = new Mesh;
+  
+  // Build the face elements
+  create_face_elements();
+
+  // Add 'em to mesh
+  add_sub_mesh(Face_mesh_for_bc_pt);
+  
+#endif
   
   build_global_mesh();
   
   // Complete problem setup
   complete_problem_setup();
- 
-// #ifdef OOMPH_HAS_HYPRE
-  
-  // // Create a new Hypre linear solver
-  // HypreSolver* hypre_linear_solver_pt = new HypreSolver;
- 
-  // // Set the linear solver for problem
-  // linear_solver_pt() = hypre_linear_solver_pt;
- 
-  // // Set some solver parameters
-  // hypre_linear_solver_pt->max_iter() = 100;
-  // hypre_linear_solver_pt->tolerance() = 1e-10;
-  // hypre_linear_solver_pt->amg_simple_smoother() = 1;
-  // hypre_linear_solver_pt->disable_doc_time();
-  // hypre_linear_solver_pt->enable_hypre_error_messages();
-  // hypre_linear_solver_pt->amg_print_level() = 0;
-  // hypre_linear_solver_pt->krylov_print_level() = 0;
-  // hypre_linear_solver_pt->hypre_method() = HypreSolver::BoomerAMG;
-   
-// #endif
 
 // #ifdef OOMPH_HAS_MUMPS
 
@@ -762,6 +1318,8 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
 template<class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::generate_node_to_element_map()
 {
+  Node_to_element_map.clear();
+  
   // populate the lookup which gives all the elements associated with a given
   // node. We loop over all the elements in the mesh, and for each, we then
   // loop over all the nodes and insert the element pointer into the lookup for
@@ -855,9 +1413,6 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 	    Disk_node_to_upper_disk_element_and_index_map[node_pt].insert(entry);
 	  }
 	}
-
-	// and finally, add the face element 
-	Face_mesh_for_upper_disk_pt->add_element_pt(surface_element_pt);
       }
       else 
       {
@@ -1332,10 +1887,10 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 	       << "using quadratic \nshape functions and so the normal will "
 	       << "rotate within each element for a curved \nsurface.\n"
 	       << "  These have been output to: "
-	       << Doc_info.directory() << "/dodgy_upper[lower]_elements.dat, and the "
+	       << Doc_info.directory() << "dodgy_upper[lower]_elements.dat, and the "
 	       << "distances \nof each node from \nthe surface in the surface normal "
 	       << "direction has been output to: \n"
-	       << Doc_info.directory() << "/dodgy_upper[lower]_element_nodal_distances.dat - "
+	       << Doc_info.directory() << "dodgy_upper[lower]_element_nodal_distances.dat - "
 	       << "you may want to check them!\n\n";
   }
   
@@ -2135,9 +2690,11 @@ void FlowAroundDiskProblem<ELEMENT>::duplicate_plate_nodes_and_add_boundaries()
   }
 
   some_file.close();
-  
-  // QUEHACERES check the sync between Disk_node_to_upper_disk_element_and_index_map
-  // and Elements_on_upper_disk_surface_pt
+
+#ifdef PARANOID
+  // For extra comfort,  check the sync between
+  // Disk_node_to_upper_disk_element_and_index_map and
+  // Elements_on_upper_disk_surface_pt
   
   std::set<ELEMENT*> unique_elements_from_map;
   
@@ -2156,42 +2713,180 @@ void FlowAroundDiskProblem<ELEMENT>::duplicate_plate_nodes_and_add_boundaries()
       unique_elements_from_map.insert(el_pt);
     }
   }
-
-  if(unique_elements_from_map == Elements_on_upper_disk_surface_pt)
-    oomph_info << "\n----------\nsets are equal\n-----------\n";
-  else
-    oomph_info << "\n----------\nsets are NOT equal\n-----------\n";
   
-  // @@@@@@@@@@@@@@@@@@@@@@@
-  
-  // QUEHACERES delete
-  // unsigned n_edge_nodes = 0;
-  
-  // for(std::map<Node*, Node*>::iterator it = existing_duplicate_node_pt.begin();
-  //     it != existing_duplicate_node_pt.end(); it++)
-  // {
-  //   Node* node_pt = it->second;
+  if(unique_elements_from_map != Elements_on_upper_disk_surface_pt)
+  {
+    std::ostringstream error_message;
+    error_message << "Error: there is a discrepancy between the set of \n"
+		  << "upper disk elements and the map from disk nodes \n"
+		  << "to upper disk elements\n\n";
     
-  //   // compute the x-y radius
-  //   double x = node_pt->x(0);
-  //   double y = node_pt->x(1);      
-  //   double r = sqrt(x*x + y*y);
+    throw OomphLibError(error_message.str(),
+			OOMPH_CURRENT_FUNCTION,
+			OOMPH_EXCEPTION_LOCATION); 
+  }
+#endif
+  
+}
 
-  //   // tolerance on the outer radius
-  //   double tol = 1e-8;
+//========================================================================
+/// \short function to setup the map from the nodes in the augmented region
+/// to their coordinates in the edge coordinate system (\rho, \zeta, \phi)
+//========================================================================
+template<class ELEMENT>
+void FlowAroundDiskProblem<ELEMENT>::setup_edge_coordinates_map()
+{  
+  // loop over all the elements in the torus region
+  unsigned region_id = Torus_region_id;
+  unsigned n_el = Bulk_mesh_pt->nregion_element(region_id);
+  
+  for (unsigned e=0; e<n_el; e++)
+  {
+    ELEMENT* bulk_elem_pt = dynamic_cast<ELEMENT*>(
+      Bulk_mesh_pt->region_element_pt(region_id, e));
+
+    // Now loop over nodes    
+    unsigned nnod = bulk_elem_pt->nnode();
+    for (unsigned j=0; j<nnod; j++)
+    {      
+      Node* nod_pt = bulk_elem_pt->node_pt(j);
+
+      Vector<double> x(3);
+
+      Vector<double> r_edge(3);
+      Vector<double> normal(3);  
+      Vector<double> tangent(3); 
+      Vector<double> normal_normal(3);   
+
+      // get azimuthal coordinate
+      double zeta = atan2(nod_pt->x(1), nod_pt->x(0));
       
-  //   bool node_is_on_edge_of_disk = (abs(1-r) < tol);
+      Global_Parameters::Warped_disk_with_boundary_pt->
+	boundary_triad(0, zeta, r_edge, tangent, normal, normal_normal);
 
-  //   if(node_is_on_edge_of_disk)
-  //   {
-  //     n_edge_nodes++;
-  //     continue;
-  //   }
-  //   node_pt->x(2) += 0.01;
-  // }
+      Vector<double>r_node_from_edge(3);
 
-  // oomph_info << "n_edge_nodes: " << n_edge_nodes << "\n\n";
-  // @@@@@@@@@@@@@@@@@@@@@@@@
+      double rho = 0;
+      double normal_distance = 0;
+      double binormal_distance = 0;
+      
+      // compute the vector from the edge of the disk to this nodal point,
+      // and the dot-products in the normal and binormal directions
+      for(unsigned i=0; i<3; i++)
+      {
+	r_node_from_edge[i] = nod_pt->x(i) - r_edge[i];
+	rho += pow(r_node_from_edge[i], 2);
+
+	normal_distance += normal[i] * r_node_from_edge[i];
+	binormal_distance += normal_normal[i] * r_node_from_edge[i];
+      }
+
+      // get the radius of this nodal point in the edge coordinates
+      rho = sqrt(rho);
+
+      // get the elevation of this nodal point in the edge coordinates
+      double phi = atan2pi(binormal_distance, normal_distance);
+
+      Vector<double> edge_coordinates(3);
+      edge_coordinates[0] = rho;
+      edge_coordinates[1] = zeta;
+      edge_coordinates[2] = phi;
+
+      // add this node and it's edge coordinates to the map
+      Node_to_edge_coordinates_map_pt->insert(
+	std::pair<Node*, Vector<double> >(nod_pt, edge_coordinates));
+    }
+  }
+}
+
+// ///////////////////////////////////////////////////////////////////////
+// ///////////////////////////////////////////////////////////////////////
+// ///////////////////////////////////////////////////////////////////////
+
+
+//========================================================================
+/// Setup disk on disk plots
+//========================================================================
+template<class ELEMENT>
+void FlowAroundDiskProblem<ELEMENT>::setup_disk_on_disk_plots()
+{
+  // oomph_info << "Not making geom object" << std::endl;
+  // return;
+
+  oomph_info << "Starting make geom object" << std::endl;
+  double t_start=TimingHelpers::timer();
+      
+  // Make new geom object
+  delete Mesh_as_geom_object_pt;
+  Mesh_as_geom_object_pt = new MeshAsGeomObject(Bulk_mesh_pt);
+
+  // Make space for plot points: Disk_on_disk_plot_point[k_disk][i_rho][i_phi]
+  Disk_on_disk_plot_point.resize(Ndisk_on_disk_plot);
+  for (unsigned i=0; i < Ndisk_on_disk_plot; i++)
+  {
+    Disk_on_disk_plot_point[i].resize(Nrho_disk_on_disk_plot);
+    for (unsigned j=0; j < Nrho_disk_on_disk_plot; j++)
+    {
+      Disk_on_disk_plot_point[i][j].resize(Nphi_disk_on_disk_plot);
+    }
+  }
+
+  Vector<double> r_edge(3);
+  Vector<double> normal(3);  
+  Vector<double> tangent(3); 
+  Vector<double> normal_normal(3);   
+  Vector<double> x(3);     
+  Vector<double> s(3);  
+  Vector<double> rho_and_phi(2);
+  GeomObject* geom_object_pt = 0;
+  
+  for (unsigned k=0; k < Ndisk_on_disk_plot; k++)
+  {
+    double theta = double(k) / double(Ndisk_on_disk_plot) *
+      2.0*MathematicalConstants::Pi;
+    
+    Global_Parameters::Warped_disk_with_boundary_pt->
+      boundary_triad(0,theta, r_edge, tangent, normal, normal_normal);
+    
+    for (unsigned i=0; i < Nrho_disk_on_disk_plot; i++)
+    {
+      double rho_min = 0.0;
+      double rho_max = Global_Parameters::disk_on_disk_radius;
+      double rho = rho_min + (rho_max - rho_min) * double(i) /
+	double(Nrho_disk_on_disk_plot-1);
+      
+      rho_and_phi[0] = rho;
+      
+      for (unsigned j=0; j < Nphi_disk_on_disk_plot; j++)
+      {
+        double phi = double(j) / double(Nphi_disk_on_disk_plot-1) *
+	  2.0*MathematicalConstants::Pi;
+        rho_and_phi[1] = phi;
+	
+        x[0] = r_edge[0] + rho*cos(phi)*normal[0] + rho*sin(phi)*normal_normal[0];
+        x[1] = r_edge[1] + rho*cos(phi)*normal[1] + rho*sin(phi)*normal_normal[1];
+        x[2] = r_edge[2] + rho*cos(phi)*normal[2] + rho*sin(phi)*normal_normal[2];
+
+        Mesh_as_geom_object_pt->locate_zeta(x, geom_object_pt, s);
+	
+        if (geom_object_pt == 0)
+	{
+          oomph_info << "Point : " 
+                     << x[0] << " " 
+                     << x[1] << " " 
+                     << x[2] << " "
+                     << " not found in setup of disk on disk plots" 
+                     << std::endl;
+	}        
+        Disk_on_disk_plot_point[k][i][j] =
+	  std::make_pair(rho_and_phi, std::make_pair(geom_object_pt,s));
+      }
+    }
+  }
+
+  oomph_info << "Completed setup of disk on disk plots. This took " 
+             << TimingHelpers::timer()-t_start << " sec"
+             << std::endl;
 }
 
 //========================================================================
@@ -2200,39 +2895,30 @@ void FlowAroundDiskProblem<ELEMENT>::duplicate_plate_nodes_and_add_boundaries()
 template<class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
 {
-  // QUEHACERES for now just use the bulk mesh
-  // // Create the mesh as Geom Object
-  //Face_mesh_as_geom_object_pt = new MeshAsGeomObject(Face_mesh_for_upper_disk_pt);
-  Face_mesh_as_geom_object_pt = new MeshAsGeomObject(Bulk_mesh_pt);
-  
-  unsigned n_sample = 100;
+#ifdef USE_SINGULAR_ELEMENTS
 
-  Vector<double> x(3, 0.0);
-  Radial_sample_point_pt.resize(n_sample);
- 
-  for (unsigned j=0; j<n_sample; j++)
+  if (Subtract_singularity)
   {
-    // radial line along phi=0
-    double phi = 0;
-    double r = j*1.0/n_sample;
     
-    // height of warped disk
-    double z = Global_Parameters::epsilon * r*r*cos(Global_Parameters::n*phi);
-    
-    Radial_sample_point_pt[j].second.resize(3);
-    
-    x[0] = r;
-    x[1] = 0;
-    x[2] = z;
-    
-    // Get the element and its local coordinates
-    Face_mesh_as_geom_object_pt->locate_zeta(x,
-					     Radial_sample_point_pt[j].first,
-					     Radial_sample_point_pt[j].second);
   }
+  
+#endif
   
   // Apply bcs  
   apply_boundary_conditions();
+}
+
+//==start_of_apply_bc=====================================================
+/// \short Helper function to create face elements needed to:
+/// - impose Dirichlet BCs
+/// - impose the additional traction required from the augmented region to
+///   the surrounding bulk elements
+/// - compute the reciprocity integral to determine the singular amplitude
+//========================================================================
+template<class ELEMENT>
+void FlowAroundDiskProblem<ELEMENT>::create_face_elements()
+{
+  // QUEHACERES
 }
 
 //==start_of_apply_bc=====================================================
@@ -2265,6 +2951,9 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
     pinned_boundary_id.push_back(ibound);
   }
 
+  // number of time history values in the problem
+  unsigned ntime = time_stepper_pt()->ndt();
+  
   // Loop over pinned boundaries
   unsigned num_pin_bnd = pinned_boundary_id.size();
   for (unsigned bnd=0; bnd<num_pin_bnd; bnd++)
@@ -2284,35 +2973,39 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
     {
       // grab a pointer to this boundary node
       Node* node_pt = Bulk_mesh_pt->boundary_node_pt(ibound,inod);
-      
-      node_pt->pin(0);
-      node_pt->pin(1);
-      node_pt->pin(2);
-      
-      Vector<double> x(3);
-      x[0] = node_pt->x(0);
-      x[1] = node_pt->x(1);
-      x[2] = node_pt->x(2);
 
-      // set plate velocity
-      if (( (ibound >= First_lower_disk_boundary_id) &&
-  	  (ibound <= Last_lower_disk_boundary_id) ) ||
-	  ( (ibound >= First_upper_disk_boundary_id) &&
-	    (ibound <= Last_upper_disk_boundary_id) ) ) 
-      {
-	
-  	node_pt->set_value(0, Global_Parameters::disk_velocity[0]);
-  	node_pt->set_value(1, Global_Parameters::disk_velocity[1]);
-  	node_pt->set_value(2, Global_Parameters::disk_velocity[2]);
-      }
-      else
-      {
-  	// outer boundaries
-  	node_pt->set_value(0, 0.0);
-  	node_pt->set_value(1, 0.0);
-  	node_pt->set_value(2, 0.0);
-      }
+      Vector<double> x(3);
       
+      // Loop over current and previous timesteps  
+      for (unsigned t=0; t<ntime; t++)
+      {  
+	node_pt->pin(0);
+	node_pt->pin(1);
+	node_pt->pin(2);
+      
+	x[0] = node_pt->x(0);
+	x[1] = node_pt->x(1);
+	x[2] = node_pt->x(2);
+
+	// set plate velocity
+	if (( (ibound >= First_lower_disk_boundary_id) &&
+	      (ibound <= Last_lower_disk_boundary_id) ) ||
+	    ( (ibound >= First_upper_disk_boundary_id) &&
+	      (ibound <= Last_upper_disk_boundary_id) ) ) 
+	{
+	
+	  node_pt->set_value(0, Global_Parameters::disk_velocity[0]);
+	  node_pt->set_value(1, Global_Parameters::disk_velocity[1]);
+	  node_pt->set_value(2, Global_Parameters::disk_velocity[2]);
+	}
+	else
+	{
+	  // outer boundaries
+	  node_pt->set_value(t, 0, 0.0);
+	  node_pt->set_value(t, 1, 0.0);
+	  node_pt->set_value(t, 2, 0.0);
+	}
+      }	
       pin_file << x[0] << " " 
   	       << x[1] << " " 
   	       << x[2] << " " 
@@ -2322,19 +3015,129 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
  
   pin_file.close();
 
+  // ----------------
+  // finally, pin the pressure for a random bulk node to full determine the problem
 
+  // // get a random bulk node
+  Node* nonboundary_node_pt = Bulk_mesh_pt->get_some_non_boundary_node();
+
+  // // QUEHACERES
+  // Node* nonboundary_node_pt = Bulk_mesh_pt->node_pt(1792);
+  
+  // // get an element associated with this node (to get the pressure nodal index)
+  ELEMENT* el_pt = *((Node_to_element_map[nonboundary_node_pt]).begin());
+  
+  // get the nodal index for the pressure
+  unsigned p_index = el_pt->p_index_nst();
+
+  // Loop over current and previous timesteps  
+  for (unsigned t=0; t<ntime; t++)
+  {
+    // pin it to zero
+    nonboundary_node_pt->set_value(t, p_index, -50);
+    nonboundary_node_pt->pin(p_index);
+  }
+       
+  oomph_info << "\nPinning the pressure (p_index=" << p_index<< ") of random node ("
+	     << nonboundary_node_pt->x(0) << ", "
+	     << nonboundary_node_pt->x(1) << ", "
+	     << nonboundary_node_pt->x(2) << ") to zero\n\n";
 
 } // end set bc
+
+
+//== start of set_values_to_singular_solution ============================
+/// Function to assign the singular solution to all nodes of the mesh
+//========================================================================
+template<class ELEMENT>
+void FlowAroundDiskProblem<ELEMENT>::set_values_to_singular_solution()
+{
+  Vector<double> x_temp(3);
+  x_temp[0] = -1.1;
+  x_temp[1] = 0;
+  x_temp[2] = 0;
+
+  Vector<double> u_temp = Analytic_Functions::singular_fct_broadside(x_temp);
+       
+  // get the number of nodes in the mesh
+  unsigned nel = Bulk_mesh_pt->nregion_element(Torus_region_id);
+
+  for(unsigned e=0; e<nel; e++)
+  {
+    FiniteElement* el_pt = Bulk_mesh_pt->region_element_pt(Torus_region_id,e);
+
+    unsigned nnode = el_pt->nnode();
+    
+    for(unsigned i=0; i<nnode; i++)
+    {
+      // get a pointer to this node
+      Node* node_pt = el_pt->node_pt(i);
+
+      // get the position of this node
+      Vector<double> x(3, 0.0);
+      x[0] = node_pt->x(0);
+      x[1] = node_pt->x(1);
+      x[2] = node_pt->x(2);
+    
+      // get the singular solution at this point
+      Vector<double> u(4, 0.0);
+
+      u = Analytic_Functions::singular_fct_in_plane(x);// broadside(x);
+    
+      // assign the velocities
+      node_pt->set_value(0, u[0]);
+      node_pt->set_value(1, u[1]);
+      node_pt->set_value(2, u[2]);
+      
+      // this is a bit naughty, if Lagrange multpliers are used it won't work!
+      if(node_pt->nvalue() == 4)
+      {
+	node_pt->set_value(3, u[3]);
+      }
+    }
+  }
+}
+
+//==start_of_impose_fake_singular_amplitude===============================
+/// Set the singular amplitude to a prescribed value and bypass the proper calculation
+//========================================================================
+template<class ELEMENT>
+void FlowAroundDiskProblem<ELEMENT>::impose_fake_singular_amplitude()
+{
+  // tell all the elements in the sinuglar element mesh about the fake
+  // amplitude to impose
+  for(unsigned e=0; e<Singular_fct_element_mesh_pt->nelement(); e++)
+  {
+    ScalableSingularityForNavierStokesElement<ELEMENT>* el_pt =
+      dynamic_cast<ScalableSingularityForNavierStokesElement<ELEMENT>*>
+      (Singular_fct_element_mesh_pt->element_pt(e));
+  
+    // Change r_C so that C is assigned directly
+    double imposed_amplitude = Global_Parameters::singular_amplitude_for_debug;
+    el_pt->impose_singular_fct_amplitude(imposed_amplitude);
+  }
+}
+
+
+
+
+
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+
+
 
 //========================================================================
 /// Doc the solution
 //========================================================================
 template<class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
-{ 
-
-
-  bool do_bulk_output=true;
+{
+  bool do_bulk_output = true;
   if (CommandLineArgs::command_line_flag_has_been_set("--suppress_bulk_output"))
   {
     do_bulk_output=false;
@@ -2448,12 +3251,12 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
       region_element_pt(region_id,e)->size();
   }
   some_file.close();
-
+  
   // Output bulk elements in region 0
   //--------------------------------- 
   double volume_in_region0 = 0.0;
   sprintf(filename,"%s/soln_in_zero_region%i.dat",Doc_info.directory().c_str(),
-	  Doc_info.number());
+  	  Doc_info.number());
   some_file.open(filename);
   region_id = 0;
   n_el = Bulk_mesh_pt->nregion_element(region_id);
@@ -2461,22 +3264,50 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   {
     if (do_bulk_output) 
     {
-      Bulk_mesh_pt->region_element_pt(region_id,e)->output(some_file,nplot);
+      ELEMENT* el_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->region_element_pt(region_id,e));
+      el_pt->output(some_file,nplot);
     }
     volume_in_region0 += Bulk_mesh_pt->region_element_pt(region_id,e)->size();
   }
   some_file.close();
- 
 
-  // Get total mesh volume
-  double total_mesh_volume = 0.0;
-  n_el = Bulk_mesh_pt->nelement();
-  for (unsigned e=0; e<n_el; e++)
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  // QUEHACERES debug for splitting corners lookup updates  
+  region_id = 0;
+
+  for (unsigned ibound = First_boundary_id_for_outer_boundary;
+       ibound < First_boundary_id_for_outer_boundary+6; ibound++)
   {
-    total_mesh_volume += Bulk_mesh_pt->finite_element_pt(e)->size();
-  }
+    sprintf(filename,"%s/soln_in_zero_region_on_outer_boundary%i_%i.dat",
+	    Doc_info.directory().c_str(), ibound, Doc_info.number());
+    some_file.open(filename);
+    
+    n_el = Bulk_mesh_pt->nboundary_element_in_region(ibound, region_id);
+    for (unsigned e=0; e<n_el; e++)
+    {
+      if (do_bulk_output) 
+      {
+	ELEMENT* el_pt = dynamic_cast<ELEMENT*>(
+	  Bulk_mesh_pt->boundary_element_in_region_pt(ibound, region_id, e));
+	
+	el_pt->output(some_file,nplot);
+      }
+      volume_in_region0 += Bulk_mesh_pt->region_element_pt(region_id,e)->size();
+    }
 
+    some_file.close();
+  }
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  
   // QUEHACERES come back to this 
+  // // Get total mesh volume
+  // double total_mesh_volume = 0.0;
+  // n_el = Bulk_mesh_pt->nelement();
+  // for (unsigned e=0; e<n_el; e++)
+  // {
+  //   total_mesh_volume += Bulk_mesh_pt->finite_element_pt(e)->size();
+  // }
+  
   // // Check volumes:
   // oomph_info << "Error in total region volume balance: " <<
   //   abs(total_mesh_volume-(volume_in_above_disk_region+
@@ -2488,7 +3319,71 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   // oomph_info << "Error in above/below disk region volume balance: " <<
   //   abs(volume_in_above_disk_region-volume_in_below_disk_region)/
   //   volume_in_above_disk_region*100.0 << " % " << std::endl;
- 
+
+  // --------------------------------------------------------------------------
+  // Plot disks around the perimeter of the disk...
+  // --------------------------------------------------------------------------  
+  {
+    if (Geom_objects_are_out_of_date)
+    {
+      // Setup disk on disk plots
+      setup_disk_on_disk_plots();
+    
+      // Now they're not...
+      Geom_objects_are_out_of_date=false;
+    }
+
+    sprintf(filename,"%s/disk_on_disk%i.dat", Doc_info.directory().c_str(),
+	    Doc_info.number());
+    some_file.open(filename);
+    
+    Vector<double> x(3);
+    
+    for (unsigned k=0; k < Ndisk_on_disk_plot; k++)
+    {
+      some_file << "ZONE I=" << Nphi_disk_on_disk_plot 
+		<< ", J=" << Nrho_disk_on_disk_plot << std::endl;
+      
+      for (unsigned i=0; i < Nrho_disk_on_disk_plot; i++)
+      {
+	for (unsigned j=0; j<Nphi_disk_on_disk_plot; j++)
+	{
+	  (Disk_on_disk_plot_point[k][i][j].second.first)->
+	    position(Disk_on_disk_plot_point[k][i][j].second.second,x);
+	  
+	  double rho = (Disk_on_disk_plot_point[k][i][j].first)[0];
+	  double phi = (Disk_on_disk_plot_point[k][i][j].first)[1];
+
+	  // get the interpolated velocity at this point
+	  Vector<double> u(3);
+	  dynamic_cast<ELEMENT*>(Disk_on_disk_plot_point[k][i][j].second.first)->
+	    interpolated_u_nst(Disk_on_disk_plot_point[k][i][j].second.second, u);
+
+	  // get the interpolated pressure at this point
+	  double p = dynamic_cast<ELEMENT*>(Disk_on_disk_plot_point[k][i][j].second.first)->
+	    interpolated_p_nst(Disk_on_disk_plot_point[k][i][j].second.second);
+	  
+	  some_file 
+	    << x[0] << " " 
+	    << x[1] << " " 
+	    << x[2] << " " 
+	    << u[0] << " "
+	    << u[1] << " "
+	    << u[2] << " "
+	    << p    << " "
+	    << rho << " " 
+	    << phi << " "
+	    // QUEHACERES put moffat solution here
+	    // << Global_Parameters::asymptotic_solution(rho,phi) << " "
+	    << std::endl;
+	}
+      }
+    }
+    some_file.close();
+  }
+
+  // --------------------------------------------------------------------------
+  // face elements
 
   sprintf(filename,"%s/face_elements_on_outer_boundary%i.dat",
 	  Doc_info.directory().c_str(),
@@ -2515,6 +3410,40 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
     }    
   }
   some_file.close();
+
+  // @@@@@@@@@@@@
+  // QUEHACERES test out the split element face index lookup
+  sprintf(filename,"%s/face_elements_on_outer_boundary_in_region0_%i.dat",
+	  Doc_info.directory().c_str(),
+	  Doc_info.number());
+  some_file.open(filename);
+  
+  region_id = 0;
+  for(unsigned b = First_boundary_id_for_outer_boundary;
+      b < First_boundary_id_for_outer_boundary + 6; b++)
+  {
+    unsigned n_el = Bulk_mesh_pt->nboundary_element_in_region(b, region_id);
+    for (unsigned e=0; e<n_el; e++)
+    {
+      FiniteElement* el_pt = Bulk_mesh_pt->boundary_element_in_region_pt(b,region_id,e);
+     
+      // What is the index of the face of the bulk element at the boundary
+      int face_index = Bulk_mesh_pt->face_index_at_boundary_in_region(b,region_id,e);
+
+      // Build the corresponding face element
+      NavierStokesFaceElement<ELEMENT>* surface_element_pt =
+      	new NavierStokesFaceElement<ELEMENT>(el_pt,face_index);
+
+      surface_element_pt->output(some_file, nplot);
+
+      delete surface_element_pt;
+    }    
+  }
+  some_file.close();
+
+  
+  // @@@@@@@@@@@
+
   
   // Attach face elements to boundary of torus
   //------------------------------------------
@@ -2617,7 +3546,7 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
       int face_index = Bulk_mesh_pt->
 	face_index_at_boundary_in_region(b,region_id,e);
       
-      // Build the corresponding flux jump element
+      // Build the corresponding face element
       NavierStokesFaceElement<ELEMENT>* surface_element_pt =
       	new NavierStokesFaceElement<ELEMENT>(el_pt, face_index);
      
@@ -2764,51 +3693,6 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   }
   some_file.close();
 
-  // -------------------------------------------------------------
-  sprintf(filename,
-	  "%s/radial_solution_phi0%d.dat",
-	  Doc_info.directory().c_str(), Doc_info.number() );
-  some_file.open(filename);
-
-  // global coordinates
-  Vector<double> x(3);
-
-  // loop over sample points
-  for (Vector<std::pair<GeomObject*,Vector<double> > >::iterator it =
-	 Radial_sample_point_pt.begin(); it != Radial_sample_point_pt.end(); it++)
-  {
-    // get element containing current sample point
-    NavierStokesFaceElement<ELEMENT>* el_pt =
-      dynamic_cast<NavierStokesFaceElement<ELEMENT>*>(it->first);
-
-    // get local coordinate for this sample point
-    Vector<double> s = it->second;
-
-    // get global coordinate corresponding to this elements local coord
-    el_pt->interpolated_x(s, x);
-
-    // get interpolated solution at this local coordinate
-    Vector<double> u(3);
-
-    el_pt->interpolated_u_nst(s, u);
-    
-    for(unsigned i=0; i<3; i++)
-    {      
-      some_file << x[0] << " ";
-    }
-
-    // add the pressure
-    u.push_back(el_pt->interpolated_p_nst(s));
-
-    // output
-    for(unsigned i=0; i<4; i++)
-    {
-      some_file << u[i] << " ";
-    }
-    some_file << std::endl;
-  }
-  some_file.close();
-  
   // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
   
   // -------------------------------------------------------------
@@ -2851,7 +3735,7 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   sprintf(filename,"%s/soln%i.dat",Doc_info.directory().c_str(),
 	  Doc_info.number());
   some_file.open(filename);
-  if (do_bulk_output) Bulk_mesh_pt->output(some_file,nplot);
+  if (do_bulk_output) Bulk_mesh_pt->output_paraview(some_file,nplot);
   some_file.close();
 
   // Output solution showing element outlines
@@ -2936,7 +3820,19 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 /// Driver
 //========================================================================
 int main(int argc, char* argv[])
-{  
+{
+
+#ifdef USE_SINGULAR_ELEMENTS
+  oomph_info << "====== Code compiled using singular elements ======\n";
+#else
+  oomph_info << "====== Code compiled using regular FE elements ======\n\n";
+#endif
+#ifdef USE_FD_JACOBIAN
+  oomph_info << "====== Using finite-diff jacobian ======\n";
+#else
+  oomph_info << "====== Using analytic jacobian ======\n\n";
+#endif
+  
   // set up the multi-processor interface
   MPI_Helpers::init(argc,argv);
   
@@ -2946,8 +3842,16 @@ int main(int argc, char* argv[])
   // length of downstream region occupied by impedance elements
   CommandLineArgs::specify_command_line_flag("--suppress_bulk_output");
 
+  // extra output to describe equation numbers
   CommandLineArgs::specify_command_line_flag("--describe_dofs");
   CommandLineArgs::specify_command_line_flag("--describe_nodes");
+
+  // flag to specify we want to do a pure FE run, no augmented singularity soln
+  CommandLineArgs::specify_command_line_flag("--dont_subtract_singularity");
+
+  // Value of the fake singular amplitude to impose on the solution for debug
+  CommandLineArgs::specify_command_line_flag(  "--set_sing_amplitude",
+					       &Global_Parameters::singular_amplitude_for_debug);
   
   // rigid body velocity of the plate
   CommandLineArgs::specify_command_line_flag("--velocity_x",
@@ -2957,17 +3861,31 @@ int main(int argc, char* argv[])
   CommandLineArgs::specify_command_line_flag("--velocity_z",
 					     &Global_Parameters::disk_velocity[2]);
 
+  // half width of the container box (disk radius is 1)
+  CommandLineArgs::specify_command_line_flag("--box_half_width",
+					     &Global_Parameters::Box_half_width);
+
+  // half length of the container box
+  CommandLineArgs::specify_command_line_flag("--box_half_height",
+					     &Global_Parameters::Box_half_height);
+  
   // amplitude of the warping of the disk
   CommandLineArgs::specify_command_line_flag("--epsilon",
-					     &Global_Parameters::epsilon);
+					     &Global_Parameters::Epsilon);
 
   // wavenumber of the warping of the disk
   CommandLineArgs::specify_command_line_flag("--n",
 					     &Global_Parameters::n);
-  
+
+  // prevent the splitting of corner elements, which may cause locking but prevents
+  // the region element issue
+  CommandLineArgs::specify_command_line_flag("--dont_split_corner_elements");
+
   // get output directory
   CommandLineArgs::specify_command_line_flag("--dir", &Global_Parameters::output_directory);
- 
+
+  CommandLineArgs::specify_command_line_flag("--set_initial_conditions_to_singular_solution");
+  
 #ifndef DO_TETGEN
 
   // Gmsh command line invocation
@@ -2977,8 +3895,10 @@ int main(int argc, char* argv[])
 
 #endif
 
+  bool throw_on_unrecognised_flags = true;
+  
   // Parse command line
-  CommandLineArgs::parse_and_assign(); 
+  CommandLineArgs::parse_and_assign(throw_on_unrecognised_flags);
  
   // Doc what has actually been specified on the command line
   CommandLineArgs::doc_specified_flags();
@@ -3001,7 +3921,37 @@ int main(int argc, char* argv[])
 
 #endif
 
+  if (CommandLineArgs::command_line_flag_has_been_set("--dont_split_corner_elements"))
+  {
+    Global_Parameters::Split_corner_elements = false;
+  }
 
+#ifdef USE_SINGULAR_ELEMENTS  
+  if (CommandLineArgs::command_line_flag_has_been_set("--set_sing_amplitude") &&  
+      CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
+  {
+    ostringstream error_message;
+    error_message << "It doesn't make sense to both specify "
+		  << "--dont_subtract_singularity and --set_sing_amplitude!\n";
+      
+    throw OomphLibError(error_message.str(), 
+			OOMPH_CURRENT_FUNCTION,
+			OOMPH_EXCEPTION_LOCATION);
+  }
+#else
+  if (CommandLineArgs::command_line_flag_has_been_set("--set_sing_amplitude") ||
+      CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
+  {
+    ostringstream error_message;
+    error_message << "Code has been compiled without singular elements so "
+		  << "specifying --dont_subtract_singularity or "
+		  << "--set_sing_amplitude doesn't make sense!\n";
+      
+    throw OomphLibError(error_message.str(), 
+			OOMPH_CURRENT_FUNCTION,
+			OOMPH_EXCEPTION_LOCATION);
+  }
+#endif
   
   // Note that this can make tetgen die!
   //feenableexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW);
@@ -3009,24 +3959,79 @@ int main(int argc, char* argv[])
   // Shut up prefix
   oomph_info.output_modifier_pt() = &default_output_modifier;
 
-  // Number of output points per edge
-  // QUEHACERES 2 for mesh debug
-  unsigned nplot = 2; // 5;
-
   // Build problem
+#ifdef USE_SINGULAR_ELEMENTS
+  FlowAroundDiskProblem <ProjectableTaylorHoodElement<
+    TNavierStokesElementWithSingularity<3,3> > > problem;
+
+  if (CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
+  {
+    problem.subtract_singularity(false);
+  }
+  else
+  {
+    problem.subtract_singularity(true);
+  }
+
+  // are we imposing the amplitude directly and bypassing the calculation?
+  if (CommandLineArgs::command_line_flag_has_been_set("--set_sing_amplitude") )
+  {
+    problem.impose_fake_singular_amplitude();
+  }   
+  
+#else
   FlowAroundDiskProblem <ProjectableTaylorHoodElement<TTaylorHoodElement<3> > > problem;
+#endif
+
+
+  // for debug
+  if (CommandLineArgs::command_line_flag_has_been_set(
+	"--set_initial_conditions_to_singular_solution") )    
+  {
+    problem.set_values_to_singular_solution();
+  }
 
   // // QUEHACERES for debug
   // problem.newton_solver_tolerance() = 5e-8;
+
+  // Number of output points per edge
+  // QUEHACERES 2 for mesh debug
+  unsigned nplot = 2; // 5;
   
   //Output initial guess
   problem.doc_solution(nplot);
+
+  return 0;
   
   unsigned max_adapt = 0; 
   for (unsigned i=0; i<=max_adapt; i++)
   {
-    // Solve the bastard!
-    problem.newton_solve();
+    try
+    {
+      // Solve the bastard!
+      problem.newton_solve();
+    }
+    catch (const std::exception& ex)
+    {
+      // output the jacobian if it's singular
+      
+      // residual vector and Jacobian matrix
+      DoubleVector r;
+      CRDoubleMatrix jac;
+
+      problem.get_jacobian(r,jac);
+
+      char filename[100];
+      ofstream some_file;
+      
+      sprintf(filename,"%s/singular_jacobian_sparse%i.dat", problem.doc_info().directory().c_str(),
+	      problem.doc_info().number());
+      some_file.open(filename);
+      
+      jac.sparse_indexed_output(some_file);
+
+      some_file.close();
+    }
 
     //Output solution
     problem.doc_solution(nplot);
