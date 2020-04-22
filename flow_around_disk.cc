@@ -57,16 +57,16 @@
 #include "tetmesh_faceted_surfaces.h"
 
 // the analytic solution for flow around an edge
-#include "moffat_solution.h"
+#include "moffatt_solution.h"
+
+// include classes for vector and matrix algebra
+#include "additional_maths.h"
 
 // Tetgen or Gmsh
 #define DO_TETGEN
 
 
 using namespace oomph;
-
-template<class ELEMENT>
-class FlowAroundDiskProblem;
 
 ///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
@@ -114,14 +114,31 @@ namespace Global_Parameters
   double Epsilon = 0.1;
   unsigned n = 5;
 
+  // cross-sectional radius of the torus
+  double R_torus = 0.1;
+
+  // the number of line segments making up half the perimeter of the disk
+  unsigned Half_nsegment_disk = 30;
+
+  // number of vertices on the cross-sectional circles of the torus
+  unsigned Nvertex_torus = 20;
+  
   // size of the radially aligned disks used for outputting the solution at points
   // around the disk edge
   double disk_on_disk_radius = 0.2;
+
+  // zero is default, i.e. maximum possible element volume which respects
+  // torus boundary discretisation
+  double Target_element_volume_in_torus_region = 0;
   
   // fake amplitude to impose for debug
   double singular_amplitude_for_debug = 0;
-  
+
+  // split corner elements which have all their nodes pinned on the outer boundary
   bool Split_corner_elements = true;
+
+  // do we want to turn the top outer boundary into a traction BC for debug?
+  bool Do_gupta_traction_problem = false;
   
   // offset for boundary ID numbering, essentially the newly created upper
   // disk boundaries will be numbered as the corresponding lower disk boundary
@@ -131,10 +148,11 @@ namespace Global_Parameters
   
   // store the warped disk object so that we can use it to get
   // surface normals
-  WarpedCircularDiskWithAnnularInternalBoundary* Warped_disk_with_boundary_pt;  
+  WarpedCircularDiskWithAnnularInternalBoundary* Warped_disk_with_boundary_pt;
+
+  MeshAsGeomObject* mesh_as_geom_object_pt;
 }
 
-///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
 
@@ -169,7 +187,7 @@ namespace Analytic_Functions
     if(theta < tol)
     {
       std::ostringstream error_message;
-      error_message << "This function should only be passed positive angles in [0,2\pi]\n\n";
+      error_message << "This function should only be passed positive angles in [0,2pi]\n\n";
 
       throw OomphLibError(error_message.str(),
                               OOMPH_CURRENT_FUNCTION,
@@ -192,86 +210,111 @@ namespace Analytic_Functions
 
     return theta_flipped;
   }  
-
-  // QUEHACERES delete
-  typedef Vector<double> EdgeCoordinateVelocity;
-
+  
   /// \short Function to convert 2D Polar derivatives (du/dr, du/dtheta, dv/dr, dv/dtheta)
-  // to Cartesian derivatives (dux/dx, dux/dy, duy/dx, duy/dy)
-  DenseMatrix<double> polar_to_cartesian_derivatives_2d(const DenseMatrix<double> grad_u_polar,
-							const Vector<double> u_polar,
-							const double r, double theta)
+  // to 3D Cartesian derivatives (dux/dx, dux/dy, duy/dx, duy/dy)
+  DenseMatrix<double> polar_to_cartesian_derivatives_3d(
+    const DenseMatrix<double>& grad_u_polar,
+    const Vector<double>& u_polar,
+    const Vector<double>& dx,
+    const double& rho, const double& zeta, const double& phi,
+    const mVector& rho_hat, const mVector& phi_hat,
+    const Vector<double>& s, const Vector<double>& n,
+    const Vector<mVector>& ds_dx, const Vector<mVector>& dn_dx,
+    const TransformationMatrix& T, const TransformationMatrix& dT_dzeta,
+    const TransformationMatrix& dT_dphi)
   {
     // shorthand for polar components
     double u = u_polar[0];
     double v = u_polar[1];
 
-    double du_dr     = grad_u_polar(0,0);
-    double du_dtheta = grad_u_polar(0,1);
-    double dv_dr     = grad_u_polar(1,0);
-    double dv_dtheta = grad_u_polar(1,1);
-       
+    double du_drho = grad_u_polar(0,0);
+    double du_dphi = grad_u_polar(0,1);
+    double dv_drho = grad_u_polar(1,0);
+    double dv_dphi = grad_u_polar(1,1);
+
+    double drho_dx = dx[0] / rho;
+    double drho_dy = dx[1] / rho;
+    double drho_dz = dx[2] / rho;
+    
+    double dphi_dx = -dx[0]*dx[2] / (sqrt(dx[0]*dx[0] + dx[1]*dx[1]) * rho*rho);
+    double dphi_dy = -dx[1]*dx[2] / (sqrt(dx[0]*dx[0] + dx[1]*dx[1]) * rho*rho);
+    double dphi_dz = sqrt(dx[0]*dx[0] + dx[1]*dx[1]) / (rho*rho);
+
+    double dzeta_dx = -dx[1] / (dx[0]*dx[0] + dx[1]*dx[1]);
+    double dzeta_dy =  dx[0] / (dx[0]*dx[0] + dx[1]*dx[1]);
+    double dzeta_dz = 0;
+    
+    mVector drho_hat_dx = -(T * ds_dx[0]) - (dT_dzeta * s) * dzeta_dx - (dT_dphi * s) * dphi_dx;
+    mVector drho_hat_dy = -(T * ds_dx[1]) - (dT_dzeta * s) * dzeta_dy - (dT_dphi * s) * dphi_dy;
+    mVector drho_hat_dz = -(T * ds_dx[2]) - (dT_dzeta * s) * dzeta_dz - (dT_dphi * s) * dphi_dz;
+
+    mVector dphi_hat_dx = (T * dn_dx[0]) + (dT_dzeta * n) * dzeta_dx + (dT_dphi * n) * dphi_dx;
+    mVector dphi_hat_dy = (T * dn_dx[1]) + (dT_dzeta * n) * dzeta_dy + (dT_dphi * n) * dphi_dy;
+    mVector dphi_hat_dz = (T * dn_dx[2]) + (dT_dzeta * n) * dzeta_dz + (dT_dphi * n) * dphi_dz;
+    
     // output cartesian tensor du_i/dx_j
-    DenseMatrix<double> du_dx(2, 2, 0.0);
+    DenseMatrix<double> du_dx(3, 3, 0.0);
 
     // dux_dx
-    du_dx(0,0) = cos(theta) * (du_dr*cos(theta) - dv_dr*sin(theta))
-      -(1.0/r)*sin(theta) * (du_dtheta*cos(theta) - u*sin(theta) -
-    			     dv_dtheta*sin(theta) - v*cos(theta));
-  
+    du_dx(0,0) = (rho_hat * mVector::e_x()) * (du_drho * drho_dx + du_dphi * dphi_dx) +
+      (phi_hat * mVector::e_x()) * (dv_drho * drho_dx + dv_dphi * dphi_dx) +
+      u * (drho_hat_dx * mVector::e_x()) + v * (dphi_hat_dx * mVector::e_x());
+
     // dux_dy
-    du_dx(0,1) = sin(theta) * (du_dr*cos(theta) - dv_dr*sin(theta))
-      +(1.0/r)*cos(theta) * (du_dtheta*cos(theta) - u*sin(theta) -
-    			     dv_dtheta*sin(theta) - v*cos(theta));
+    du_dx(0,1) = (rho_hat * mVector::e_x()) * (du_drho * drho_dy + du_dphi * dphi_dy) +
+      (phi_hat * mVector::e_x()) * (dv_drho * drho_dy + dv_dphi * dphi_dy) +
+      u * (drho_hat_dy * mVector::e_x()) + v * (dphi_hat_dy * mVector::e_x());
+
+    // dux_dz
+    du_dx(0,2) = (rho_hat * mVector::e_x()) * (du_drho * drho_dz + du_dphi * dphi_dz) +
+      (phi_hat * mVector::e_x()) * (dv_drho * drho_dz + dv_dphi * dphi_dz) +
+      u * (drho_hat_dz * mVector::e_x()) + v * (dphi_hat_dz * mVector::e_x());
 
     // duy_dx
-    du_dx(1,0) = cos(theta) * (du_dr*sin(theta) + dv_dr*cos(theta))
-      -(1.0/r)*sin(theta) * (du_dtheta*sin(theta) + u*cos(theta) +
-    			     dv_dtheta*cos(theta) - v*sin(theta));
+    du_dx(1,0) = (rho_hat * mVector::e_y()) * (du_drho * drho_dx + du_dphi * dphi_dx) +
+      (phi_hat * mVector::e_y()) * (dv_drho * drho_dx + dv_dphi * dphi_dx) +
+      u * (drho_hat_dx * mVector::e_y()) + v * (dphi_hat_dx * mVector::e_y());
 
     // duy_dy
-    du_dx(1,1) = sin(theta) * (du_dr*sin(theta) + dv_dr*cos(theta))
-      +(1.0/r)*cos(theta) * (du_dtheta*sin(theta) + u*cos(theta) +
-    			     dv_dtheta*cos(theta) - v*sin(theta));
+    du_dx(1,1) = (rho_hat * mVector::e_y()) * (du_drho * drho_dy + du_dphi * dphi_dy) +
+      (phi_hat * mVector::e_y()) * (dv_drho * drho_dy + dv_dphi * dphi_dy) +
+      u * (drho_hat_dy * mVector::e_y()) + v * (dphi_hat_dy * mVector::e_y());
 
+    // duy_dz
+    du_dx(1,2) = (rho_hat * mVector::e_y()) * (du_drho * drho_dz + du_dphi * dphi_dz) +
+      (phi_hat * mVector::e_y()) * (dv_drho * drho_dz + dv_dphi * dphi_dz) +
+      u * (drho_hat_dz * mVector::e_y()) + v * (dphi_hat_dz * mVector::e_y());
+    
+    // duz_dx
+    du_dx(2,0) = (rho_hat * mVector::e_z()) * (du_drho * drho_dx + du_dphi * dphi_dx) +
+      (phi_hat * mVector::e_z()) * (dv_drho * drho_dx + dv_dphi * dphi_dx) +
+      u * (drho_hat_dx * mVector::e_z()) + v * (dphi_hat_dx * mVector::e_z());
+
+    // duz_dy
+    du_dx(2,1) = (rho_hat * mVector::e_z()) * (du_drho * drho_dy + du_dphi * dphi_dy) +
+      (phi_hat * mVector::e_z()) * (dv_drho * drho_dy + dv_dphi * dphi_dy) +
+      u * (drho_hat_dy * mVector::e_z()) + v * (dphi_hat_dy * mVector::e_z());
+
+    // duz_dz
+    du_dx(2,2) = (rho_hat * mVector::e_z()) * (du_drho * drho_dz + du_dphi * dphi_dz) +
+      (phi_hat * mVector::e_z()) * (dv_drho * drho_dz + dv_dphi * dphi_dz) +
+      u * (drho_hat_dz * mVector::e_z()) + v * (dphi_hat_dz * mVector::e_z());
+    
     return du_dx;
-  }
-
-  Vector<double> polar_velocity_to_cartesian(const double& zeta,
-					     const double& alpha,
-					     const Vector<double>& u_polar)
-  {
-    // velocity in Cartesian
-    Vector<double> u_cartesian(3);
-
-    // QUEHACERES from the tinternets
-    // u_cartesian[0] = u_polar[0]*cos(alpha)*cos(zeta) + u_polar[1]*sin(alpha)*cos(zeta);
-    // u_cartesian[1] = u_polar[0]*cos(alpha)*sin(zeta) + u_polar[1]*sin(alpha)*sin(zeta);
-    // u_cartesian[2] = u_polar[0]*sin(alpha)           - u_polar[1]*cos(alpha);
-      
-    // QUEHACERES own derivation
-    u_cartesian[0] = u_polar[0]*cos(alpha)*cos(zeta) - u_polar[1]*sin(alpha)*cos(zeta);
-    u_cartesian[1] = u_polar[0]*cos(alpha)*sin(zeta) - u_polar[1]*sin(alpha)*sin(zeta);
-    u_cartesian[2] = u_polar[0]*sin(alpha) + u_polar[1]*cos(alpha);
-      
-    // QUEHACERES probs wrong
-    // u_cartesian[0] = speed * cos(phi + angle_of_normal + angle_of_velocity_rzp) * cos(zeta);
-    // u_cartesian[1] = speed * cos(phi + angle_of_normal + angle_of_velocity_rzp) * sin(zeta);
-    // u_cartesian[2] = speed * sin(phi + angle_of_normal + angle_of_velocity_rzp);
-
-    return u_cartesian;
   }
   
   /// \short Newtonian stress tensor
-  DenseMatrix<double> newtonian_stress(const DenseMatrix<double>& strain_rate,
+  DenseMatrix<double> stress(const DenseMatrix<double>& strain_rate,
 				       const double& p)
   {
+    const unsigned dim = 3;
     // \tau_{ij}
-    DenseMatrix<double> stress(2,2);
+    DenseMatrix<double> stress(dim,dim);
     
-    for(unsigned i=0; i<2; i++)
+    for(unsigned i=0; i<dim; i++)
     {
-      for(unsigned j=0; j<2; j++)
+      for(unsigned j=0; j<dim; j++)
       {
 	// Newtonian constitutive relation
 	stress(i,j) = -p*Analytic_Functions::delta(i,j) + 2.0*strain_rate(i,j);
@@ -281,39 +324,103 @@ namespace Analytic_Functions
     return stress;
   }
 
+  // function which takes the Cartesian coordinates of a point in the fluid bulk
+  // and a boundary zeta value for the disk and computes the normal distance from
+  // this point to the n-t plane at this value of zeta
+  void distance_from_point_to_sn_plane(const Vector<double>& parameters,
+				       const Vector<double>& unknowns,
+				       Vector<double>& residuals)
+  {
+    // interpret the parameters
+    mVector x(3,0);
+    x[0] = parameters[0];
+    x[1] = parameters[1];
+    x[2] = parameters[2];
+
+    double zeta = unknowns[0];
+
+    mVector r_disk_edge(3);
+    mVector tangent(3);
+    mVector surface_normal(3);
+    mVector normal(3);
+    
+    // get the unit normal from the disk-like geometric object at this zeta
+    Global_Parameters::Warped_disk_with_boundary_pt->
+      surface_vectors_at_boundary(0, zeta, r_disk_edge, tangent,
+				  normal, surface_normal);
+
+    // normal distance from the bulk point x to the plane defined by the
+    // outer-unit normal t
+    double d = (x - r_disk_edge) * tangent;
+
+    residuals.resize(1);
+    residuals[0] = d;
+  }
+  
   void singular_fct_and_gradient(const Vector<double>& x,
 				 const double& A, const double& B,
 				 Vector<double>& u_cartesian,
 				 DenseMatrix<double>& du_dx)
   {
     const double infinity = 103;
-      
-    // compute the (\rho,\zeta,\phi) coordinates
-    double zeta = atan2pi(x[1], x[0]);
-      
-    double b_dummy = 0;
-    Vector<double> r_disk_edge(3);
-    Vector<double> tangent_dummy(3);
-    Vector<double> binormal_dummy(3);
-    Vector<double> normal(3);
 
+    // ------------------------------------------
+    // compute the (\rho,\zeta,\phi) coordinates
+
+    // starting guess for boundary zeta is the zeta for a flat disk
+    double zeta_0 = atan2pi(x[1], x[0]);
+
+    Vector<double> unknowns(1);
+    unknowns[0] = zeta_0;
+
+    // do the solve to get the boundary zeta
+    try
+    {
+      BlackBoxFDNewtonSolver::black_box_fd_newton_solve(
+	&distance_from_point_to_sn_plane, x, unknowns);
+    }
+    catch(const std::exception e)
+    {
+      std::ostringstream error_message;
+      error_message << "Couldn't find zeta for the bulk point ("
+		    << x[0] << ", " << x[1] << ", " << x[2] << ")\n\n";
+
+      throw OomphLibError(error_message.str(),
+                              OOMPH_CURRENT_FUNCTION,
+                              OOMPH_EXCEPTION_LOCATION);
+    }
+    
+    // interpret the solve
+    double zeta = unknowns[0];
+          
+    double b_dummy = 0;
+    mVector r_disk_edge(3);
+    mVector tangent(3);
+    mVector binormal(3);
+    mVector normal(3);
+    
     // get the unit normal from the disk-like geometric object at this zeta
     Global_Parameters::Warped_disk_with_boundary_pt->
-      boundary_triad(b_dummy, zeta, r_disk_edge, tangent_dummy,
-		     normal, binormal_dummy);
+      surface_vectors_at_boundary(b_dummy, zeta, r_disk_edge, tangent,
+				  normal, binormal);
     
-    // shorthands
-    double rho  = sqrt(pow(x[0]-r_disk_edge[0], 2) +
-		       pow(x[1]-r_disk_edge[1], 2) +
-		       pow(x[2]-r_disk_edge[2], 2));
-
+    // QUEHACERES delete once surface_vectors work
+    // Global_Parameters::Warped_disk_with_boundary_pt->
+    //   boundary_triad(b_dummy, zeta, r_disk_edge, tangent_dummy,
+    // 		     normal, binormal);
+    
+     // QUEHACERES delete once surface_vectors works!
+     // the WarpedDisk geom object seems to return the binormal in the negative
+     // z direction for a flat plate, so we'll flip it
+     // binormal = -binormal;
+    
     // compute the rho vector, the vector from the edge of the disk at this
     // zeta to the point in question
-    Vector<double> rho_vector(3);
-    rho_vector[0] = x[0] - r_disk_edge[0];
-    rho_vector[1] = x[1] - r_disk_edge[1];
-    rho_vector[2] = x[2] - r_disk_edge[2];
+    mVector rho_vector = -(r_disk_edge - x);
 
+    // shorthands
+    double rho  = rho_vector.magnitude();
+    
     // angle of the rho vector with respect to the x-y plane of the global
     // Cartesian coordinate system
     double angle_of_rho_wrt_xy_plane =
@@ -323,101 +430,222 @@ namespace Analytic_Functions
     // the angle the edge of the sheet makes with the x-y plane
     double angle_of_normal_wrt_xy_plane = atan2pi(normal[2],
 				   sqrt(normal[0]*normal[0]+normal[1]*normal[1]));
-        
-    // dot product of this vector with the outerward normal
-    double rho_dot_normal = rho_vector[0]*normal[0] +
-                            rho_vector[1]*normal[1] +
-                            rho_vector[2]*normal[2];
+
+    // QUEHACERES delete once U matrix works
+    // // dot product of this vector with the outerward normal
+    // double rho_dot_normal = rho_vector * normal;
 
     // angle of inclination to the point in question from the outer normal vector
-    double phi = 0;
+    double elevation_relative_to_disk_edge = 0;
     double tol = 1e-8;
     if(rho > tol)
     {
       if((angle_of_rho_wrt_xy_plane < angle_of_normal_wrt_xy_plane) &&
 	(angle_of_rho_wrt_xy_plane > angle_of_normal_wrt_xy_plane - tol) )
       {
-	phi = 0;
+	elevation_relative_to_disk_edge = 0;
       }
       else
       {
 	if(angle_of_rho_wrt_xy_plane > angle_of_normal_wrt_xy_plane)
 	{
-	  // phi is the angle between the two
-	  phi = angle_of_rho_wrt_xy_plane - angle_of_normal_wrt_xy_plane;
+	  // elevation is the angle between the two
+	  elevation_relative_to_disk_edge =
+	    angle_of_rho_wrt_xy_plane - angle_of_normal_wrt_xy_plane;
 	}
 	else
 	{
 	  // otherwise it's the obtuse angle between them
-	  phi = 2*MathematicalConstants::Pi -
+	  elevation_relative_to_disk_edge = 2*MathematicalConstants::Pi -
 	    (angle_of_normal_wrt_xy_plane - angle_of_rho_wrt_xy_plane);
 	}
       } 
-      // QUEHACERES
-      // double scaled_dot_product = rho_dot_normal/rho;
-      
-      // if(scaled_dot_product*scaled_dot_product <= 1)
-      // {
-      // 	phi = acos(rho_dot_normal/ rho);
-      // }
-      // else
-      // {
-      // 	// catch the case where this rounds to a value slightly > 1 or slightly <-1
-      // 	// if scaled_dot_product ~ -1 then the angle is 0, it's ~1 then its pi
-      // 	phi = (scaled_dot_product > 0) ? 0 : MathematicalConstants::Pi;
-      // }
     }
 
-    // QUEHACERES don' need to subtract, phi is already the angle from the normal
-    double elevation_relative_to_disk_edge = phi; // - angle_of_normal;
+    // mVector rho_hat = normal * cos(elevation_relative_to_disk_edge) +
+    //   binormal * sin(elevation_relative_to_disk_edge);
+
+    // mVector phi_hat = normal * sin(elevation_relative_to_disk_edge) -
+    //   binormal * cos(elevation_relative_to_disk_edge);
     
     // now account for the reflection of the moffat solution, which assumes
     // the semi-infinite plate is at x>0 not x<0 as we have with this coordinate system
-    double moffat_angle = reflect_angle_wrt_z_axis(elevation_relative_to_disk_edge);  
+    double phi = reflect_angle_wrt_z_axis(elevation_relative_to_disk_edge);  
 
+    mVector rho_hat = -normal * cos(phi) + binormal * sin(phi);
+
+    // the - sign in front of binormal component has been cancelled out by the angle
+    // flip, since cos(pi-x) = -cos(x)
+    mVector phi_hat = normal * sin(phi) + binormal * cos(phi);
+        
     // polar derivatives of polar velocity components,
     // i.e. dur_dr, dur_dphi, duphi_dr, duphi_dphi
     DenseMatrix<double> u_polar_derivatives(2,2);
 
     // get the 2D polar Moffat solution (third component is pressure)
-    Vector<double> u_polar(3);
-    moffat_solution(rho, moffat_angle, A, B, u_polar, u_polar_derivatives);
-
-    // QUEHACERES come back to this
+    mVector u_polar(3);
+    moffatt_solution(rho, phi, A, B, u_polar, u_polar_derivatives);
+    
     // convert the polar derivatives to cartesian derivatives
-    du_dx.resize(2,2);
-    // du_dx = polar_to_cartesian_derivatives_2d(u_polar_derivatives, u_polar, rho, phi_reflected);
+    du_dx.resize(3,3);
     
     // ----------------
     // now use the outer normal to convert the rzp velocity into Cartesians
 
-    u_cartesian.resize(3);
+    mVector zeta_hat(3);
+    zeta_hat[0] = -sin(zeta);
+    zeta_hat[1] =  cos(zeta);
     
+    u_cartesian.resize(3);
+
+    Vector<mVector> e(3);
+    e[0] = mVector::e_x();
+    e[1] = mVector::e_y();
+    e[2] = mVector::e_z();
+
+    Vector<mVector> xi(3);
+    xi[0] = rho_hat;
+    xi[1] = mVector(3,0); //zeta_hat;
+    xi[2] = phi_hat;
+    
+    TransformationMatrix U(3,3);
+    for(unsigned i=0; i<3; i++)
+    {
+      for(unsigned j=0; j<3; j++)
+      {
+	U(i,j) = e[i] * xi[j];
+      }
+    }
+
+    mVector u_moffat(3);
+    u_moffat[0] = u_polar[0];
+    u_moffat[1] = 0; // QUEHACERES delete? (u_polar[0]*sin(phi) + u_polar[1]*cos(phi))
+      // * (binormal * zeta_hat) +
+      // (u_polar[0]*cos(phi) + u_polar[1]*sin(phi)) * (normal * zeta_hat);
+    u_moffat[2] = u_polar[1];
+
     // do the conversion
     if(rho > tol)
     {
-      // total angle of u vector relative to x-y plane
-      // QUEHACERES this probably should be phi_reflected, write comment if it is
-      double alpha = elevation_relative_to_disk_edge + angle_of_normal_wrt_xy_plane;
-
-      // flip sign of the angular velocity component to account for the
-      // reflection of the moffat solution
-      u_polar[1] = -u_polar[1];
-      
       // convert polar velocities to Cartesian
-      u_cartesian = polar_velocity_to_cartesian(zeta, alpha, u_polar);
+      u_cartesian = U*u_moffat;
+    
+      DenseMatrix<double> dtangent_dx(3,3,0.0);
+      DenseMatrix<double> dnormal_dx(3,3,0.0);
+      DenseMatrix<double> dbinormal_dx(3,3,0.0);	
 
-      // QUEHACERES account for the flip in elevation angle
-      // u_cartesian[0] = -u_cartesian[0];
-      // u_cartesian[1] = -u_cartesian[1];
+      Global_Parameters::Warped_disk_with_boundary_pt->
+	dboundary_triad_dx(0, zeta, dtangent_dx, dnormal_dx, dbinormal_dx);
+   
+      
+      // polar derivatives w.r.t. (rho, t, phi)
+      Vector<double> du_moffatt_drho(3,0);
+      du_moffatt_drho[0] = u_polar_derivatives(0,0);   // dur_dr
+      du_moffatt_drho[2] = u_polar_derivatives(1,0);   // duphi_dr
 
-      // QUEHACERES fix these once we have 3D derivatives
-      // // sign cancels for terms involving x and y components / coordinates,
-      // // only need to correct the terms in z
-      // du_dx(0,2) = -du_dx(0,2);  // du_x/dz
-      // du_dx(2,0) = -du_dx(2,0);  // du_z/dx
-      // du_dx(1,2) = -du_dx(1,2);  // du_y/dz
-      // du_dx(2,1) = -du_dx(2,1);  // du_z/dy
+      Vector<double> du_moffatt_dphi(3,0);      
+      du_moffatt_dphi[0] = u_polar_derivatives(0,1);  // dur_dphi
+      du_moffatt_dphi[2] = u_polar_derivatives(1,1);  // duphi_dphi
+      
+      DenseMatrix<double> drho_hat_dx(3,3,0);
+      DenseMatrix<double> dphi_hat_dx(3,3,0);
+
+      // theta is the angle of elevation of \hat{\bm s} to the x-y plane
+      mVector dtheta_dx(3,0);
+
+      // dtheta_dx
+      dtheta_dx[0] = (-(normal[2]*(normal[0]*dnormal_dx(0,0) + 
+				   normal[1]*dnormal_dx(1,0))) + 
+		      (pow(normal[0],2) + pow(normal[1],2))*dnormal_dx(2,0))/
+	(sqrt(pow(normal[0],2) + pow(normal[1],2))*
+	 (pow(normal[0],2) + pow(normal[1],2) + pow(normal[2],2)));
+
+      // dtheta_dy
+      dtheta_dx[1] = (-(normal[2]*(normal[0]*dnormal_dx(0,1) + 
+				   normal[1]*dnormal_dx(1,1))) + 
+		      (pow(normal[0],2) + pow(normal[1],2))*dnormal_dx(2,1))/
+	(sqrt(pow(normal[0],2) + pow(normal[1],2))*
+	 (pow(normal[0],2) + pow(normal[1],2) + pow(normal[2],2)));
+
+      // dtheta_dz
+      dtheta_dx[2] = (-(normal[2]*(normal[0]*dnormal_dx(0,2) + 
+				   normal[1]*dnormal_dx(1,2))) + 
+		      (pow(normal[0],2) + pow(normal[1],2))*dnormal_dx(2,2))/
+	(sqrt(pow(normal[0],2) + pow(normal[1],2))*
+	 (pow(normal[0],2) + pow(normal[1],2) + pow(normal[2],2)));
+      
+      // Cartesian derivatives of the Moffatt coordinates
+      mVector drho_dx(3,0);
+      mVector dphi_dx(3,0);
+
+      for(unsigned i=0; i<3; i++)
+      	drho_dx[i] = rho_vector[i] / rho;
+      
+      dphi_dx[0] = -rho_vector[0]*rho_vector[2] /
+      	(rho*rho * sqrt(pow(rho_vector[0],2) + pow(rho_vector[1],2)));
+      dphi_dx[1] = -rho_vector[1]*rho_vector[2] /
+      	(rho*rho * sqrt(pow(rho_vector[0],2) + pow(rho_vector[1],2)));
+      dphi_dx[2] = sqrt(pow(rho_vector[0],2) + pow(rho_vector[1],2))/(rho*rho);
+
+
+      // account for the angle of the normal and the angle flip
+      for(unsigned i=0; i<3; i++)
+      {
+	dphi_dx[i] = -dphi_dx[i] + dtheta_dx[i];
+      }
+
+      for(unsigned i=0; i<3; i++)
+      {
+	for(unsigned j=0; j<3; j++)
+	{
+	  drho_hat_dx(i,j) = sin(phi) * dphi_dx[j]*normal[i] - 
+	    cos(phi)*dnormal_dx(i,j) + cos(phi)*dphi_dx[j]*binormal[i] + 
+	    sin(phi)*dbinormal_dx(i,j);
+
+	  dphi_hat_dx(i,j) = cos(phi) * dphi_dx[j]*normal[i] + 
+	    sin(phi)*dnormal_dx(i,j) - sin(phi)*dphi_dx[j]*binormal[i] + 
+	    cos(phi)*dbinormal_dx(i,j);
+	}
+      }
+
+      // ----------------------------------------------------------------
+      
+      // the Cartesian derivatives of the Moffatt vectors
+      Vector<DenseMatrix<double> > dxi_dx(3);
+      for(unsigned k=0; k<3; k++)
+      {
+	dxi_dx[k].resize(3,3);
+      }
+      for(unsigned i=0; i<3; i++)
+      {
+	for(unsigned j=0; j<3; j++)
+	{
+	  dxi_dx[0](i,j) = drho_hat_dx(i,j);
+	  dxi_dx[1](i,j) = dtangent_dx(i,j);
+	  dxi_dx[2](i,j) = dphi_hat_dx(i,j);
+	}
+      }
+            
+      // loop over the Cartesian components (row)
+      for(unsigned i=0; i<3; i++)
+      {
+	// loop over the Cartesian components (column)
+      	for(unsigned j=0; j<3; j++)
+      	{
+      	  du_dx(i,j) = 0;
+	  
+	  // loop over the Moffatt vectors
+      	  for(unsigned k=0; k<3; k++)
+      	  {
+	    // do the dot product
+      	    for(unsigned l=0; l<3; l++)
+      	    {
+      	      du_dx(i,j) += e[i][l] * dxi_dx[k](l,j) * u_moffat[k] +
+      		e[i][l]*xi[k][l] * (du_moffatt_drho[k] * drho_dx[j] + du_moffatt_dphi[k]*dphi_dx[j]);
+      	    }
+      	  }
+      	}
+      }
       
       // and finally pressure, which is a scalar so no vector conversions
       u_cartesian.push_back(u_polar[2]);
@@ -432,17 +660,6 @@ namespace Analytic_Functions
       // infinite pressure at the edge
       u_cartesian.push_back(infinity);
     }
-
-    // QUEHACERES debug
-    if(isnan(u_cartesian[1]))
-    {
-      unsigned breakpoint = 1;
-    }
-    else if(isinf(u_cartesian[1]))
-    {
-      unsigned breakpoint = 1;
-    }
-    Global_Parameters::el_counter++;
   }
   
   void singular_fct_and_gradient_broadside(const EdgeCoordinate& edge_coords,
@@ -523,6 +740,189 @@ namespace Analytic_Functions
     
     return u;
   }
+
+
+  double acot(const double& x)
+  {
+    // arccot(x) = arctan(1/x)
+    return atan2(1,x);
+  }
+
+  // from c++11 complex header
+  template<typename _Tp>
+  std::complex<_Tp> acosh(const std::complex<_Tp>& __z)
+  {
+    // Kahan's formula.
+    return _Tp(2.0) * std::log(std::sqrt(_Tp(0.5) * (__z + _Tp(1.0)))
+			       + std::sqrt(_Tp(0.5) * (__z - _Tp(1.0))));
+  }
+
+  double csch(const double& x)
+  {
+    return 1.0/sinh(x);
+  }
+  
+  Vector<double> gupta_solution_broadside(const Vector<double>& x)
+  {
+    // cylindrical coordinates
+    double r   = sqrt(x[0]*x[0] + x[1]*x[1]);
+    double phi = atan2(x[1],x[0]);
+    double z   = x[2];
+
+    // disc radius
+    double a = 1;
+
+    // characteristic speed
+    double V  = 1;
+    
+    // dynamic viscosity, not sure why this hasn't been nondimensionalised out
+    double M = 1;
+    
+    double pi = MathematicalConstants::Pi;
+
+    std::complex<double> arg(r/a, z/a);
+    
+    double mu = std::real(acosh(arg));
+    double nu = std::imag(acosh(arg));
+
+    double p0 = 0;
+    // --------------------------------------------------------
+    // solution from Al Maskari report
+    
+    // velocity components in cylindrical coordinates    
+    double ur = (2*V*sin(nu)*cos(nu)*pow(sinh(mu),2) ) /
+      (pi*cosh(mu)*(pow(sinh(nu),2) + pow(sinh(mu),2)) );
+
+    // flow is axisymmetric so no azimuthal component
+    double uphi = 0;
+    
+    double uz = (2*V*acot(sinh(mu))/pi) +
+      2*V*pow(sin(nu),2)*sinh(mu) / (pi*(pow(sin(nu),2) + pow(sinh(mu),2)));
+
+    // pressure
+    double p = p0 + (4*M*V*sin(nu)) / (pi*a*(pow(sinh(mu),2) + pow(sin(nu),2)) );
+
+    // --------------------------------------------------------
+    // convert to Cartesian
+        
+    Vector<double> u(4);
+
+    u[0] = ur * cos(phi) - uphi*sin(phi);
+    u[1] = ur * sin(phi) + uphi*cos(phi);
+    u[2] = uz;
+    u[3] = p;
+    
+    return u;
+  }
+
+  double sech(const double& x)
+  {
+    return 1/cosh(x);
+  }
+  
+  void prescribed_gupta_traction(const Vector<double>& x,
+				 const Vector<double>& outer_unit_normal,
+				 Vector<double>& traction)
+  {
+    double tol = 1e-8;
+
+    if(abs(outer_unit_normal[0]) > tol ||
+       abs(outer_unit_normal[1]) > tol ||
+       abs(outer_unit_normal[2]-1) > tol )
+    {
+      std::ostringstream error_message;
+      error_message << "The traction for the Gupta solution has only been implemented for "
+		    << "n = (0,0,1)\n";
+
+      throw OomphLibError(error_message.str(),
+			  OOMPH_CURRENT_FUNCTION,
+			  OOMPH_EXCEPTION_LOCATION);
+    }
+
+    unsigned dim = x.size();
+    
+    // cylindrical coordinates
+    double r   = sqrt(x[0]*x[0] + x[1]*x[1]);
+    double phi = atan2(x[1],x[0]);
+    double z   = x[2];
+    
+    double pi = MathematicalConstants::Pi;
+
+    // plate velocity
+    double V = 1;
+
+    // plate radius
+    double a = 1;
+    
+    std::complex<double> arg(r/a, z/a);
+    
+    double mu = std::real(acosh(arg));
+    double nu = std::imag(acosh(arg));
+
+    // from mathematica
+    
+    double dmu_dz =-std::imag(std::complex<double>(1,0)/
+			      (a*sqrt(std::complex<double>(-a + r, z)/a)*
+			       sqrt(std::complex<double>(a + r, z)/a)));
+   
+    double dnu_dz = std::real(std::complex<double>(1,0)/
+			      (a*sqrt(std::complex<double>(-a + r, z)/a)*
+			       sqrt(std::complex<double>(a + r, z)/a)));
+
+    double dmu_dr = std::real(std::complex<double>(1,0)/
+			      (a*sqrt(std::complex<double>(-a + r, z)/a)*
+			       sqrt(std::complex<double>(a + r, z)/a)));
+    double dnu_dr = std::imag(std::complex<double>(1,0)/
+			      (a*sqrt(std::complex<double>(-a + r,z)/a)*
+			       sqrt(std::complex<double>(a + r, z)/a)));
+    
+    double dr_dx = x[0] / r;
+    double dr_dy = x[1] / r;
+    
+    double dux_dz =  (V*cos(phi)*(2*cos(nu)*sin(nu)*(-pow(sinh(mu),3) + 
+						     sech(mu)*pow(sin(nu),2)*tanh(mu) + 
+						     sinh(mu)*(pow(sin(nu),2) + pow(tanh(mu),2)))*
+				  dmu_dz + (-1 + cos(2*nu)*cosh(2*mu))*sinh(mu)*tanh(mu)*dnu_dz))/
+      (pi*pow(pow(sin(nu),2) + pow(sinh(mu),2),2));
+    
+    double duy_dz = (V*sin(phi)*(2*cos(nu)*sin(nu)*(-pow(sinh(mu),3) + sech(mu)*pow(sin(nu),2)*tanh(mu) + 
+						    sinh(mu)*(pow(sin(nu),2) + pow(tanh(mu),2)))*
+				 dmu_dz + (-1 + cos(2*nu)*cosh(2*mu))*sinh(mu)*tanh(mu)*dnu_dz))/
+      (pi*pow(pow(sin(nu),2) + pow(sinh(mu),2),2));
+    
+    double duz_dz = (-(V*sinh(mu)*((5 + cos(2*nu))*pow(sin(nu),2) +
+				   2*(1 + pow(sin(nu),2))*pow(sinh(mu),2))*tanh(mu)*
+		       dmu_dz) + 2*V*sin(2*nu)*pow(sinh(mu),3)*dnu_dz) /
+      (pi*pow(pow(sin(nu),2) + pow(sinh(mu),2),2));
+
+    // get the pressure from the Gupta solution
+    Vector<double> u_gupta = gupta_solution_broadside(x);
+    double p = u_gupta[dim+1];
+    
+    // matrix to store the stress BCs we're applying 
+    DenseMatrix<double> stress(dim, dim, 0.0);
+    
+    double duz_dx = (2*V*pow(sinh(mu),3)*dr_dx*(-(((5 + cos(2*nu))*csch(2*mu)*pow(sin(nu),2) + 
+						   (1 + pow(sin(nu),2))*tanh(mu))*dmu_dr) + sin(2*nu)*dnu_dr))/
+      (pi*pow(pow(sin(nu),2) + pow(sinh(mu),2),2));
+    
+    double duz_dy = (2*V*pow(sinh(mu),3)*dr_dy*(-(((5 + cos(2*nu))*csch(2*mu)*pow(sin(nu),2) + 
+						   (1 + pow(sin(nu),2))*tanh(mu))*dmu_dr) + sin(2*nu)*dnu_dr))/
+      (pi*pow(pow(sin(nu),2) + pow(sinh(mu),2),2));
+    
+    stress(0,2) = dux_dz + duz_dx;
+    stress(1,2) = duy_dz + duz_dy;
+    stress(2,2) = -p + 2.0 * duz_dz;
+      
+    // make sure we've got enough storage
+    traction.resize(dim);
+    
+    // traction is t_i = tau_ij n_j, with n=(0,0,1)
+    traction[0] = stress(0,2);
+    traction[1] = stress(1,2);
+    traction[2] = stress(2,2);
+  }
+
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -536,7 +936,7 @@ namespace Analytic_Functions
 template <class ELEMENT>
 class NavierStokesFaceElement : public virtual FaceGeometry<ELEMENT>, 
 				public virtual FaceElement
-{
+  {
  
 public:
 
@@ -563,13 +963,11 @@ public:
       // Get pointer to assocated bulk element
       ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(bulk_element_pt());
    
-      // Elemental dimension
-      unsigned dim_el = dim();
-
-      unsigned dim_bulk = dim_el + 1;
+      // number of dimensions in the bulk
+      unsigned dim_bulk = Dim + 1;
       
       //Local coordinates
-      Vector<double> s(dim_el);
+      Vector<double> s(Dim);
 
       Vector<double> s_bulk(dim_bulk);
    
@@ -618,10 +1016,8 @@ public:
 
   void interpolated_x(const Vector<double>& s, Vector<double>& x)
     {
-      // Elemental dimension
-      unsigned dim_el = dim();
-
-      unsigned dim_bulk = dim_el + 1;
+      // number of dimensions in the bulk
+      unsigned dim_bulk = Dim + 1;
       
       // local coordinates in bulk element
       Vector<double> s_bulk(dim_bulk);
@@ -637,10 +1033,8 @@ public:
 
   void interpolated_u_nst(const Vector<double>& s, Vector<double>& u)
     {
-      // Elemental dimension
-      unsigned dim_el = dim();
-
-      unsigned dim_bulk = dim_el + 1;
+      // number of dimensions in the bulk
+      unsigned dim_bulk = Dim + 1;
       
       // local coordinates in bulk element
       Vector<double> s_bulk(dim_bulk);
@@ -656,10 +1050,8 @@ public:
 
   double interpolated_p_nst(const Vector<double>& s)
     {
-      // Elemental dimension
-      unsigned dim_el = dim();
-      
-      unsigned dim_bulk = dim_el + 1;
+      // number of dimensions in the bulk
+      unsigned dim_bulk = Dim + 1;
       
       // local coordinates in bulk element
       Vector<double> s_bulk(dim_bulk);
@@ -673,6 +1065,70 @@ public:
       return bulk_el_pt->interpolated_p_nst(s_bulk);
     }
 
+    void interpolated_triad_derivatives(const Vector<double>& s,
+					DenseMatrix<double>& interpolated_dtangent_dx,
+					DenseMatrix<double>& interpolated_dnormal_dx,
+					DenseMatrix<double>& interpolated_dbinormal_dx)
+      {
+	// Get pointer to assocated bulk element
+	ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(bulk_element_pt());
+
+	unsigned nnode_bulk = bulk_el_pt->nnode();
+	
+	// local coordinates in bulk element
+	Vector<double> s_bulk(Dim+1);
+
+	// get 'em
+	this->get_local_coordinate_in_bulk(s, s_bulk);
+	
+	// make space for the derivatives of the shape functions from the bulk element
+	Shape psi(nnode_bulk);
+	DShape dpsi_dx(nnode_bulk, Dim+1);
+
+	// get 'em
+	bulk_el_pt->dshape_eulerian(s_bulk, psi, dpsi_dx);
+	  
+	// create storage for the tangent and normal vectors
+	Vector<double> tangent(Dim+1);
+	Vector<double> normal(Dim+1);
+	Vector<double> binormal(Dim+1);
+	
+	for(unsigned l=0; l<nnode_bulk; l++)
+	{
+	  // get the local coordinates of this bulk node
+	  Vector<double> s_node(Dim);
+	  local_coordinate_of_node(l, s_node);
+
+	  Vector<double> r(3);
+	  r[0] = bulk_el_pt->node_pt(l)->x(0);
+	  r[1] = bulk_el_pt->node_pt(l)->x(1);
+	  r[2] = bulk_el_pt->node_pt(l)->x(2);
+	  
+	  // get aziumthal angle
+	  double zeta = atan2pi(r[1], r[0]);
+
+	  // get the triad vectors at this node
+	  Global_Parameters::Warped_disk_with_boundary_pt->
+	    surface_vectors_at_boundary(0, zeta, r, tangent,
+					normal, binormal);
+
+	  for(unsigned i=0; i<Dim+1; i++)
+	  {
+	    for(unsigned j=0; j<Dim+1; j++)
+	    {
+	      // compute derivatives of the tangent vector dt_i/dx_j
+	      interpolated_dtangent_dx(i,j) += tangent[i] * dpsi_dx(l,j);
+
+	      // compute derivatives of the normal vector ds_i/dx_j
+	      interpolated_dnormal_dx(i,j) += normal[i] * dpsi_dx(l,j);
+	      
+	      // compute derivatives of the binormal dn_i/dx_j
+	      interpolated_dbinormal_dx(i,j) += binormal[i] * dpsi_dx(l,j);	      
+	    }
+	  }
+	}
+      }
+    
 private:
   unsigned Dim;
 };
@@ -739,7 +1195,12 @@ public:
   void impose_fake_singular_amplitude();
 
   /// Assign nodal values to be the exact singular solution for debug
-  void set_values_to_singular_solution();
+  void set_values_to_singular_solution(const bool& broadside = true);
+
+  // function to validate the singular stress by assigning the singular solution
+  // to each node, then computing the velocity gradients via finite difference and
+  // comparing these to the analytic gradients.
+  void validate_singular_stress(const bool& broadside = true);
   
 private:
  
@@ -748,6 +1209,47 @@ private:
 
   /// Helper function to apply boundary conditions
   void apply_boundary_conditions();
+
+  void delete_face_elements()
+    {
+      // Loop over the flux elements
+      unsigned n_element = Traction_boundary_condition_mesh_pt->nelement();
+      for(unsigned e=0;e<n_element;e++)
+      {
+	// Kill
+	delete Traction_boundary_condition_mesh_pt->element_pt(e);
+      }
+   
+      // Wipe the mesh
+      Traction_boundary_condition_mesh_pt->flush_element_and_node_storage();
+
+      if (CommandLineArgs::command_line_flag_has_been_set
+	  ("--dont_subtract_singularity"))
+      {
+	return;
+      }
+
+      // QUEHACERES delete torus traction elements here
+      
+      // Loop over the bc elements
+      n_element = Face_mesh_for_bc_pt->nelement();
+      for(unsigned e=0; e<n_element; e++)
+      {
+      	// Kill
+      	delete Face_mesh_for_bc_pt->element_pt(e);
+      }
+   
+      // Wipe the mesh
+      Face_mesh_for_bc_pt->flush_element_and_node_storage();
+
+      // Loop over the integral face elements
+      n_element = Face_mesh_for_singularity_integral_pt->nelement();
+      for(unsigned e=0;e<n_element;e++)
+      {
+	delete Face_mesh_for_singularity_integral_pt->element_pt(e);
+      }
+      Face_mesh_for_singularity_integral_pt->flush_element_and_node_storage();
+    }
   
   /// \short Helper function to create the face elements needed to:
   /// - impose Dirichlet BCs
@@ -797,18 +1299,21 @@ private:
   /// \short Meshes of face elements used to compute the amplitudes of the singular
   /// functions (one mesh per singular function)
   Mesh* Face_mesh_for_singularity_integral_pt;
- 
+
+  /// \short Mesh of face
+  Mesh* Traction_boundary_condition_mesh_pt;   
+  
   /// Mesh for (single) element containing singular fct
   Mesh* Singular_fct_element_mesh_pt;
 
   /// Mesh of face elements which impose Dirichlet boundary conditions
   Mesh* Face_mesh_for_bc_pt;
-  
+ 
   // --------------------------------------------------------------------------
-  
-  /// Mesh as geom object representation of mesh
+
+  /// Mesh as geom object representation of mesh  
   MeshAsGeomObject* Mesh_as_geom_object_pt;
-    
+  
   // Create the mesh as Geom Object
   MeshAsGeomObject* Face_mesh_as_geom_object_pt;
   
@@ -820,6 +1325,9 @@ private:
   
   /// First boundary ID for outer boundary
   unsigned First_boundary_id_for_outer_boundary;
+
+  /// ID of the top boundary, used for when we want to do a prescribed traction problem
+  unsigned Top_outer_boundary_id;
   
   // Disk with torus round the edges
   //--------------------------------
@@ -983,26 +1491,17 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
 
   // A warped disk surrounded by a torus
   //------------------------------------
- 
-  // Radius of torus region
-  double r_torus = 0.2;
 
   // Warped disk with specified amplitude and wavenumber for warping
-
-  // (Half) number of segments used to represent the disk perimeter
-  unsigned half_nsegment = 30; // 30; 
   
   // Thickness of annular region on disk = radius of torus surrounding the
   // edge
-  double h_annulus = r_torus;
+  double h_annulus = Global_Parameters::R_torus;
   Global_Parameters::Warped_disk_with_boundary_pt = 
     new WarpedCircularDiskWithAnnularInternalBoundary(h_annulus,
 						      Global_Parameters::Epsilon,
 						      Global_Parameters::n);
   
-  // Number of vertices around perimeter of torus
-  unsigned nvertex_torus=10; //20;
-
   // Enumerate the boundaries making up the disk starting with this
   // one-based ID
   unsigned first_one_based_disk_with_torus_boundary_id = 9001;
@@ -1021,9 +1520,9 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   DiskWithTorusAroundEdgeTetMeshFacetedSurface* disk_with_torus_pt = 
     new DiskWithTorusAroundEdgeTetMeshFacetedSurface(
       Global_Parameters::Warped_disk_with_boundary_pt,
-      half_nsegment,
-      r_torus,
-      nvertex_torus,
+      Global_Parameters::Half_nsegment_disk,
+      Global_Parameters::R_torus,
+      Global_Parameters::Nvertex_torus,
       first_one_based_disk_with_torus_boundary_id,
       one_based_torus_region_id, 
       last_one_based_disk_with_torus_boundary_id,
@@ -1109,27 +1608,24 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   add_time_stepper_pt(new Steady<1>);
 
 #ifdef DO_TETGEN
-
-  // tetgenio tetgen_data;
-  // build_tetgenio(Outer_boundary_pt, Inner_boundary_pt, tetgen_data);
   
   if(Global_Parameters::Split_corner_elements)
-    oomph_info << "\n-------\nSplitting corner elements to avoid locking"
-	       << "\n-------\n\n";
+    oomph_info << "\nSplitting corner elements to avoid locking\n\n";
   
-  // And now build it...
-  // Bulk_mesh_pt = new RefineableTetgenMesh<ELEMENT>(tetgen_data,
-  // 						   split_corner_elements,
-  // 						   this->time_stepper_pt());
+  Vector<double> target_element_volume_in_region(1);
+  target_element_volume_in_region[0] =
+    Global_Parameters::Target_element_volume_in_torus_region;
+    
   bool use_attributes = false;
-  
+ 
   Bulk_mesh_pt =
     new RefineableTetgenMesh<ELEMENT>(Outer_boundary_pt,
 				      Inner_boundary_pt,
 				      initial_element_volume,				      
 				      this->time_stepper_pt(),
 				      use_attributes,
-				      Global_Parameters::Split_corner_elements);
+				      Global_Parameters::Split_corner_elements,
+				      &target_element_volume_in_region);
   
   // Problem is linear so we don't need to transfer the solution to the
   // new mesh; we keep it on for self-test purposes...
@@ -1146,17 +1642,25 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   /// Mesh as geom object representation of mesh
   Mesh_as_geom_object_pt = 0;
 
+  // Make new geom object
+  // delete Mesh_as_geom_object_pt;
+  Mesh_as_geom_object_pt = new MeshAsGeomObject(Bulk_mesh_pt);
+
+  // QUEHACERES hacky
+  Global_Parameters::mesh_as_geom_object_pt = Mesh_as_geom_object_pt;
+  
   // Number of "disks on disk" around the edge where solution is
   // to be visualised
   Ndisk_on_disk_plot = 4;
 
   // Number of azimuthal plot points in "disks on disk" plots 
   // around the edge where solution is to be visualised
-  Nphi_disk_on_disk_plot = 30;
+  // 9 should give us radial lines at 45deg intervals
+  Nphi_disk_on_disk_plot = 9;// 30;
  
   // Number of radial plot points in "disks on disk" plots 
   // around the edge where solution is to be visualised
-  Nrho_disk_on_disk_plot = 50;
+  Nrho_disk_on_disk_plot = 20; // 50;
  
   // Geom object representations need to be (re)built
   Geom_objects_are_out_of_date = true;
@@ -1225,6 +1729,9 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   
   // Create face elements for imposition of BC
   Face_mesh_for_bc_pt = new Mesh;
+
+  // Traction boundary condition 
+  Traction_boundary_condition_mesh_pt = new Mesh;
   
   // Build the face elements
   create_face_elements();
@@ -1238,71 +1745,43 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   
   // Complete problem setup
   complete_problem_setup();
-
-// #ifdef OOMPH_HAS_MUMPS
-
-//   oomph_info << "Using MUMPS linear solver\n\n";
-  
-//   MumpsSolver* mumps_linear_solver_pt = new MumpsSolver;
-
-//   mumps_linear_solver_pt->enable_suppress_warning_about_MPI_COMM_WORLD();
-  
-//   // set it
-//   linear_solver_pt() = mumps_linear_solver_pt;
-
-// #endif
   
   // Setup equation numbering scheme
   oomph_info <<"Number of equations: " << assign_eqn_numbers() << std::endl; 
 
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  // @@@@@@@@@@@@@@@@@@
   // QUEHACERES debug
-  sprintf(filename, "%s/disk_boundary_ids_in_torus.dat", Doc_info.directory().c_str());
-  some_file.open(filename);
-
-  for(Vector<unsigned>::iterator it=One_based_boundary_id_for_disk_within_torus.begin();
-      it != One_based_boundary_id_for_disk_within_torus.end(); it++)
   {
-    unsigned ibound = (*it)-1;
-    unsigned nnode = Bulk_mesh_pt->nboundary_node(ibound);
+    sprintf(filename, "%s/boundary_surface_vectors.csv", Doc_info.directory().c_str());
+    some_file.open(filename);
 
-    for(unsigned j=0; j<nnode; j++)
+    // print the header for paraview
+    some_file << "x,y,z,tx,ty,tz,sx,sy,sz,nx,ny,nz\n";
+    
+    Vector<double> r(3), tangent(3), normal(3), binormal(3);
+
+    for(unsigned j=0; j<50; j++)
     {
-      Node* node_pt = Bulk_mesh_pt->boundary_node_pt(ibound, j);
+      double zeta = j * 2*MathematicalConstants::Pi / 51;
+      
+      Global_Parameters::Warped_disk_with_boundary_pt->
+	surface_vectors_at_boundary(0, zeta, r, tangent, normal, binormal);
+
       for(unsigned i=0; i<3; i++)
-      {
-	some_file << node_pt->x(i) << " ";
-      }
+	some_file << r[i] << ",";    
+      for(unsigned i=0; i<3; i++)
+        some_file << tangent[i] << ",";
+      for(unsigned i=0; i<3; i++)
+        some_file << normal[i] << ",";
+      for(unsigned i=0; i<3; i++)
+        some_file << binormal[i] << ",";
+    
       some_file << std::endl;
     }
-    some_file << "\n\n";
+  
+    some_file.close();
   }
-
-  some_file.close();
-
-  sprintf(filename, "%s/disk_boundary_ids_outside_torus.dat", Doc_info.directory().c_str());
-  some_file.open(filename);
-
-  for(Vector<unsigned>::iterator it=One_based_boundary_id_for_disk_outside_torus.begin();
-      it != One_based_boundary_id_for_disk_outside_torus.end(); it++)
-  {
-    unsigned ibound = (*it)-1;
-    unsigned nnode = Bulk_mesh_pt->nboundary_node(ibound);
-
-    for(unsigned j=0; j<nnode; j++)
-    {
-      Node* node_pt = Bulk_mesh_pt->boundary_node_pt(ibound, j);
-      for(unsigned i=0; i<3; i++)
-      {
-	some_file << node_pt->x(i) << " ";
-      }
-      some_file << std::endl;
-    }
-    some_file <<"\n\n";
-  }
-
-  some_file.close();  
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  // @@@@@@@@@@
 }
 
 // ////////////////////////////////////////////////////////////////////////////
@@ -1887,10 +2366,10 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 	       << "using quadratic \nshape functions and so the normal will "
 	       << "rotate within each element for a curved \nsurface.\n"
 	       << "  These have been output to: "
-	       << Doc_info.directory() << "dodgy_upper[lower]_elements.dat, and the "
+	       << Doc_info.directory() << "/dodgy_upper[lower]_elements.dat, and the "
 	       << "distances \nof each node from \nthe surface in the surface normal "
 	       << "direction has been output to: \n"
-	       << Doc_info.directory() << "dodgy_upper[lower]_element_nodal_distances.dat - "
+	       << Doc_info.directory() << "/dodgy_upper[lower]_element_nodal_distances.dat - "
 	       << "you may want to check them!\n\n";
   }
   
@@ -2752,41 +3231,96 @@ void FlowAroundDiskProblem<ELEMENT>::setup_edge_coordinates_map()
       Node* nod_pt = bulk_elem_pt->node_pt(j);
 
       Vector<double> x(3);
+      x[0] = nod_pt->x(0);
+      x[1] = nod_pt->x(1);
+      x[2] = nod_pt->x(2);
 
-      Vector<double> r_edge(3);
-      Vector<double> normal(3);  
-      Vector<double> tangent(3); 
-      Vector<double> normal_normal(3);   
-
-      // get azimuthal coordinate
-      double zeta = atan2(nod_pt->x(1), nod_pt->x(0));
+      // ----------------------------------------------------------------------
+      // step 1: compute the boundary zeta value which corresponds to the
+      //         s-n plane which contains this bulk point
+      // ----------------------------------------------------------------------
       
+      // starting guess for boundary zeta is the zeta for a flat disk
+      double zeta_0 = atan2pi(x[1], x[0]);
+
+      Vector<double> unknowns(1);
+      unknowns[0] = zeta_0;
+
+      // do the solve to get the boundary zeta
+      BlackBoxFDNewtonSolver::black_box_fd_newton_solve(
+	&Analytic_Functions::distance_from_point_to_sn_plane, x, unknowns);
+
+      // interpret the solve
+      double zeta = unknowns[0];
+
+      // ----------------------------------------------------------------------
+      // Step 2: Now compute the Moffatt coordinates (\rho, \phi), and the
+      //         corresponding unit vectors \hat{\rho} and \hat{\phi}
+      // ----------------------------------------------------------------------
+      
+      double b_dummy = 0;
+      mVector r_disk_edge(3);
+      mVector tangent(3);
+      mVector binormal(3);
+      mVector normal(3);
+    
+      // get the unit normal from the disk-like geometric object at this zeta
       Global_Parameters::Warped_disk_with_boundary_pt->
-	boundary_triad(0, zeta, r_edge, tangent, normal, normal_normal);
+	surface_vectors_at_boundary(b_dummy, zeta, r_disk_edge, tangent,
+				    normal, binormal);
 
-      Vector<double>r_node_from_edge(3);
+      // compute the rho vector, the vector from the edge of the disk at this
+      // zeta to the point in question
+      mVector rho_vector = -(r_disk_edge - x);
 
-      double rho = 0;
-      double normal_distance = 0;
-      double binormal_distance = 0;
-      
-      // compute the vector from the edge of the disk to this nodal point,
-      // and the dot-products in the normal and binormal directions
-      for(unsigned i=0; i<3; i++)
+      // shorthands
+      double rho  = rho_vector.magnitude();
+    
+      // angle of the rho vector with respect to the x-y plane of the global
+      // Cartesian coordinate system
+      double angle_of_rho_wrt_xy_plane =
+	atan2pi(rho_vector[2], sqrt(rho_vector[0]*rho_vector[0] +
+				    rho_vector[1]*rho_vector[1]));
+
+      // the angle the edge of the sheet makes with the x-y plane
+      double angle_of_normal_wrt_xy_plane = atan2pi(normal[2],
+						    sqrt(normal[0]*normal[0] +
+							 normal[1]*normal[1]));
+
+      // angle of inclination to the point in question from the outer normal vector
+      double elevation_relative_to_disk_edge = 0;
+      double tol = 1e-8;
+      if(rho > tol)
       {
-	r_node_from_edge[i] = nod_pt->x(i) - r_edge[i];
-	rho += pow(r_node_from_edge[i], 2);
-
-	normal_distance += normal[i] * r_node_from_edge[i];
-	binormal_distance += normal_normal[i] * r_node_from_edge[i];
+	if((angle_of_rho_wrt_xy_plane < angle_of_normal_wrt_xy_plane) &&
+	   (angle_of_rho_wrt_xy_plane > angle_of_normal_wrt_xy_plane - tol) )
+	{
+	  elevation_relative_to_disk_edge = 0;
+	}
+	else
+	{
+	  if(angle_of_rho_wrt_xy_plane > angle_of_normal_wrt_xy_plane)
+	  {
+	    // elevation is the angle between the two
+	    elevation_relative_to_disk_edge =
+	      angle_of_rho_wrt_xy_plane - angle_of_normal_wrt_xy_plane;
+	  }
+	  else
+	  {
+	    // otherwise it's the obtuse angle between them
+	    elevation_relative_to_disk_edge = 2*MathematicalConstants::Pi -
+	      (angle_of_normal_wrt_xy_plane - angle_of_rho_wrt_xy_plane);
+	  }
+	} 
       }
 
-      // get the radius of this nodal point in the edge coordinates
-      rho = sqrt(rho);
-
-      // get the elevation of this nodal point in the edge coordinates
-      double phi = atan2pi(binormal_distance, normal_distance);
-
+      double phi = Analytic_Functions::reflect_angle_wrt_z_axis(
+	elevation_relative_to_disk_edge);
+      
+      // ----------------------------------------------------------------------
+      // Step 3: Insert these coordinates into the map
+      // ----------------------------------------------------------------------
+      
       Vector<double> edge_coordinates(3);
       edge_coordinates[0] = rho;
       edge_coordinates[1] = zeta;
@@ -2815,11 +3349,7 @@ void FlowAroundDiskProblem<ELEMENT>::setup_disk_on_disk_plots()
 
   oomph_info << "Starting make geom object" << std::endl;
   double t_start=TimingHelpers::timer();
-      
-  // Make new geom object
-  delete Mesh_as_geom_object_pt;
-  Mesh_as_geom_object_pt = new MeshAsGeomObject(Bulk_mesh_pt);
-
+   
   // Make space for plot points: Disk_on_disk_plot_point[k_disk][i_rho][i_phi]
   Disk_on_disk_plot_point.resize(Ndisk_on_disk_plot);
   for (unsigned i=0; i < Ndisk_on_disk_plot; i++)
@@ -2918,7 +3448,86 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
 template<class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::create_face_elements()
 {
-  // QUEHACERES
+  if(!Global_Parameters::Do_gupta_traction_problem)
+    return;
+
+#ifndef USE_SINGULAR_ELEMENTS
+
+  ostringstream error_message;
+
+  error_message << "Error, traction problem requested, but haven't implemented this without "
+		<< "singular elements\n\n";
+
+  throw OomphLibError(error_message.str(),
+		      OOMPH_CURRENT_FUNCTION,
+		      OOMPH_EXCEPTION_LOCATION);  
+#endif
+  
+    for(unsigned ibound = First_boundary_id_for_outer_boundary;
+	ibound<First_boundary_id_for_outer_boundary+6; ibound++)
+    {
+      // get a pointer to the first element on this outer face
+      FiniteElement* el_pt = Bulk_mesh_pt->boundary_element_pt(ibound,0);
+     
+      // What is the index of the face of the bulk element at the boundary
+      int face_index = Bulk_mesh_pt->face_index_at_boundary(ibound,0);
+
+      // Build the corresponding face element
+      NavierStokesFaceElement<ELEMENT>* surface_element_pt =
+	new NavierStokesFaceElement<ELEMENT>(el_pt, face_index);
+
+      // get the outer unit normal
+      Vector<double> outer_unit_normal(3);
+      surface_element_pt->outer_unit_normal(0, outer_unit_normal);
+
+      // check if we've got the top face
+      double tol = 1e-8;
+      if(abs(outer_unit_normal[0]) > tol ||
+	 abs(outer_unit_normal[1]) > tol ||
+	 abs(outer_unit_normal[2]-1) > tol )
+      {
+	continue;
+      }
+
+      // now we've found it, save this boundary ID to save us searching for it agian
+      Top_outer_boundary_id = ibound;
+      
+      unsigned n_element = Bulk_mesh_pt->nboundary_element(ibound);
+      for(unsigned e=0; e<n_element; e++)
+      {
+	//Create Pointer to bulk element adjacent to the boundary
+	ELEMENT* bulk_elem_pt = dynamic_cast<ELEMENT*>
+	  (Bulk_mesh_pt->boundary_element_pt(ibound, e));
+         
+	//Get Face index of boundary in the bulk element
+	int face_index = Bulk_mesh_pt->face_index_at_boundary(ibound,e);
+         
+	//Create corresponding face element
+	NavierStokesWithSingularityTractionElement<ELEMENT>* traction_element_pt =
+	  new NavierStokesWithSingularityTractionElement<ELEMENT>(
+	    bulk_elem_pt, face_index);
+         
+	// Set the pointer to the prescribed traction function
+	traction_element_pt->traction_fct_pt() = 
+	  &Analytic_Functions::prescribed_gupta_traction;
+
+	// only tell the traction element about the singular function if it isn't on
+	// the singular traction boundary
+	if (!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
+	{
+	  // We pass the pointer of singular function element to the 
+	  // face element (Set function because it also declares 
+	  // the amplitude to be external data for that element).
+	  traction_element_pt->set_navier_stokes_sing_el_pt(
+	    dynamic_cast<ScalableSingularityForNavierStokesElement<ELEMENT>*>(
+	      Singular_fct_element_mesh_pt->element_pt(0)));
+	}
+	    
+	//Attach it to the mesh
+	Traction_boundary_condition_mesh_pt->add_element_pt(traction_element_pt);
+      }
+    }
+    
 }
 
 //==start_of_apply_bc=====================================================
@@ -2953,6 +3562,10 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
 
   // number of time history values in the problem
   unsigned ntime = time_stepper_pt()->ndt();
+
+  bool set_gupta_solution_on_outer_boundaries = false;
+  if(CommandLineArgs::command_line_flag_has_been_set("--set_gupta_solution_on_outer_boundaries"))
+    set_gupta_solution_on_outer_boundaries = true;
   
   // Loop over pinned boundaries
   unsigned num_pin_bnd = pinned_boundary_id.size();
@@ -2960,6 +3573,7 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
   {
     unsigned ibound = pinned_boundary_id[bnd];
     unsigned num_nod = Bulk_mesh_pt->nboundary_node(ibound);
+    
     if (num_nod == 0)
     {
       std::ostringstream error_message;
@@ -2968,13 +3582,24 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
       throw OomphLibError(error_message.str(),
   			  OOMPH_CURRENT_FUNCTION,
   			  OOMPH_EXCEPTION_LOCATION);
-    }    
+    }
+    
     for (unsigned inod=0; inod<num_nod; inod++)
     {
       // grab a pointer to this boundary node
       Node* node_pt = Bulk_mesh_pt->boundary_node_pt(ibound,inod);
 
       Vector<double> x(3);
+      x[0] = node_pt->x(0);
+      x[1] = node_pt->x(1);
+      x[2] = node_pt->x(2);
+      
+      Vector<double> u_gupta = Analytic_Functions::gupta_solution_broadside(x);
+
+      // if we're doing a traction problem and this is the top boundary, then
+      // we don't want to pin it with Dirchlet conditions
+      if(set_gupta_solution_on_outer_boundaries && Global_Parameters::Do_gupta_traction_problem)
+	continue;
       
       // Loop over current and previous timesteps  
       for (unsigned t=0; t<ntime; t++)
@@ -2982,10 +3607,6 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
 	node_pt->pin(0);
 	node_pt->pin(1);
 	node_pt->pin(2);
-      
-	x[0] = node_pt->x(0);
-	x[1] = node_pt->x(1);
-	x[2] = node_pt->x(2);
 
 	// set plate velocity
 	if (( (ibound >= First_lower_disk_boundary_id) &&
@@ -2994,16 +3615,31 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
 	      (ibound <= Last_upper_disk_boundary_id) ) ) 
 	{
 	
-	  node_pt->set_value(0, Global_Parameters::disk_velocity[0]);
-	  node_pt->set_value(1, Global_Parameters::disk_velocity[1]);
-	  node_pt->set_value(2, Global_Parameters::disk_velocity[2]);
+	  node_pt->set_value(t, 0, Global_Parameters::disk_velocity[0]);
+	  node_pt->set_value(t, 1, Global_Parameters::disk_velocity[1]); 
+	  node_pt->set_value(t, 2, Global_Parameters::disk_velocity[2]);
 	}
 	else
 	{
-	  // outer boundaries
-	  node_pt->set_value(t, 0, 0.0);
-	  node_pt->set_value(t, 1, 0.0);
-	  node_pt->set_value(t, 2, 0.0);
+	  if(set_gupta_solution_on_outer_boundaries)
+	  {
+	    for(unsigned i=0; i<3; i++)
+	      node_pt->set_value(t, i, u_gupta[i]);
+
+	    // QUEHACERES dodgy
+	    if(node_pt->nvalue() == 4)
+	    {
+	      node_pt->pin(3);
+	      node_pt->set_value(t, 3, u_gupta[3]);
+	    }
+	  }
+	  else
+	  {
+	    // outer boundaries
+	    node_pt->set_value(t, 0, 0.0);
+	    node_pt->set_value(t, 1, 0.0);
+	    node_pt->set_value(t, 2, 0.0);
+	  }
 	}
       }	
       pin_file << x[0] << " " 
@@ -3015,6 +3651,11 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
  
   pin_file.close();
 
+  if(set_gupta_solution_on_outer_boundaries)
+  {
+    return;
+  }
+  
   // ----------------
   // finally, pin the pressure for a random bulk node to full determine the problem
 
@@ -3034,7 +3675,7 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
   for (unsigned t=0; t<ntime; t++)
   {
     // pin it to zero
-    nonboundary_node_pt->set_value(t, p_index, -50);
+    nonboundary_node_pt->set_value(t, p_index, 0);
     nonboundary_node_pt->pin(p_index);
   }
        
@@ -3050,15 +3691,25 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
 /// Function to assign the singular solution to all nodes of the mesh
 //========================================================================
 template<class ELEMENT>
-void FlowAroundDiskProblem<ELEMENT>::set_values_to_singular_solution()
+void FlowAroundDiskProblem<ELEMENT>::set_values_to_singular_solution(
+  const bool& broadside)
 {
-  Vector<double> x_temp(3);
-  x_temp[0] = -1.1;
-  x_temp[1] = 0;
-  x_temp[2] = 0;
+  // Vector<double> x_temp(3);
+  // x_temp[0] = -1.1;
+  // x_temp[1] = 0;
+  // x_temp[2] = 0;
 
-  Vector<double> u_temp = Analytic_Functions::singular_fct_broadside(x_temp);
-       
+  // Vector<double> u_temp = Analytic_Functions::singular_fct_broadside(x_temp);
+
+  // x_temp[0] = -1.1;
+  // x_temp[1] = -1.2;
+  // x_temp[2] = -1.3;
+  
+  // u_temp = Analytic_Functions::singular_fct_broadside(x_temp);
+
+  // // QUEHACERES
+  // return;
+  
   // get the number of nodes in the mesh
   unsigned nel = Bulk_mesh_pt->nregion_element(Torus_region_id);
 
@@ -3082,8 +3733,11 @@ void FlowAroundDiskProblem<ELEMENT>::set_values_to_singular_solution()
       // get the singular solution at this point
       Vector<double> u(4, 0.0);
 
-      u = Analytic_Functions::singular_fct_in_plane(x);// broadside(x);
-    
+      if(broadside)
+	u = Analytic_Functions::singular_fct_broadside(x);
+      else
+	u = Analytic_Functions::singular_fct_in_plane(x);
+      
       // assign the velocities
       node_pt->set_value(0, u[0]);
       node_pt->set_value(1, u[1]);
@@ -3096,6 +3750,208 @@ void FlowAroundDiskProblem<ELEMENT>::set_values_to_singular_solution()
       }
     }
   }
+}
+
+//== start of validate_stress ============================================
+/// Function to validate the singular stress function by assigning the singular velocity field
+// to the nodes of the mesh, then computing the "FE" stress via the navier-stokes
+// helper functions and comparing the two
+//========================================================================
+template<class ELEMENT>
+void FlowAroundDiskProblem<ELEMENT>::validate_singular_stress(const bool& broadside)
+{
+  Vector<double> x(3);
+  x[0] = 1.2;
+  x[2] = 0.2;
+  Analytic_Functions::singular_fct_broadside(x);
+
+  x[0] = 0;
+  x[1] = 1.2;
+  Analytic_Functions::singular_fct_broadside(x);
+  
+  // assign \hat u_i to the nodal values
+  if(broadside)
+  {
+    set_values_to_singular_solution();
+  }
+  else
+  {
+    set_values_to_singular_solution(false);
+  }
+   
+
+  char filename[100];
+
+  if(broadside)
+  {
+    sprintf(filename, "%s/error_in_singular_stress_broadside.dat",
+	    Doc_info.directory().c_str());
+  }
+  else
+  {
+    sprintf(filename, "%s/error_in_singular_stress_in_plane.dat",
+	    Doc_info.directory().c_str());
+  }
+  
+  // open the output file to record the error (tecplot format)
+  ofstream stress_error_output(filename);
+  
+  // open the output file to record the error (plain format)
+  if(broadside)
+  {
+    sprintf(filename, "%s/error_in_singular_stress_broadside_plain.dat",
+	    Doc_info.directory().c_str());
+  }
+  else
+  {
+    sprintf(filename, "%s/error_in_singular_stress_in_plane_plain.dat",
+	    Doc_info.directory().c_str());
+  }
+  
+  ofstream stress_error_output_plain(filename);
+  
+  // number of plot points per side
+  unsigned nplot = 2;
+
+  // loop over all the elements in the torus region to compute the error in the stress
+  const unsigned nel = Bulk_mesh_pt->nregion_element(Torus_region_id);
+  
+  for(unsigned e=0; e<nel; e++)
+  {
+    // get a pointer to this element
+    ELEMENT* elem_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->region_element_pt(Torus_region_id,e));
+
+    // dimension of this element
+    const unsigned dim = elem_pt->dim();
+  
+    // write the tecplot header for this element
+    stress_error_output << elem_pt->tecplot_zone_string(nplot);
+    
+    //Set the Vector to hold local coordinates
+    Vector<double> s(dim);
+ 
+    // Loop over plot points    
+    unsigned num_plot_points = elem_pt->nplot_points(nplot);
+    for (unsigned iplot=0; iplot < num_plot_points; iplot++)
+    {
+      // Get local coordinates of plot point
+      elem_pt->get_s_plot(iplot, nplot, s);
+
+      // global coordinates
+      Vector<double> x(dim, 0.0);
+      
+      // get interpolated global coordinates
+      for(unsigned i=0; i<dim; i++)
+      { 
+	x[i] = elem_pt->interpolated_x(s,i);
+	stress_error_output << x[i] << " ";
+	stress_error_output_plain << x[i] << " ";
+      }
+
+      // -----------------------------------------
+      // singular stuff
+      // -----------------------------------------
+      
+      // singular solution at this knot (don't care about velocity, just need the pressure for the stress)
+      Vector<double> u_sing(dim+1, 0.0);
+
+      if(broadside)
+      {
+	u_sing = Analytic_Functions::singular_fct_broadside(x);
+      }
+      else
+      {
+	u_sing = Analytic_Functions::singular_fct_in_plane(x);
+      }
+      
+      // extract the singular pressure
+      double p_sing = u_sing[dim];
+	
+      // get the singular velocity gradient
+      DenseMatrix<double> du_dx_sing(dim, dim, 0.0);
+
+      if(broadside)
+      {
+	du_dx_sing = Analytic_Functions::gradient_of_singular_fct_broadside(x);
+      }
+      else
+      {
+	du_dx_sing = Analytic_Functions::gradient_of_singular_fct_in_plane(x);
+      }
+      
+      // compute the singular strain rate
+      DenseMatrix<double> strain_rate_sing(dim, dim, 0.0);
+
+      for(unsigned i=0; i<dim; i++)
+      {
+	for(unsigned j=0; j<dim; j++)
+	{
+	  strain_rate_sing(i,j) = 0.5*(du_dx_sing(i,j) + du_dx_sing(j,i));
+	}
+      }
+
+      // get the singular stress
+      DenseMatrix<double> stress_sing(dim, dim, 0.0);
+      stress_sing = Analytic_Functions::stress(strain_rate_sing, p_sing);
+
+      // -----------------------------------------
+      // "FE" stuff
+      // -----------------------------------------
+
+      // FE pressure
+      double p_fe = elem_pt->interpolated_p_nst(s);
+      
+      // compute the "FE" strain-rate
+      DenseMatrix<double> strain_rate_fe(dim, dim, 0.0);
+
+      elem_pt->strain_rate(s, strain_rate_fe);
+
+      // compute the "FE" stress
+      DenseMatrix<double> stress_fe(dim, dim, 0.0);
+      stress_fe = Analytic_Functions::stress(strain_rate_fe, p_fe);
+
+      // -----------------------------------------
+      // Error
+      // -----------------------------------------
+	
+      // compute the error
+      for(unsigned i=0; i<dim; i++)
+      {
+	for(unsigned j=0; j<dim; j++)
+	{
+	  // compute the error between the interpolated "FE" stress and the exact singular stress
+	  double error = stress_fe(i,j) - stress_sing(i,j);
+
+	  // output it
+	  stress_error_output       << error << " ";
+	  stress_error_output_plain << error << " ";
+	}
+      }
+
+      // output actual FD stress
+      for(unsigned i=0; i<dim; i++)
+      {
+	for(unsigned j=0; j<dim; j++)
+	{
+	  stress_error_output       << stress_fe(i,j) << " ";
+	  stress_error_output_plain << stress_fe(i,j) << " ";
+	}
+      }
+      
+      stress_error_output       << std::endl;
+      stress_error_output_plain << std::endl;
+      
+    } // end loop over plot point
+
+    stress_error_output       << std::endl;    
+    
+    // Write tecplot footer (e.g. FE connectivity lists)
+    elem_pt->write_tecplot_zone_footer(stress_error_output, nplot);
+  } // end loop over elements
+  
+  // done, close the output file
+  stress_error_output.close();
+  stress_error_output_plain.close();
 }
 
 //==start_of_impose_fake_singular_amplitude===============================
@@ -3336,7 +4192,7 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
     sprintf(filename,"%s/disk_on_disk%i.dat", Doc_info.directory().c_str(),
 	    Doc_info.number());
     some_file.open(filename);
-    
+        
     Vector<double> x(3);
     
     for (unsigned k=0; k < Ndisk_on_disk_plot; k++)
@@ -3347,7 +4203,7 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
       for (unsigned i=0; i < Nrho_disk_on_disk_plot; i++)
       {
 	for (unsigned j=0; j<Nphi_disk_on_disk_plot; j++)
-	{
+	{		
 	  (Disk_on_disk_plot_point[k][i][j].second.first)->
 	    position(Disk_on_disk_plot_point[k][i][j].second.second,x);
 	  
@@ -3375,11 +4231,56 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 	    << phi << " "
 	    // QUEHACERES put moffat solution here
 	    // << Global_Parameters::asymptotic_solution(rho,phi) << " "
-	    << std::endl;
+	    << std::endl;	  
 	}
       }
     }
     some_file.close();
+    
+    for (unsigned k=0; k < Ndisk_on_disk_plot; k++)
+    {
+      sprintf(filename,"%s/disk_on_disk_gnuplot_disk%i_%i.dat", Doc_info.directory().c_str(),
+	      k, Doc_info.number());
+      
+      some_file.open(filename);
+      
+      for (unsigned j=0; j<Nphi_disk_on_disk_plot; j++)
+      {
+	for (unsigned i=0; i < Nrho_disk_on_disk_plot; i++)
+	{			
+	  (Disk_on_disk_plot_point[k][i][j].second.first)->
+	    position(Disk_on_disk_plot_point[k][i][j].second.second,x);
+	  
+	  double rho = (Disk_on_disk_plot_point[k][i][j].first)[0];
+	  double phi = (Disk_on_disk_plot_point[k][i][j].first)[1];
+
+	  // get the interpolated velocity at this point
+	  Vector<double> u(3);
+	  dynamic_cast<ELEMENT*>(Disk_on_disk_plot_point[k][i][j].second.first)->
+	    interpolated_u_nst(Disk_on_disk_plot_point[k][i][j].second.second, u);
+
+	  // get the interpolated pressure at this point
+	  double p = dynamic_cast<ELEMENT*>(Disk_on_disk_plot_point[k][i][j].second.first)->
+	    interpolated_p_nst(Disk_on_disk_plot_point[k][i][j].second.second);
+	  
+	  some_file 
+	    << x[0] << " " 
+	    << x[1] << " " 
+	    << x[2] << " " 
+	    << u[0] << " "
+	    << u[1] << " "
+	    << u[2] << " "
+	    << p    << " "
+	    << rho << " " 
+	    << phi << " "
+	    // QUEHACERES put moffat solution here
+	    // << Global_Parameters::asymptotic_solution(rho,phi) << " "
+	    << std::endl;	  
+	}
+	some_file << "\n\n";
+      }
+      some_file.close();
+    }    
   }
 
   // --------------------------------------------------------------------------
@@ -3667,7 +4568,7 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
       int face_index = Bulk_mesh_pt->
 	face_index_at_boundary(b,e);
 
-      // Build the corresponding surface power element
+      // Build the corresponding NS face element
       NavierStokesFaceElement<ELEMENT>* surface_element_pt =
       	new NavierStokesFaceElement<ELEMENT>(el_pt, face_index);
      
@@ -3812,16 +4713,23 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   
   //Increment counter for solutions 
   Doc_info.number()++;
-  
+
+  oomph_info << "Finished documenting solution.\n\n";
 } // end of doc
 
+
+
+// ////////////////////////////////////////////////////////////////////////////
+// ////////////////////////////////////////////////////////////////////////////
+// ////////////////////////////////////////////////////////////////////////////
+// ////////////////////////////////////////////////////////////////////////////
 
 //========================================================================
 /// Driver
 //========================================================================
 int main(int argc, char* argv[])
 {
-
+  
 #ifdef USE_SINGULAR_ELEMENTS
   oomph_info << "====== Code compiled using singular elements ======\n";
 #else
@@ -3877,6 +4785,21 @@ int main(int argc, char* argv[])
   CommandLineArgs::specify_command_line_flag("--n",
 					     &Global_Parameters::n);
 
+  // Cross-sectional radius of the torus region
+  CommandLineArgs::specify_command_line_flag("--r_torus",
+					     &Global_Parameters::R_torus);
+
+  // number of vertices on the cross-sectional circles of the torus
+  CommandLineArgs::specify_command_line_flag("--nvertex_torus",
+					     &Global_Parameters::Nvertex_torus);
+
+  // Half the number of segments making up the perimeter of the disk
+  CommandLineArgs::specify_command_line_flag("--half_nsegment_disk",
+					     &Global_Parameters::Half_nsegment_disk);
+
+  CommandLineArgs::specify_command_line_flag("--target_element_volume_in_torus", 
+					     &Global_Parameters::Target_element_volume_in_torus_region);
+  
   // prevent the splitting of corner elements, which may cause locking but prevents
   // the region element issue
   CommandLineArgs::specify_command_line_flag("--dont_split_corner_elements");
@@ -3884,7 +4807,20 @@ int main(int argc, char* argv[])
   // get output directory
   CommandLineArgs::specify_command_line_flag("--dir", &Global_Parameters::output_directory);
 
-  CommandLineArgs::specify_command_line_flag("--set_initial_conditions_to_singular_solution");
+  CommandLineArgs::specify_command_line_flag(
+    "--set_initial_conditions_to_singular_solution_broadside");
+  
+  CommandLineArgs::specify_command_line_flag(
+    "--set_initial_conditions_to_singular_solution_in_plane");
+
+  CommandLineArgs::specify_command_line_flag("--validate_singular_stress_broadside");
+  CommandLineArgs::specify_command_line_flag("--validate_singular_stress_in_plane");
+
+  CommandLineArgs::specify_command_line_flag("--set_gupta_solution_on_outer_boundaries");
+
+  CommandLineArgs::specify_command_line_flag("--do_gupta_traction_problem");
+
+  CommandLineArgs::specify_command_line_flag("--output_dboundary_triad_dx");
   
 #ifndef DO_TETGEN
 
@@ -3895,10 +4831,8 @@ int main(int argc, char* argv[])
 
 #endif
 
-  bool throw_on_unrecognised_flags = true;
-  
   // Parse command line
-  CommandLineArgs::parse_and_assign(throw_on_unrecognised_flags);
+  CommandLineArgs::parse_and_assign();
  
   // Doc what has actually been specified on the command line
   CommandLineArgs::doc_specified_flags();
@@ -3930,13 +4864,17 @@ int main(int argc, char* argv[])
   if (CommandLineArgs::command_line_flag_has_been_set("--set_sing_amplitude") &&  
       CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
   {
-    ostringstream error_message;
-    error_message << "It doesn't make sense to both specify "
-		  << "--dont_subtract_singularity and --set_sing_amplitude!\n";
+    if(Global_Parameters::singular_amplitude_for_debug != 0)
+    {
+      ostringstream error_message;
+      error_message << "It doesn't make sense to both specify "
+		    << "--dont_subtract_singularity and --set_sing_amplitude with a \n"
+		    <<"non-zero amplitude!\n";
       
-    throw OomphLibError(error_message.str(), 
-			OOMPH_CURRENT_FUNCTION,
-			OOMPH_EXCEPTION_LOCATION);
+      throw OomphLibError(error_message.str(), 
+			  OOMPH_CURRENT_FUNCTION,
+			  OOMPH_EXCEPTION_LOCATION);
+    }
   }
 #else
   if (CommandLineArgs::command_line_flag_has_been_set("--set_sing_amplitude") ||
@@ -3967,6 +4905,8 @@ int main(int argc, char* argv[])
   if (CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
   {
     problem.subtract_singularity(false);
+    Global_Parameters::singular_amplitude_for_debug = 0;
+    problem.impose_fake_singular_amplitude();
   }
   else
   {
@@ -3983,14 +4923,64 @@ int main(int argc, char* argv[])
   FlowAroundDiskProblem <ProjectableTaylorHoodElement<TTaylorHoodElement<3> > > problem;
 #endif
 
-
   // for debug
   if (CommandLineArgs::command_line_flag_has_been_set(
-	"--set_initial_conditions_to_singular_solution") )    
+	"--set_initial_conditions_to_singular_solution_broadside") )    
   {
     problem.set_values_to_singular_solution();
   }
+  else if(CommandLineArgs::command_line_flag_has_been_set(
+	"--set_initial_conditions_to_singular_solution_in_plane") )
+  {
+    problem.set_values_to_singular_solution(false);
+  }
 
+  if (CommandLineArgs::command_line_flag_has_been_set(
+	"--validate_singular_stress_broadside") )
+  {
+    problem.validate_singular_stress();
+    problem.doc_solution(2);
+    exit(0);
+  }
+  else if(CommandLineArgs::command_line_flag_has_been_set(
+	"--validate_singular_stress_in_plane") )
+  {
+    problem.validate_singular_stress(false);
+    problem.doc_solution(2);
+    exit(0);
+  }
+
+  if (CommandLineArgs::command_line_flag_has_been_set(
+	"--do_gupta_traction_problem"))
+  {
+    Global_Parameters::Do_gupta_traction_problem = true;
+  }
+
+  if (CommandLineArgs::command_line_flag_has_been_set("--output_dboundary_triad_dx"))
+  {
+    oomph_info << "Outputting derivatives of boundary triads...\n";
+    ofstream dtangent_dx_file;
+    ofstream dnormal_dx_file;
+    ofstream dbinormal_dx_file;
+
+
+    char filename[100];
+    sprintf(filename, "%s/dboundary_tangent_dx.csv", problem.doc_info().directory().c_str());
+    dtangent_dx_file.open(filename);
+    sprintf(filename, "%s/dboundary_normal_dx.csv", problem.doc_info().directory().c_str());
+    dnormal_dx_file.open(filename);
+    sprintf(filename, "%s/dboundary_binormal_dx.csv", problem.doc_info().directory().c_str());
+    dbinormal_dx_file.open(filename);
+
+    unsigned nplot = 2;
+    Global_Parameters::Warped_disk_with_boundary_pt->
+      output_dboundary_triad_dx_csv(nplot, dtangent_dx_file, dnormal_dx_file, dbinormal_dx_file);
+
+    dtangent_dx_file.close();
+    dnormal_dx_file.close();
+    dbinormal_dx_file.close();
+  }
+  
   // // QUEHACERES for debug
   // problem.newton_solver_tolerance() = 5e-8;
 
@@ -4001,7 +4991,7 @@ int main(int argc, char* argv[])
   //Output initial guess
   problem.doc_solution(nplot);
 
-  return 0;
+  // return 0;
   
   unsigned max_adapt = 0; 
   for (unsigned i=0; i<=max_adapt; i++)
@@ -4047,5 +5037,4 @@ int main(int argc, char* argv[])
 
   return 0;
 }
-
 

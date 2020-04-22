@@ -38,7 +38,7 @@
   #include <oomph-lib-config.h>
 #endif
 
-
+#include "poisson.h"
 
 namespace oomph
 {
