@@ -62,6 +62,9 @@
 // include classes for vector and matrix algebra
 #include "additional_maths.h"
 
+// definitions to convert CForm output from Mathematica
+#include "mathematica_definitions.h"
+
 // Tetgen or Gmsh
 #define DO_TETGEN
 
@@ -125,7 +128,7 @@ namespace Global_Parameters
   
   // size of the radially aligned disks used for outputting the solution at points
   // around the disk edge
-  double disk_on_disk_radius = 0.2;
+  // double disk_on_disk_radius = 0.2;
 
   // zero is default, i.e. maximum possible element volume which respects
   // torus boundary discretisation
@@ -169,140 +172,23 @@ namespace Analytic_Functions
     return static_cast<double>(i == j);
   }
 
-  // reflect an angle \theta\in[0,2\pi] w.r.t. the z-axis
+  // function to map any angle (+ve or -ve) to [0,2pi)
+  double map_angle_to_range_0_to_2pi(const double& signed_angle)
+  {
+    // shorthand
+    const double two_pi = 2.0 * MathematicalConstants::Pi;
+
+    // effectively implements Python modulo division
+    // (C++ would return a negative angle if we did -angle % 2pi)    
+    return signed_angle - two_pi * floor(signed_angle/two_pi);    
+  }
+  
+  // reflect an angle the z-axis
   double reflect_angle_wrt_z_axis(const double& theta)
   {
-    // double theta_reflected = 0;
-    // if(theta < 0)
-    // {
-    //   theta_reflected = -MathematicalConstants::Pi - theta;
-    // }
-    // else
-    // {
-    //   theta_reflected = MathematicalConstants::Pi - theta;
-    // }
-    // return theta_reflected;
-
-    double tol = -1e-8;
-    if(theta < tol)
-    {
-      std::ostringstream error_message;
-      error_message << "This function should only be passed positive angles in [0,2pi]\n\n";
-
-      throw OomphLibError(error_message.str(),
-                              OOMPH_CURRENT_FUNCTION,
-                              OOMPH_EXCEPTION_LOCATION);
-    }
-    
-    double theta_flipped;
-
-    // shorthand
-    const double pi = MathematicalConstants::Pi;
-          
-    if(theta < pi)
-    {
-      theta_flipped = pi - theta;
-    }
-    else
-    {
-      theta_flipped = pi + (2.0*pi - theta);
-    }
-
-    return theta_flipped;
+    // flip by subtracting from pi, then make map back to [0,2pi)
+    return map_angle_to_range_0_to_2pi(MathematicalConstants::Pi - theta);
   }  
-  
-  /// \short Function to convert 2D Polar derivatives (du/dr, du/dtheta, dv/dr, dv/dtheta)
-  // to 3D Cartesian derivatives (dux/dx, dux/dy, duy/dx, duy/dy)
-  DenseMatrix<double> polar_to_cartesian_derivatives_3d(
-    const DenseMatrix<double>& grad_u_polar,
-    const Vector<double>& u_polar,
-    const Vector<double>& dx,
-    const double& rho, const double& zeta, const double& phi,
-    const mVector& rho_hat, const mVector& phi_hat,
-    const Vector<double>& s, const Vector<double>& n,
-    const Vector<mVector>& ds_dx, const Vector<mVector>& dn_dx,
-    const TransformationMatrix& T, const TransformationMatrix& dT_dzeta,
-    const TransformationMatrix& dT_dphi)
-  {
-    // shorthand for polar components
-    double u = u_polar[0];
-    double v = u_polar[1];
-
-    double du_drho = grad_u_polar(0,0);
-    double du_dphi = grad_u_polar(0,1);
-    double dv_drho = grad_u_polar(1,0);
-    double dv_dphi = grad_u_polar(1,1);
-
-    double drho_dx = dx[0] / rho;
-    double drho_dy = dx[1] / rho;
-    double drho_dz = dx[2] / rho;
-    
-    double dphi_dx = -dx[0]*dx[2] / (sqrt(dx[0]*dx[0] + dx[1]*dx[1]) * rho*rho);
-    double dphi_dy = -dx[1]*dx[2] / (sqrt(dx[0]*dx[0] + dx[1]*dx[1]) * rho*rho);
-    double dphi_dz = sqrt(dx[0]*dx[0] + dx[1]*dx[1]) / (rho*rho);
-
-    double dzeta_dx = -dx[1] / (dx[0]*dx[0] + dx[1]*dx[1]);
-    double dzeta_dy =  dx[0] / (dx[0]*dx[0] + dx[1]*dx[1]);
-    double dzeta_dz = 0;
-    
-    mVector drho_hat_dx = -(T * ds_dx[0]) - (dT_dzeta * s) * dzeta_dx - (dT_dphi * s) * dphi_dx;
-    mVector drho_hat_dy = -(T * ds_dx[1]) - (dT_dzeta * s) * dzeta_dy - (dT_dphi * s) * dphi_dy;
-    mVector drho_hat_dz = -(T * ds_dx[2]) - (dT_dzeta * s) * dzeta_dz - (dT_dphi * s) * dphi_dz;
-
-    mVector dphi_hat_dx = (T * dn_dx[0]) + (dT_dzeta * n) * dzeta_dx + (dT_dphi * n) * dphi_dx;
-    mVector dphi_hat_dy = (T * dn_dx[1]) + (dT_dzeta * n) * dzeta_dy + (dT_dphi * n) * dphi_dy;
-    mVector dphi_hat_dz = (T * dn_dx[2]) + (dT_dzeta * n) * dzeta_dz + (dT_dphi * n) * dphi_dz;
-    
-    // output cartesian tensor du_i/dx_j
-    DenseMatrix<double> du_dx(3, 3, 0.0);
-
-    // dux_dx
-    du_dx(0,0) = (rho_hat * mVector::e_x()) * (du_drho * drho_dx + du_dphi * dphi_dx) +
-      (phi_hat * mVector::e_x()) * (dv_drho * drho_dx + dv_dphi * dphi_dx) +
-      u * (drho_hat_dx * mVector::e_x()) + v * (dphi_hat_dx * mVector::e_x());
-
-    // dux_dy
-    du_dx(0,1) = (rho_hat * mVector::e_x()) * (du_drho * drho_dy + du_dphi * dphi_dy) +
-      (phi_hat * mVector::e_x()) * (dv_drho * drho_dy + dv_dphi * dphi_dy) +
-      u * (drho_hat_dy * mVector::e_x()) + v * (dphi_hat_dy * mVector::e_x());
-
-    // dux_dz
-    du_dx(0,2) = (rho_hat * mVector::e_x()) * (du_drho * drho_dz + du_dphi * dphi_dz) +
-      (phi_hat * mVector::e_x()) * (dv_drho * drho_dz + dv_dphi * dphi_dz) +
-      u * (drho_hat_dz * mVector::e_x()) + v * (dphi_hat_dz * mVector::e_x());
-
-    // duy_dx
-    du_dx(1,0) = (rho_hat * mVector::e_y()) * (du_drho * drho_dx + du_dphi * dphi_dx) +
-      (phi_hat * mVector::e_y()) * (dv_drho * drho_dx + dv_dphi * dphi_dx) +
-      u * (drho_hat_dx * mVector::e_y()) + v * (dphi_hat_dx * mVector::e_y());
-
-    // duy_dy
-    du_dx(1,1) = (rho_hat * mVector::e_y()) * (du_drho * drho_dy + du_dphi * dphi_dy) +
-      (phi_hat * mVector::e_y()) * (dv_drho * drho_dy + dv_dphi * dphi_dy) +
-      u * (drho_hat_dy * mVector::e_y()) + v * (dphi_hat_dy * mVector::e_y());
-
-    // duy_dz
-    du_dx(1,2) = (rho_hat * mVector::e_y()) * (du_drho * drho_dz + du_dphi * dphi_dz) +
-      (phi_hat * mVector::e_y()) * (dv_drho * drho_dz + dv_dphi * dphi_dz) +
-      u * (drho_hat_dz * mVector::e_y()) + v * (dphi_hat_dz * mVector::e_y());
-    
-    // duz_dx
-    du_dx(2,0) = (rho_hat * mVector::e_z()) * (du_drho * drho_dx + du_dphi * dphi_dx) +
-      (phi_hat * mVector::e_z()) * (dv_drho * drho_dx + dv_dphi * dphi_dx) +
-      u * (drho_hat_dx * mVector::e_z()) + v * (dphi_hat_dx * mVector::e_z());
-
-    // duz_dy
-    du_dx(2,1) = (rho_hat * mVector::e_z()) * (du_drho * drho_dy + du_dphi * dphi_dy) +
-      (phi_hat * mVector::e_z()) * (dv_drho * drho_dy + dv_dphi * dphi_dy) +
-      u * (drho_hat_dy * mVector::e_z()) + v * (dphi_hat_dy * mVector::e_z());
-
-    // duz_dz
-    du_dx(2,2) = (rho_hat * mVector::e_z()) * (du_drho * drho_dz + du_dphi * dphi_dz) +
-      (phi_hat * mVector::e_z()) * (dv_drho * drho_dz + dv_dphi * dphi_dz) +
-      u * (drho_hat_dz * mVector::e_z()) + v * (dphi_hat_dz * mVector::e_z());
-    
-    return du_dx;
-  }
   
   /// \short Newtonian stress tensor
   DenseMatrix<double> stress(const DenseMatrix<double>& strain_rate,
@@ -346,8 +232,7 @@ namespace Analytic_Functions
     
     // get the unit normal from the disk-like geometric object at this zeta
     Global_Parameters::Warped_disk_with_boundary_pt->
-      surface_vectors_at_boundary(0, zeta, r_disk_edge, tangent,
-				  normal, surface_normal);
+      boundary_triad(0, zeta, r_disk_edge, tangent, normal, surface_normal);
 
     // normal distance from the bulk point x to the plane defined by the
     // outer-unit normal t
@@ -356,7 +241,69 @@ namespace Analytic_Functions
     residuals.resize(1);
     residuals[0] = d;
   }
+
+  void dzeta_dx_residual(const Vector<double>& parameters,
+			 const Vector<double>& unknowns,
+			 Vector<double>& residuals)
+  {    
+    // interpret parameters
+    // ---------------------
+
+    // spatial coordinates of the bulk point
+    Vector<double> x(3,0);
+    x[0] = parameters[0];
+    x[1] = parameters[1];
+    x[2] = parameters[2];
+
+    double zeta = parameters[3];
+          
+    Vector<double> dzeta_dx(3,0);
+    dzeta_dx[0] = unknowns[0];
+    dzeta_dx[1] = unknowns[1];
+    dzeta_dx[2] = unknowns[2];
+
+    double n = Global_Parameters::n;
+    double epsilon = Global_Parameters::Epsilon;
+    
+    double w          =       epsilon * cos(n*zeta);
+    double dw_dzeta   =    -n*epsilon * sin(n*zeta);
+    double d2w_dzeta2 =  -n*n*epsilon * cos(n*zeta);
+
+    Vector<double> r_disk_edge(3);
+    Vector<double> tangent(3);
+    Vector<double> surface_normal(3);
+    Vector<double> normal(3);
+    
+    // get the triad vectors from the disk-like geometric object at this zeta
+    Global_Parameters::Warped_disk_with_boundary_pt->
+      boundary_triad(0, zeta, r_disk_edge, tangent, normal, surface_normal);
+    
+    Vector<double> dtangent_dzeta(3, 0);
+    Vector<double> dnormal_dzeta(3, 0);
+    Vector<double> dbinormal_dzeta(3, 0);
+      
+    Global_Parameters::Warped_disk_with_boundary_pt->
+      dboundary_triad_dzeta(0, zeta, dtangent_dzeta, dnormal_dzeta, dbinormal_dzeta);
+    
+    residuals.resize(3);
+
+    // residual equation is the derivative of the equation for the normal
+    // distance of the bulk point from the plane at this zeta, i.e.
+    // d/dx ((x-r)*tangent)
+    for(unsigned i=0; i<residuals.size(); i++)
+    {
+      residuals[i] = (delta(0,i) + sin(zeta)*dzeta_dx[i])*tangent[0]
+	+ (delta(1,i) - cos(zeta)*dzeta_dx[i])*tangent[1]
+	+ (delta(2,i) - dw_dzeta*dzeta_dx[i])*tangent[2]
+	+ (x[0] - cos(zeta))*dtangent_dzeta[0]*dzeta_dx[i]
+	+ (x[1] - sin(zeta))*dtangent_dzeta[1]*dzeta_dx[i]
+	+ (x[2] - w)*dtangent_dzeta[2]*dzeta_dx[i];
+    }
+  }
+
   
+  // //////////////////////////////////////////////////////////////////////////
+  // QUEHACERES comment here
   void singular_fct_and_gradient(const Vector<double>& x,
 				 const double& A, const double& B,
 				 Vector<double>& u_cartesian,
@@ -401,18 +348,8 @@ namespace Analytic_Functions
     
     // get the unit normal from the disk-like geometric object at this zeta
     Global_Parameters::Warped_disk_with_boundary_pt->
-      surface_vectors_at_boundary(b_dummy, zeta, r_disk_edge, tangent,
+      boundary_triad(b_dummy, zeta, r_disk_edge, tangent,
 				  normal, binormal);
-    
-    // QUEHACERES delete once surface_vectors work
-    // Global_Parameters::Warped_disk_with_boundary_pt->
-    //   boundary_triad(b_dummy, zeta, r_disk_edge, tangent_dummy,
-    // 		     normal, binormal);
-    
-     // QUEHACERES delete once surface_vectors works!
-     // the WarpedDisk geom object seems to return the binormal in the negative
-     // z direction for a flat plate, so we'll flip it
-     // binormal = -binormal;
     
     // compute the rho vector, the vector from the edge of the disk at this
     // zeta to the point in question
@@ -421,57 +358,11 @@ namespace Analytic_Functions
     // shorthands
     double rho  = rho_vector.magnitude();
     
-    // angle of the rho vector with respect to the x-y plane of the global
-    // Cartesian coordinate system
-    double angle_of_rho_wrt_xy_plane =
-      atan2pi(rho_vector[2], sqrt(rho_vector[0]*rho_vector[0] +
-				  rho_vector[1]*rho_vector[1]));
-
-    // the angle the edge of the sheet makes with the x-y plane
-    double angle_of_normal_wrt_xy_plane = atan2pi(normal[2],
-				   sqrt(normal[0]*normal[0]+normal[1]*normal[1]));
-
-    // QUEHACERES delete once U matrix works
-    // // dot product of this vector with the outerward normal
-    // double rho_dot_normal = rho_vector * normal;
-
-    // angle of inclination to the point in question from the outer normal vector
-    double elevation_relative_to_disk_edge = 0;
-    double tol = 1e-8;
-    if(rho > tol)
-    {
-      if((angle_of_rho_wrt_xy_plane < angle_of_normal_wrt_xy_plane) &&
-	(angle_of_rho_wrt_xy_plane > angle_of_normal_wrt_xy_plane - tol) )
-      {
-	elevation_relative_to_disk_edge = 0;
-      }
-      else
-      {
-	if(angle_of_rho_wrt_xy_plane > angle_of_normal_wrt_xy_plane)
-	{
-	  // elevation is the angle between the two
-	  elevation_relative_to_disk_edge =
-	    angle_of_rho_wrt_xy_plane - angle_of_normal_wrt_xy_plane;
-	}
-	else
-	{
-	  // otherwise it's the obtuse angle between them
-	  elevation_relative_to_disk_edge = 2*MathematicalConstants::Pi -
-	    (angle_of_normal_wrt_xy_plane - angle_of_rho_wrt_xy_plane);
-	}
-      } 
-    }
-
-    // mVector rho_hat = normal * cos(elevation_relative_to_disk_edge) +
-    //   binormal * sin(elevation_relative_to_disk_edge);
-
-    // mVector phi_hat = normal * sin(elevation_relative_to_disk_edge) -
-    //   binormal * cos(elevation_relative_to_disk_edge);
-    
-    // now account for the reflection of the moffat solution, which assumes
+    // Moffat angle (minus sign accounts for the reflection of the moffat solution, which assumes
     // the semi-infinite plate is at x>0 not x<0 as we have with this coordinate system
-    double phi = reflect_angle_wrt_z_axis(elevation_relative_to_disk_edge);  
-
+    double phi = atan2pi(rho_vector*binormal, -rho_vector*normal);
+    
+    // unit vector in the rho direction
     mVector rho_hat = -normal * cos(phi) + binormal * sin(phi);
 
     // the - sign in front of binormal component has been cancelled out by the angle
@@ -485,27 +376,24 @@ namespace Analytic_Functions
     // get the 2D polar Moffat solution (third component is pressure)
     mVector u_polar(3);
     moffatt_solution(rho, phi, A, B, u_polar, u_polar_derivatives);
-    
-    // convert the polar derivatives to cartesian derivatives
-    du_dx.resize(3,3);
+
     
     // ----------------
     // now use the outer normal to convert the rzp velocity into Cartesians
 
-    mVector zeta_hat(3);
-    zeta_hat[0] = -sin(zeta);
-    zeta_hat[1] =  cos(zeta);
-    
     u_cartesian.resize(3);
 
-    Vector<mVector> e(3);
-    e[0] = mVector::e_x();
-    e[1] = mVector::e_y();
-    e[2] = mVector::e_z();
+    // cartesian derivatives
+    du_dx.resize(3,3);
+    
+    Vector<mVector> e_hat(3);
+    e_hat[0] = mVector::e_x();
+    e_hat[1] = mVector::e_y();
+    e_hat[2] = mVector::e_z();
 
     Vector<mVector> xi(3);
     xi[0] = rho_hat;
-    xi[1] = mVector(3,0); //zeta_hat;
+    xi[1] = tangent;
     xi[2] = phi_hat;
     
     TransformationMatrix U(3,3);
@@ -513,17 +401,17 @@ namespace Analytic_Functions
     {
       for(unsigned j=0; j<3; j++)
       {
-	U(i,j) = e[i] * xi[j];
+	U(i,j) = e_hat[i] * xi[j];
       }
     }
 
     mVector u_moffat(3);
     u_moffat[0] = u_polar[0];
-    u_moffat[1] = 0; // QUEHACERES delete? (u_polar[0]*sin(phi) + u_polar[1]*cos(phi))
-      // * (binormal * zeta_hat) +
-      // (u_polar[0]*cos(phi) + u_polar[1]*sin(phi)) * (normal * zeta_hat);
+    u_moffat[1] = 0; 
     u_moffat[2] = u_polar[1];
 
+    double tol = 1e-8;
+     
     // do the conversion
     if(rho > tol)
     {
@@ -534,15 +422,72 @@ namespace Analytic_Functions
       DenseMatrix<double> dnormal_dx(3,3,0.0);
       DenseMatrix<double> dbinormal_dx(3,3,0.0);	
 
+      Vector<double> dtangent_dzeta(3, 0);
+      Vector<double> dnormal_dzeta(3, 0);
+      Vector<double> dbinormal_dzeta(3, 0);
+      
       Global_Parameters::Warped_disk_with_boundary_pt->
-	dboundary_triad_dx(0, zeta, dtangent_dx, dnormal_dx, dbinormal_dx);
+	dboundary_triad_dzeta(0, zeta, dtangent_dzeta, dnormal_dzeta, dbinormal_dzeta);
    
+      // starting guess for dzeta_dx is the dzeta_dx for a flat disk
+      unknowns.resize(3);
+      unknowns[0] = -sin(zeta) / (sqrt(x[0]*x[0]+x[1]*x[1]));
+      unknowns[1] =  cos(zeta) / (sqrt(x[0]*x[0]+x[1]*x[1]));
+      unknowns[2] = 0;
+      
+      Vector<double> parameters(4);
+      parameters[0] = x[0];
+      parameters[1] = x[1];
+      parameters[2] = x[2];
+      parameters[3] = zeta;
+      
+      // do the solve to get the boundary zeta
+      try
+      {
+	BlackBoxFDNewtonSolver::black_box_fd_newton_solve(
+	  &dzeta_dx_residual, parameters, unknowns);
+      }
+      catch(const std::exception e)
+      {
+	std::ostringstream error_message;
+	error_message << "Couldn't find dzeta_dx for the bulk point ("
+		      << x[0] << ", " << x[1] << ", " << x[2] << ")\n\n";
+
+	throw OomphLibError(error_message.str(),
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
+      }
+
+      Vector<double> dzeta_dx(3,0);
+      
+      // interpret the solve
+      dzeta_dx[0] = unknowns[0];
+      dzeta_dx[1] = unknowns[1];
+      dzeta_dx[2] = unknowns[2];
+      
+      // QUEHACERES do solves here to get dzeta_dx for the general case
+      double this_scaling_for_flat_disk_only = (sqrt(x[0]*x[0]+x[1]*x[1]));
+      Vector<double> dzeta_dx_debug(3,0);
+      dzeta_dx_debug[0] = -sin(zeta) / this_scaling_for_flat_disk_only;
+      dzeta_dx_debug[1] =  cos(zeta) / this_scaling_for_flat_disk_only;
+
+      for(unsigned i=0; i<3; i++)
+      {
+	for(unsigned j=0; j<3; j++)
+	{
+	  dtangent_dx(i,j)  = dtangent_dzeta[i]  * dzeta_dx[j];
+	  dnormal_dx(i,j)   = dnormal_dzeta[i]   * dzeta_dx[j];
+	  dbinormal_dx(i,j) = dbinormal_dzeta[i] * dzeta_dx[j];
+	}
+      }
       
       // polar derivatives w.r.t. (rho, t, phi)
       Vector<double> du_moffatt_drho(3,0);
       du_moffatt_drho[0] = u_polar_derivatives(0,0);   // dur_dr
       du_moffatt_drho[2] = u_polar_derivatives(1,0);   // duphi_dr
 
+      // QUEHACERES tangent derivatives 
+      
       Vector<double> du_moffatt_dphi(3,0);      
       du_moffatt_dphi[0] = u_polar_derivatives(0,1);  // dur_dphi
       du_moffatt_dphi[2] = u_polar_derivatives(1,1);  // duphi_dphi
@@ -550,61 +495,88 @@ namespace Analytic_Functions
       DenseMatrix<double> drho_hat_dx(3,3,0);
       DenseMatrix<double> dphi_hat_dx(3,3,0);
 
-      // theta is the angle of elevation of \hat{\bm s} to the x-y plane
-      mVector dtheta_dx(3,0);
+      // coordinates of this point in the n-s coordinate system
+      double n = 0;
+      double s = 0;
 
-      // dtheta_dx
-      dtheta_dx[0] = (-(normal[2]*(normal[0]*dnormal_dx(0,0) + 
-				   normal[1]*dnormal_dx(1,0))) + 
-		      (pow(normal[0],2) + pow(normal[1],2))*dnormal_dx(2,0))/
-	(sqrt(pow(normal[0],2) + pow(normal[1],2))*
-	 (pow(normal[0],2) + pow(normal[1],2) + pow(normal[2],2)));
+      // derivatives w.r.t. the global Cartesian system
+      mVector ds_dx(3,0);
+      mVector dn_dx(3,0);
+      
+      double k = Global_Parameters::n;
+      double dw_dzeta = -Global_Parameters::Epsilon * k * sin(k * zeta);
+	
+      DenseMatrix<double> drho_vector_dx(3,3,0);
 
-      // dtheta_dy
-      dtheta_dx[1] = (-(normal[2]*(normal[0]*dnormal_dx(0,1) + 
-				   normal[1]*dnormal_dx(1,1))) + 
-		      (pow(normal[0],2) + pow(normal[1],2))*dnormal_dx(2,1))/
-	(sqrt(pow(normal[0],2) + pow(normal[1],2))*
-	 (pow(normal[0],2) + pow(normal[1],2) + pow(normal[2],2)));
-
-      // dtheta_dz
-      dtheta_dx[2] = (-(normal[2]*(normal[0]*dnormal_dx(0,2) + 
-				   normal[1]*dnormal_dx(1,2))) + 
-		      (pow(normal[0],2) + pow(normal[1],2))*dnormal_dx(2,2))/
-	(sqrt(pow(normal[0],2) + pow(normal[1],2))*
-	 (pow(normal[0],2) + pow(normal[1],2) + pow(normal[2],2)));
+      // drho_x_dx
+      drho_vector_dx(0,0) = 1 + sin(zeta)*dzeta_dx[0];
+      // drho_x_dy
+      drho_vector_dx(0,1) = 0 + sin(zeta)*dzeta_dx[1];
+      // drho_x_dz
+      drho_vector_dx(0,2) = 0 + sin(zeta)*dzeta_dx[2];
+      // drho_y_dx
+      drho_vector_dx(1,0) = 0 - cos(zeta)*dzeta_dx[0];
+      // drho_y_dy
+      drho_vector_dx(1,1) = 1 - cos(zeta)*dzeta_dx[1];
+      // drho_y_dz
+      drho_vector_dx(1,2) = 0 - cos(zeta)*dzeta_dx[2];
+      // drho_z_dx
+      drho_vector_dx(2,0) = 0 - dw_dzeta * dzeta_dx[0];
+      // drho_z_dy
+      drho_vector_dx(2,1) = 0 - dw_dzeta * dzeta_dx[1];
+      // drho_z_dz
+      drho_vector_dx(2,2) = 1 - dw_dzeta * dzeta_dx[2];
+      
+      for(unsigned i=0; i<3; i++)
+      {
+	n += rho_vector[i] * binormal[i];
+	s += rho_vector[i] * normal[i];
+	
+	for(unsigned j=0; j<3; j++)
+	{
+	  ds_dx[i] += drho_vector_dx(j,i)*normal[j]   + rho_vector[j]*dnormal_dx(j,i);
+	  dn_dx[i] += drho_vector_dx(j,i)*binormal[j] + rho_vector[j]*dbinormal_dx(j,i);
+	  
+	  // ds_dx[i] += e_hat[i][j]*normal[j]   + rho_vector[j]*dnormal_dx(j,i);
+	  // dn_dx[i] += e_hat[i][j]*binormal[j] + rho_vector[j]*dbinormal_dx(j,i);
+	  
+	  // for(unsigned k=0; k<3; k++)
+	  // {
+	  //   ds_dx[i] += delta(i,j) * e_hat[j][k]*normal[k] +
+	  //     rho_vector[j]*e_hat[j][k] * dnormal_dx(k,i);
+	  //   dn_dx[i] += delta(i,j) * e_hat[j][k]*binormal[k] +
+	  //     rho_vector[j]*e_hat[j][k] * dbinormal_dx(k,i);
+	  // }
+	}
+      }
       
       // Cartesian derivatives of the Moffatt coordinates
       mVector drho_dx(3,0);
       mVector dphi_dx(3,0);
 
       for(unsigned i=0; i<3; i++)
-      	drho_dx[i] = rho_vector[i] / rho;
-      
-      dphi_dx[0] = -rho_vector[0]*rho_vector[2] /
-      	(rho*rho * sqrt(pow(rho_vector[0],2) + pow(rho_vector[1],2)));
-      dphi_dx[1] = -rho_vector[1]*rho_vector[2] /
-      	(rho*rho * sqrt(pow(rho_vector[0],2) + pow(rho_vector[1],2)));
-      dphi_dx[2] = sqrt(pow(rho_vector[0],2) + pow(rho_vector[1],2))/(rho*rho);
-
-
-      // account for the angle of the normal and the angle flip
-      for(unsigned i=0; i<3; i++)
       {
-	dphi_dx[i] = -dphi_dx[i] + dtheta_dx[i];
-      }
-
+	drho_dx[i] = (s*ds_dx[i] + n*dn_dx[i]) / rho;
+	dphi_dx[i] = (n*ds_dx[i] - s*dn_dx[i]) / (rho*rho);
+      } 
+      
       for(unsigned i=0; i<3; i++)
       {
 	for(unsigned j=0; j<3; j++)
 	{
-	  drho_hat_dx(i,j) = sin(phi) * dphi_dx[j]*normal[i] - 
-	    cos(phi)*dnormal_dx(i,j) + cos(phi)*dphi_dx[j]*binormal[i] + 
+	  drho_hat_dx(i,j) = dphi_dx[j]*phi_hat[i] - cos(phi)*dnormal_dx(i,j) +  
 	    sin(phi)*dbinormal_dx(i,j);
 
-	  dphi_hat_dx(i,j) = cos(phi) * dphi_dx[j]*normal[i] + 
-	    sin(phi)*dnormal_dx(i,j) - sin(phi)*dphi_dx[j]*binormal[i] + 
+	  dphi_hat_dx(i,j) = -dphi_dx[j]*rho_hat[i] + sin(phi)*dnormal_dx(i,j) + 
 	    cos(phi)*dbinormal_dx(i,j);
+	  
+	  // drho_hat_dx(i,j) = sin(phi) * dphi_dx[j]*normal[i] - 
+	  // cos(phi)*dnormal_dx(i,j) + cos(phi)*dphi_dx[j]*binormal[i] + 
+	  // sin(phi)*dbinormal_dx(i,j);
+	  
+	  // dphi_hat_dx(i,j) = cos(phi) * dphi_dx[j]*normal[i] + 
+	  //   sin(phi)*dnormal_dx(i,j) - sin(phi)*dphi_dx[j]*binormal[i] + 
+	  //   cos(phi)*dbinormal_dx(i,j);
 	}
       }
 
@@ -640,8 +612,8 @@ namespace Analytic_Functions
 	    // do the dot product
       	    for(unsigned l=0; l<3; l++)
       	    {
-      	      du_dx(i,j) += e[i][l] * dxi_dx[k](l,j) * u_moffat[k] +
-      		e[i][l]*xi[k][l] * (du_moffatt_drho[k] * drho_dx[j] + du_moffatt_dphi[k]*dphi_dx[j]);
+      	      du_dx(i,j) += e_hat[i][l] * dxi_dx[k](l,j) * u_moffat[k] +
+      		e_hat[i][l]*xi[k][l] * (du_moffatt_drho[k] * drho_dx[j] + du_moffatt_dphi[k]*dphi_dx[j]);
       	    }
       	  }
       	}
@@ -809,7 +781,7 @@ namespace Analytic_Functions
 
     u[0] = ur * cos(phi) - uphi*sin(phi);
     u[1] = ur * sin(phi) + uphi*cos(phi);
-    u[2] = uz;
+    u[2] = uz - V;
     u[3] = p;
     
     return u;
@@ -819,7 +791,8 @@ namespace Analytic_Functions
   {
     return 1/cosh(x);
   }
-  
+
+  // QUEHACERES presumably this is the broadside traction? check
   void prescribed_gupta_traction(const Vector<double>& x,
 				 const Vector<double>& outer_unit_normal,
 				 Vector<double>& traction)
@@ -897,7 +870,7 @@ namespace Analytic_Functions
 
     // get the pressure from the Gupta solution
     Vector<double> u_gupta = gupta_solution_broadside(x);
-    double p = u_gupta[dim+1];
+    double p = u_gupta[dim];
     
     // matrix to store the stress BCs we're applying 
     DenseMatrix<double> stress(dim, dim, 0.0);
@@ -1335,10 +1308,10 @@ private:
   /// Region ID for torus around edge of warped disk
   unsigned Torus_region_id;
 
-  /// First boundary ID for disk that is surrounded by torus
+  /// First boundary ID for lower disk surface that is surrounded by torus
   unsigned First_lower_disk_boundary_id;
  
-  /// Last boundary ID for disk that is surrounded by torus
+  /// Last boundary ID for lower disk surface that is surrounded by torus
   unsigned Last_lower_disk_boundary_id;
 
   /// First boundary ID for the upper disk surface
@@ -1738,7 +1711,8 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
 
   // Add 'em to mesh
   add_sub_mesh(Face_mesh_for_bc_pt);
-  
+  add_sub_mesh(Traction_boundary_condition_mesh_pt);
+
 #endif
   
   build_global_mesh();
@@ -1749,8 +1723,8 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   // Setup equation numbering scheme
   oomph_info <<"Number of equations: " << assign_eqn_numbers() << std::endl; 
 
-  // @@@@@@@@@@@@@@@@@@
-  // QUEHACERES debug
+  // // @@@@@@@@@@@@@@@@@@
+  // // QUEHACERES debug
   {
     sprintf(filename, "%s/boundary_surface_vectors.csv", Doc_info.directory().c_str());
     some_file.open(filename);
@@ -1765,10 +1739,10 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
       double zeta = j * 2*MathematicalConstants::Pi / 51;
       
       Global_Parameters::Warped_disk_with_boundary_pt->
-	surface_vectors_at_boundary(0, zeta, r, tangent, normal, binormal);
+  	surface_vectors_at_boundary(0, zeta, r, tangent, normal, binormal);
 
       for(unsigned i=0; i<3; i++)
-	some_file << r[i] << ",";    
+  	some_file << r[i] << ",";    
       for(unsigned i=0; i<3; i++)
         some_file << tangent[i] << ",";
       for(unsigned i=0; i<3; i++)
@@ -1780,8 +1754,11 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
     }
   
     some_file.close();
+
+    oomph_info << "done outputting boundary triad\n\n" << std::flush;
+    
   }
-  // @@@@@@@@@@
+  // // @@@@@@@@@@
 }
 
 // ////////////////////////////////////////////////////////////////////////////
@@ -2036,7 +2013,7 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 	    new NavierStokesFaceElement<ELEMENT>(el_pt, face_index);
 
 	  // find the index which corresponds to this node
-	  unsigned nodal_index;
+	  int nodal_index = -1;
 	  for(unsigned j=0; j<surface_element_pt->nnode(); j++)
 	  {
 	    if(surface_element_pt->node_pt(j) == node_of_interest_pt)
@@ -2044,6 +2021,13 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 	      nodal_index = j;
 	      break;
 	    }
+	  }
+
+	  // check if we found it
+	  if(nodal_index == -1)
+	  {
+	    // if we didn't, lets look in the next element on this boundary
+	    continue;
 	  }
 	  
 	  // get the outer unit normal
@@ -2823,21 +2807,21 @@ void FlowAroundDiskProblem<ELEMENT>::duplicate_plate_nodes_and_add_boundaries()
   ofstream some_file;
   unsigned nplot = 2;
   
-  sprintf(filename, "%s/elements_on_duplicated_boundary.dat", Doc_info.directory().c_str());
-  some_file.open(filename);
+  // sprintf(filename, "%s/elements_on_duplicated_boundary.dat", Doc_info.directory().c_str());
+  // some_file.open(filename);
     
-  for(unsigned ibound = First_upper_disk_boundary_id;
-      ibound <= Last_upper_disk_boundary_id; ibound++)
-  {
-    unsigned nel = Bulk_mesh_pt->nboundary_element(ibound);
-    for(unsigned e=0; e<nel; e++)
-    {
-      ELEMENT* el_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->boundary_element_pt(ibound,e));
-      el_pt->output(some_file, nplot);
-    }
-  }
+  // for(unsigned ibound = First_upper_disk_boundary_id;
+  //     ibound <= Last_upper_disk_boundary_id; ibound++)
+  // {
+  //   unsigned nel = Bulk_mesh_pt->nboundary_element(ibound);
+  //   for(unsigned e=0; e<nel; e++)
+  //   {
+  //     ELEMENT* el_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->boundary_element_pt(ibound,e));
+  //     el_pt->output(some_file, nplot);
+  //   }
+  // }
 
-  some_file.close();
+  // some_file.close();
 
   oomph_info << "\nFirst_upper_disk_boundary_id: " << First_upper_disk_boundary_id 
 	     << "\nLast_upper_disk_boundary_id:  " << Last_upper_disk_boundary_id << "\n\n";
@@ -2865,30 +2849,30 @@ void FlowAroundDiskProblem<ELEMENT>::duplicate_plate_nodes_and_add_boundaries()
       
   }
 
-  sprintf(filename, "%s/duplicated_node_numbers.dat",
-	  Doc_info.directory().c_str());
-  some_file.open(filename);
+  // sprintf(filename, "%s/duplicated_node_numbers.dat",
+  // 	  Doc_info.directory().c_str());
+  // some_file.open(filename);
 
-  for(unsigned j=0; j<Bulk_mesh_pt->nnode(); j++)
-  {
-    Node* node_pt = Bulk_mesh_pt->node_pt(j);
+  // for(unsigned j=0; j<Bulk_mesh_pt->nnode(); j++)
+  // {
+  //   Node* node_pt = Bulk_mesh_pt->node_pt(j);
     
-    for(std::map<Node*,Node*>::iterator it=existing_duplicate_node_pt.begin();
-	it != existing_duplicate_node_pt.end(); it++)
-    {
-      if(node_pt == it->second)
-      {
-	some_file << j << " "
-		  << node_pt->x(0) << " "
-		  << node_pt->x(1) << " "
-		  << node_pt->x(2) << "\n";
+  //   for(std::map<Node*,Node*>::iterator it=existing_duplicate_node_pt.begin();
+  // 	it != existing_duplicate_node_pt.end(); it++)
+  //   {
+  //     if(node_pt == it->second)
+  //     {
+  // 	some_file << j << " "
+  // 		  << node_pt->x(0) << " "
+  // 		  << node_pt->x(1) << " "
+  // 		  << node_pt->x(2) << "\n";
 
-	break;
-      }
-    }
-  }
+  // 	break;
+  //     }
+  //   }
+  // }
   
-  some_file.close();
+  // some_file.close();
   
   bool first_boundary_without_nodes = true;
   unsigned id_of_first_boundary_without_nodes = 0;
@@ -2923,252 +2907,252 @@ void FlowAroundDiskProblem<ELEMENT>::duplicate_plate_nodes_and_add_boundaries()
 	     << "ID of first boundary without nodes:          "
 	     << id_of_first_boundary_without_nodes << "\n\n";
 
-  // for debug, let's output the number of elements touching the uppper plate
-  // which are on lower boundaries (this should just be the edge nodes).
+  // // for debug, let's output the number of elements touching the uppper plate
+  // // which are on lower boundaries (this should just be the edge nodes).
 
-  sprintf(filename, "%s/upper_element_nodes_on_lower_disk_boundary.dat",
-	  Doc_info.directory().c_str());
-  some_file.open(filename);
+  // sprintf(filename, "%s/upper_element_nodes_on_lower_disk_boundary.dat",
+  // 	  Doc_info.directory().c_str());
+  // some_file.open(filename);
   
-  for(typename std::set<ELEMENT*>::iterator el_it = Elements_on_upper_disk_surface_pt.begin();
-      el_it != Elements_on_upper_disk_surface_pt.end(); el_it++)
-  {
-    ELEMENT* el_pt = *el_it;
+  // for(typename std::set<ELEMENT*>::iterator el_it = Elements_on_upper_disk_surface_pt.begin();
+  //     el_it != Elements_on_upper_disk_surface_pt.end(); el_it++)
+  // {
+  //   ELEMENT* el_pt = *el_it;
 
-    for(unsigned j=0; j<el_pt->nnode(); j++)
-    {
-      Node* node_pt = el_pt->node_pt(j);
+  //   for(unsigned j=0; j<el_pt->nnode(); j++)
+  //   {
+  //     Node* node_pt = el_pt->node_pt(j);
 
-      for(unsigned b=First_lower_disk_boundary_id; b<=Last_lower_disk_boundary_id; b++)
-      {
-	if(node_pt->is_on_boundary(b))
-	{
-	  for(unsigned i=0; i<3; i++)	    
-	    some_file << node_pt->x(i) << " ";
+  //     for(unsigned b=First_lower_disk_boundary_id; b<=Last_lower_disk_boundary_id; b++)
+  //     {
+  // 	if(node_pt->is_on_boundary(b))
+  // 	{
+  // 	  for(unsigned i=0; i<3; i++)	    
+  // 	    some_file << node_pt->x(i) << " ";
 	  
-	  some_file << std::endl;
-	}
-      }
-    }
-  }
-  some_file.close();
+  // 	  some_file << std::endl;
+  // 	}
+  //     }
+  //   }
+  // }
+  // some_file.close();
 
-  sprintf(filename, "%s/upper_element_nodes_on_upper_disk_boundary.dat",
-	  Doc_info.directory().c_str());
-  some_file.open(filename);
+  // sprintf(filename, "%s/upper_element_nodes_on_upper_disk_boundary.dat",
+  // 	  Doc_info.directory().c_str());
+  // some_file.open(filename);
   
-  for(typename std::set<ELEMENT*>::iterator it = Elements_on_upper_disk_surface_pt.begin();
-      it != Elements_on_upper_disk_surface_pt.end(); it++)
-  {
-    ELEMENT* el_pt = *it;
+  // for(typename std::set<ELEMENT*>::iterator it = Elements_on_upper_disk_surface_pt.begin();
+  //     it != Elements_on_upper_disk_surface_pt.end(); it++)
+  // {
+  //   ELEMENT* el_pt = *it;
 
-    for(unsigned j=0; j<el_pt->nnode(); j++)
-    {
-      Node* node_pt = el_pt->node_pt(j);
+  //   for(unsigned j=0; j<el_pt->nnode(); j++)
+  //   {
+  //     Node* node_pt = el_pt->node_pt(j);
 
-      for(unsigned b=First_upper_disk_boundary_id; b<=Last_upper_disk_boundary_id; b++)
-      {
-	if(node_pt->is_on_boundary(b))
-	{
-	  for(unsigned i=0; i<3; i++)	    
-	    some_file << node_pt->x(i) << " ";
+  //     for(unsigned b=First_upper_disk_boundary_id; b<=Last_upper_disk_boundary_id; b++)
+  //     {
+  // 	if(node_pt->is_on_boundary(b))
+  // 	{
+  // 	  for(unsigned i=0; i<3; i++)	    
+  // 	    some_file << node_pt->x(i) << " ";
 	  
-	  some_file << std::endl;
-	}
-      }
-    }
-  }
-  some_file.close();
+  // 	  some_file << std::endl;
+  // 	}
+  //     }
+  //   }
+  // }
+  // some_file.close();
 
-  sprintf(filename, "%s/upper_boundary_nodes_on_lower_disk_boundary.dat",
-	  Doc_info.directory().c_str());
-  some_file.open(filename);
+  // sprintf(filename, "%s/upper_boundary_nodes_on_lower_disk_boundary.dat",
+  // 	  Doc_info.directory().c_str());
+  // some_file.open(filename);
   
-  for(unsigned b_upper=First_upper_disk_boundary_id; b_upper<=Last_upper_disk_boundary_id; b_upper++)
-  {
-    for(unsigned j=0; j<Bulk_mesh_pt->nboundary_node(b_upper); j++)
-    {
-      Node* node_pt = Bulk_mesh_pt->boundary_node_pt(b_upper,j);
+  // for(unsigned b_upper=First_upper_disk_boundary_id; b_upper<=Last_upper_disk_boundary_id; b_upper++)
+  // {
+  //   for(unsigned j=0; j<Bulk_mesh_pt->nboundary_node(b_upper); j++)
+  //   {
+  //     Node* node_pt = Bulk_mesh_pt->boundary_node_pt(b_upper,j);
 
-      for(unsigned b=First_lower_disk_boundary_id; b<=Last_lower_disk_boundary_id; b++)
-      {
-	if(node_pt->is_on_boundary(b))
-	{
-	  for(unsigned i=0; i<3; i++)	    
-	    some_file << node_pt->x(i) << " ";
+  //     for(unsigned b=First_lower_disk_boundary_id; b<=Last_lower_disk_boundary_id; b++)
+  //     {
+  // 	if(node_pt->is_on_boundary(b))
+  // 	{
+  // 	  for(unsigned i=0; i<3; i++)	    
+  // 	    some_file << node_pt->x(i) << " ";
 	  
-	  some_file << std::endl;
-	}
-      }
-    }
-  }
-  some_file.close();
+  // 	  some_file << std::endl;
+  // 	}
+  //     }
+  //   }
+  // }
+  // some_file.close();
 
-  sprintf(filename, "%s/upper_boundary_nodes.dat",
-	  Doc_info.directory().c_str());
-  some_file.open(filename);
+  // sprintf(filename, "%s/upper_boundary_nodes.dat",
+  // 	  Doc_info.directory().c_str());
+  // some_file.open(filename);
   
-  for(unsigned b_upper=First_upper_disk_boundary_id; b_upper<=Last_upper_disk_boundary_id; b_upper++)
-  {
-    for(unsigned j=0; j<Bulk_mesh_pt->nboundary_node(b_upper); j++)
-    {
-      Node* node_pt = Bulk_mesh_pt->boundary_node_pt(b_upper,j);
+  // for(unsigned b_upper=First_upper_disk_boundary_id; b_upper<=Last_upper_disk_boundary_id; b_upper++)
+  // {
+  //   for(unsigned j=0; j<Bulk_mesh_pt->nboundary_node(b_upper); j++)
+  //   {
+  //     Node* node_pt = Bulk_mesh_pt->boundary_node_pt(b_upper,j);
 
-      for(unsigned i=0; i<3; i++)	    
-	some_file << node_pt->x(i) << " ";
+  //     for(unsigned i=0; i<3; i++)	    
+  // 	some_file << node_pt->x(i) << " ";
 	  
-      some_file << std::endl;
-    }
-  }
-  some_file.close();
+  //     some_file << std::endl;
+  //   }
+  // }
+  // some_file.close();
 
-  sprintf(filename, "%s/duplicated_nodes_on_upper_boundary.dat",
-	  Doc_info.directory().c_str());
-  some_file.open(filename);
+  // sprintf(filename, "%s/duplicated_nodes_on_upper_boundary.dat",
+  // 	  Doc_info.directory().c_str());
+  // some_file.open(filename);
 
-  for(std::map<Node*,Node*>::iterator it=existing_duplicate_node_pt.begin();
-      it != existing_duplicate_node_pt.end(); it++)
-  {
-    Node* node_pt = it->second;
+  // for(std::map<Node*,Node*>::iterator it=existing_duplicate_node_pt.begin();
+  //     it != existing_duplicate_node_pt.end(); it++)
+  // {
+  //   Node* node_pt = it->second;
     
-    for(unsigned b=First_upper_disk_boundary_id; b<=Last_upper_disk_boundary_id; b++)
-    {
-      if(node_pt->is_on_boundary(b))
-      {
-	for(unsigned i=0; i<3; i++)	    
-	  some_file << node_pt->x(i) << " ";
+  //   for(unsigned b=First_upper_disk_boundary_id; b<=Last_upper_disk_boundary_id; b++)
+  //   {
+  //     if(node_pt->is_on_boundary(b))
+  //     {
+  // 	for(unsigned i=0; i<3; i++)	    
+  // 	  some_file << node_pt->x(i) << " ";
 	  
-	some_file << std::endl;
-      }
-    }
-  }
+  // 	some_file << std::endl;
+  //     }
+  //   }
+  // }
   
-  some_file.close();
+  // some_file.close();
 
-  sprintf(filename, "%s/duplicated_nodes_on_lower_boundary.dat",
-	  Doc_info.directory().c_str());
-  some_file.open(filename);
+  // sprintf(filename, "%s/duplicated_nodes_on_lower_boundary.dat",
+  // 	  Doc_info.directory().c_str());
+  // some_file.open(filename);
   
-  for(std::map<Node*,Node*>::iterator it=existing_duplicate_node_pt.begin();
-      it != existing_duplicate_node_pt.end(); it++)
-  {
-    Node* node_pt = it->second;
+  // for(std::map<Node*,Node*>::iterator it=existing_duplicate_node_pt.begin();
+  //     it != existing_duplicate_node_pt.end(); it++)
+  // {
+  //   Node* node_pt = it->second;
     
-    for(unsigned b=First_lower_disk_boundary_id; b<=Last_lower_disk_boundary_id; b++)
-    {
-      if(node_pt->is_on_boundary(b))
-      {
-	for(unsigned i=0; i<3; i++)	    
-	  some_file << node_pt->x(i) << " ";
+  //   for(unsigned b=First_lower_disk_boundary_id; b<=Last_lower_disk_boundary_id; b++)
+  //   {
+  //     if(node_pt->is_on_boundary(b))
+  //     {
+  // 	for(unsigned i=0; i<3; i++)	    
+  // 	  some_file << node_pt->x(i) << " ";
 	  
-	some_file << std::endl;
-      }
-    }
-  }
+  // 	some_file << std::endl;
+  //     }
+  //   }
+  // }
   
-  some_file.close();
+  // some_file.close();
 
-  sprintf(filename, "%s/upper_boundary_nodes_from_map.dat", Doc_info.directory().c_str());
-  some_file.open(filename);
+  // sprintf(filename, "%s/upper_boundary_nodes_from_map.dat", Doc_info.directory().c_str());
+  // some_file.open(filename);
     
-  typename std::map<Node*, std::set<std::pair<ELEMENT*, unsigned> > >::iterator it;
+  // typename std::map<Node*, std::set<std::pair<ELEMENT*, unsigned> > >::iterator it;
     
-  for(it = Disk_node_to_upper_disk_element_and_index_map.begin();
-      it != Disk_node_to_upper_disk_element_and_index_map.end(); it++)
-  {
-    // get the set
-    std::set<std::pair<ELEMENT*, unsigned> > upper_disk_element_set = it->second;
+  // for(it = Disk_node_to_upper_disk_element_and_index_map.begin();
+  //     it != Disk_node_to_upper_disk_element_and_index_map.end(); it++)
+  // {
+  //   // get the set
+  //   std::set<std::pair<ELEMENT*, unsigned> > upper_disk_element_set = it->second;
 
-    // iterate over the second and output the nodes
-    for(typename std::set<std::pair<ELEMENT*, unsigned> >::iterator set_it =
-	  upper_disk_element_set.begin(); set_it != upper_disk_element_set.end(); set_it++)
-    {
-      ELEMENT* el_pt = set_it->first;
-      Node* node_pt = el_pt->node_pt(set_it->second);
-      for(unsigned b=First_upper_disk_boundary_id; b<=Last_upper_disk_boundary_id; b++)
-      {
-	if(node_pt->is_on_boundary(b))
-	{
+  //   // iterate over the second and output the nodes
+  //   for(typename std::set<std::pair<ELEMENT*, unsigned> >::iterator set_it =
+  // 	  upper_disk_element_set.begin(); set_it != upper_disk_element_set.end(); set_it++)
+  //   {
+  //     ELEMENT* el_pt = set_it->first;
+  //     Node* node_pt = el_pt->node_pt(set_it->second);
+  //     for(unsigned b=First_upper_disk_boundary_id; b<=Last_upper_disk_boundary_id; b++)
+  //     {
+  // 	if(node_pt->is_on_boundary(b))
+  // 	{
       
-	  for(unsigned i=0; i<3; i++)
-	  {
-	    some_file << node_pt->x(i) << " ";
-	  }
-	  some_file << std::endl;
-	}
-      }
-    }
-  }
+  // 	  for(unsigned i=0; i<3; i++)
+  // 	  {
+  // 	    some_file << node_pt->x(i) << " ";
+  // 	  }
+  // 	  some_file << std::endl;
+  // 	}
+  //     }
+  //   }
+  // }
 
-  some_file.close();
+  // some_file.close();
   
-  sprintf(filename, "%s/lower_boundary_nodes_from_map.dat", Doc_info.directory().c_str());
-  some_file.open(filename);
+  // sprintf(filename, "%s/lower_boundary_nodes_from_map.dat", Doc_info.directory().c_str());
+  // some_file.open(filename);
     
-  for(it = Disk_node_to_upper_disk_element_and_index_map.begin();
-      it != Disk_node_to_upper_disk_element_and_index_map.end(); it++)
-  {
-    // get the set
-    std::set<std::pair<ELEMENT*, unsigned> > upper_disk_element_set = it->second;
+  // for(it = Disk_node_to_upper_disk_element_and_index_map.begin();
+  //     it != Disk_node_to_upper_disk_element_and_index_map.end(); it++)
+  // {
+  //   // get the set
+  //   std::set<std::pair<ELEMENT*, unsigned> > upper_disk_element_set = it->second;
 
-    // iterate over the second and output the nodes
-    for(typename std::set<std::pair<ELEMENT*, unsigned> >::iterator set_it =
-	  upper_disk_element_set.begin(); set_it != upper_disk_element_set.end(); set_it++)
-    {
-      ELEMENT* el_pt = set_it->first;
-      Node* node_pt = el_pt->node_pt(set_it->second);
-      for(unsigned b=First_lower_disk_boundary_id; b<=Last_lower_disk_boundary_id; b++)
-      {
-	if(node_pt->is_on_boundary(b))
-	{
+  //   // iterate over the second and output the nodes
+  //   for(typename std::set<std::pair<ELEMENT*, unsigned> >::iterator set_it =
+  // 	  upper_disk_element_set.begin(); set_it != upper_disk_element_set.end(); set_it++)
+  //   {
+  //     ELEMENT* el_pt = set_it->first;
+  //     Node* node_pt = el_pt->node_pt(set_it->second);
+  //     for(unsigned b=First_lower_disk_boundary_id; b<=Last_lower_disk_boundary_id; b++)
+  //     {
+  // 	if(node_pt->is_on_boundary(b))
+  // 	{
       
-	  for(unsigned i=0; i<3; i++)
-	  {
-	    some_file << node_pt->x(i) << " ";
-	  }
-	  some_file << std::endl;
-	}
-      }
-    }
-  }
+  // 	  for(unsigned i=0; i<3; i++)
+  // 	  {
+  // 	    some_file << node_pt->x(i) << " ";
+  // 	  }
+  // 	  some_file << std::endl;
+  // 	}
+  //     }
+  //   }
+  // }
 
-  some_file.close();
+  // some_file.close();
 
-  sprintf(filename, "%s/upper_element_nodes_from_map.dat", Doc_info.directory().c_str());
-  some_file.open(filename);
+  // sprintf(filename, "%s/upper_element_nodes_from_map.dat", Doc_info.directory().c_str());
+  // some_file.open(filename);
     
-  for(it = Disk_node_to_upper_disk_element_and_index_map.begin();
-      it != Disk_node_to_upper_disk_element_and_index_map.end(); it++)
-  {
-    // get the set
-    std::set<std::pair<ELEMENT*, unsigned> > upper_disk_element_set = it->second;
+  // for(it = Disk_node_to_upper_disk_element_and_index_map.begin();
+  //     it != Disk_node_to_upper_disk_element_and_index_map.end(); it++)
+  // {
+  //   // get the set
+  //   std::set<std::pair<ELEMENT*, unsigned> > upper_disk_element_set = it->second;
 
-    // iterate over the second and output the nodes
-    for(typename std::set<std::pair<ELEMENT*, unsigned> >::iterator set_it =
-	  upper_disk_element_set.begin(); set_it != upper_disk_element_set.end(); set_it++)
-    {
-      ELEMENT* el_pt = set_it->first;
+  //   // iterate over the second and output the nodes
+  //   for(typename std::set<std::pair<ELEMENT*, unsigned> >::iterator set_it =
+  // 	  upper_disk_element_set.begin(); set_it != upper_disk_element_set.end(); set_it++)
+  //   {
+  //     ELEMENT* el_pt = set_it->first;
 
-      for(unsigned j=0; j<el_pt->nnode(); j++)
-      {
-	Node* node_pt = el_pt->node_pt(j);
-	for(unsigned b=First_lower_disk_boundary_id; b<=Last_lower_disk_boundary_id; b++)
-	{
-	  if(node_pt->is_on_boundary(b))
-	  {
+  //     for(unsigned j=0; j<el_pt->nnode(); j++)
+  //     {
+  // 	Node* node_pt = el_pt->node_pt(j);
+  // 	for(unsigned b=First_lower_disk_boundary_id; b<=Last_lower_disk_boundary_id; b++)
+  // 	{
+  // 	  if(node_pt->is_on_boundary(b))
+  // 	  {
       
-	    for(unsigned i=0; i<3; i++)
-	    {
-	      some_file << node_pt->x(i) << " ";
-	    }
-	    some_file << std::endl;
-	  }
-	}
-      }
-    }
-  }
+  // 	    for(unsigned i=0; i<3; i++)
+  // 	    {
+  // 	      some_file << node_pt->x(i) << " ";
+  // 	    }
+  // 	    some_file << std::endl;
+  // 	  }
+  // 	}
+  //     }
+  //   }
+  // }
 
-  some_file.close();
+  // some_file.close();
 
 #ifdef PARANOID
   // For extra comfort,  check the sync between
@@ -3176,7 +3160,8 @@ void FlowAroundDiskProblem<ELEMENT>::duplicate_plate_nodes_and_add_boundaries()
   // Elements_on_upper_disk_surface_pt
   
   std::set<ELEMENT*> unique_elements_from_map;
-  
+
+  typename std::map<Node*, std::set<std::pair<ELEMENT*, unsigned> > >::iterator it;
   for(it = Disk_node_to_upper_disk_element_and_index_map.begin();
       it != Disk_node_to_upper_disk_element_and_index_map.end(); it++)
   {
@@ -3378,10 +3363,10 @@ void FlowAroundDiskProblem<ELEMENT>::setup_disk_on_disk_plots()
     Global_Parameters::Warped_disk_with_boundary_pt->
       boundary_triad(0,theta, r_edge, tangent, normal, normal_normal);
     
-    for (unsigned i=0; i < Nrho_disk_on_disk_plot; i++)
+    for (unsigned i=0; i < Nrho_disk_on_disk_plot; i++) 
     {
       double rho_min = 0.0;
-      double rho_max = Global_Parameters::disk_on_disk_radius;
+      double rho_max = Global_Parameters::R_torus;
       double rho = rho_min + (rho_max - rho_min) * double(i) /
 	double(Nrho_disk_on_disk_plot-1);
       
@@ -3583,6 +3568,12 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
   			  OOMPH_CURRENT_FUNCTION,
   			  OOMPH_EXCEPTION_LOCATION);
     }
+
+    // if we're doing a traction problem and this is the top boundary, then
+    // we don't want to pin it with Dirchlet conditions
+    if(ibound == Top_outer_boundary_id &&
+       Global_Parameters::Do_gupta_traction_problem)
+      continue;
     
     for (unsigned inod=0; inod<num_nod; inod++)
     {
@@ -3595,12 +3586,7 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
       x[2] = node_pt->x(2);
       
       Vector<double> u_gupta = Analytic_Functions::gupta_solution_broadside(x);
-
-      // if we're doing a traction problem and this is the top boundary, then
-      // we don't want to pin it with Dirchlet conditions
-      if(set_gupta_solution_on_outer_boundaries && Global_Parameters::Do_gupta_traction_problem)
-	continue;
-      
+            
       // Loop over current and previous timesteps  
       for (unsigned t=0; t<ntime; t++)
       {  
@@ -3651,14 +3637,16 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
  
   pin_file.close();
 
-  if(set_gupta_solution_on_outer_boundaries)
-  {
-    return;
-  }
-  
+
   // ----------------
   // finally, pin the pressure for a random bulk node to full determine the problem
-
+  
+  if(Global_Parameters::Do_gupta_traction_problem)
+  {
+    oomph_info << "\nPressure constrained by Gupta traction, not pinning elsewhere\n";
+    return;
+  }
+    
   // // get a random bulk node
   Node* nonboundary_node_pt = Bulk_mesh_pt->get_some_non_boundary_node();
 
@@ -3671,6 +3659,11 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
   // get the nodal index for the pressure
   unsigned p_index = el_pt->p_index_nst();
 
+  oomph_info << "\nPinning the pressure (p_index=" << p_index<< ") of random node ("
+	     << nonboundary_node_pt->x(0) << ", "
+	     << nonboundary_node_pt->x(1) << ", "
+	     << nonboundary_node_pt->x(2) << ") to zero\n\n";
+  
   // Loop over current and previous timesteps  
   for (unsigned t=0; t<ntime; t++)
   {
@@ -3678,11 +3671,6 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
     nonboundary_node_pt->set_value(t, p_index, 0);
     nonboundary_node_pt->pin(p_index);
   }
-       
-  oomph_info << "\nPinning the pressure (p_index=" << p_index<< ") of random node ("
-	     << nonboundary_node_pt->x(0) << ", "
-	     << nonboundary_node_pt->x(1) << ", "
-	     << nonboundary_node_pt->x(2) << ") to zero\n\n";
 
 } // end set bc
 
@@ -3694,21 +3682,17 @@ template<class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::set_values_to_singular_solution(
   const bool& broadside)
 {
-  // Vector<double> x_temp(3);
-  // x_temp[0] = -1.1;
-  // x_temp[1] = 0;
-  // x_temp[2] = 0;
+  Vector<double> x_temp(3);
+  x_temp[0] = 1.5;
+  x_temp[1] = 0;
+  x_temp[2] = 0.5;
 
-  // Vector<double> u_temp = Analytic_Functions::singular_fct_broadside(x_temp);
+  Vector<double> u_temp = Analytic_Functions::singular_fct_broadside(x_temp);
 
-  // x_temp[0] = -1.1;
-  // x_temp[1] = -1.2;
-  // x_temp[2] = -1.3;
-  
-  // u_temp = Analytic_Functions::singular_fct_broadside(x_temp);
-
-  // // QUEHACERES
-  // return;
+  oomph_info << "Setting initial conditions to singular "
+	     << ((broadside) ? "broadside " : "in-plane ")
+	     << "solution...\n";
+    
   
   // get the number of nodes in the mesh
   unsigned nel = Bulk_mesh_pt->nregion_element(Torus_region_id);
@@ -3760,13 +3744,16 @@ void FlowAroundDiskProblem<ELEMENT>::set_values_to_singular_solution(
 template<class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::validate_singular_stress(const bool& broadside)
 {
-  Vector<double> x(3);
-  x[0] = 1.2;
-  x[2] = 0.2;
-  Analytic_Functions::singular_fct_broadside(x);
+  oomph_info << "\nValidating singular stress...\n"
+	     << "-----------------------------\n\n";
 
-  x[0] = 0;
-  x[1] = 1.2;
+  double t_start = TimingHelpers::timer();
+    
+  Vector<double> x(3);
+  
+  x[0] = 1.5;
+  x[1] = 0.2;
+  x[2] = 0.5;
   Analytic_Functions::singular_fct_broadside(x);
   
   // assign \hat u_i to the nodal values
@@ -3809,9 +3796,18 @@ void FlowAroundDiskProblem<ELEMENT>::validate_singular_stress(const bool& broads
   }
   
   ofstream stress_error_output_plain(filename);
+
+  // column headers
+  stress_error_output << "x,y,z,err_xx,err_xy,err_xz,err_yx,err_yy,err_yz,"
+		      << "err_zx,err_zy,err_zz,sing_xx,sing_xy,sing_xz,"
+		      << "sing_yx,sing_yy,sing_yz,sing_zx,sing_zy,sing_zz,"
+		      <<"fd_xx,fd_xy,fd_xz,fd_yx,fd_yy,fd_yz,fd_zx,fd_zy,fd_zz"
+		      << "p_sing";
   
   // number of plot points per side
   unsigned nplot = 2;
+
+  oomph_info << "Computing singular and 'FE' stress...\n";
 
   // loop over all the elements in the torus region to compute the error in the stress
   const unsigned nel = Bulk_mesh_pt->nregion_element(Torus_region_id);
@@ -3927,16 +3923,29 @@ void FlowAroundDiskProblem<ELEMENT>::validate_singular_stress(const bool& broads
 	  stress_error_output_plain << error << " ";
 	}
       }
-
+           
+      // output actual singular stress
+      for(unsigned i=0; i<dim; i++)
+      {
+      	for(unsigned j=0; j<dim; j++)
+      	{
+      	  stress_error_output       << stress_sing(i,j) << " ";
+      	  stress_error_output_plain << stress_sing(i,j) << " ";
+      	}
+      }
+      
       // output actual FD stress
       for(unsigned i=0; i<dim; i++)
       {
-	for(unsigned j=0; j<dim; j++)
-	{
-	  stress_error_output       << stress_fe(i,j) << " ";
-	  stress_error_output_plain << stress_fe(i,j) << " ";
-	}
+      	for(unsigned j=0; j<dim; j++)
+      	{
+      	  stress_error_output       << stress_fe(i,j) << " ";
+      	  stress_error_output_plain << stress_fe(i,j) << " ";
+      	}
       }
+
+      stress_error_output       << p_sing;
+      stress_error_output_plain << p_sing;
       
       stress_error_output       << std::endl;
       stress_error_output_plain << std::endl;
@@ -3952,6 +3961,10 @@ void FlowAroundDiskProblem<ELEMENT>::validate_singular_stress(const bool& broads
   // done, close the output file
   stress_error_output.close();
   stress_error_output_plain.close();
+  
+  oomph_info << "Finished singular stress validation after "
+	     << TimingHelpers::timer() - t_start << "s.\n";
+  
 }
 
 //==start_of_impose_fake_singular_amplitude===============================
@@ -4743,6 +4756,9 @@ int main(int argc, char* argv[])
   
   // set up the multi-processor interface
   MPI_Helpers::init(argc,argv);
+
+  // keep track of total program runtime
+  double t_start = TimingHelpers::timer();
   
   // Store command line arguments
   CommandLineArgs::setup(argc,argv);
@@ -4855,6 +4871,12 @@ int main(int argc, char* argv[])
 
 #endif
 
+  if (CommandLineArgs::command_line_flag_has_been_set(
+	"--do_gupta_traction_problem"))
+  {
+    Global_Parameters::Do_gupta_traction_problem = true;
+  }
+  
   if (CommandLineArgs::command_line_flag_has_been_set("--dont_split_corner_elements"))
   {
     Global_Parameters::Split_corner_elements = false;
@@ -4949,37 +4971,31 @@ int main(int argc, char* argv[])
     problem.doc_solution(2);
     exit(0);
   }
-
-  if (CommandLineArgs::command_line_flag_has_been_set(
-	"--do_gupta_traction_problem"))
-  {
-    Global_Parameters::Do_gupta_traction_problem = true;
-  }
-
-  if (CommandLineArgs::command_line_flag_has_been_set("--output_dboundary_triad_dx"))
-  {
-    oomph_info << "Outputting derivatives of boundary triads...\n";
-    ofstream dtangent_dx_file;
-    ofstream dnormal_dx_file;
-    ofstream dbinormal_dx_file;
+  
+  // if (CommandLineArgs::command_line_flag_has_been_set("--output_dboundary_triad_dx"))
+  // {
+  //   oomph_info << "Outputting derivatives of boundary triads...\n";
+  //   ofstream dtangent_dx_file;
+  //   ofstream dnormal_dx_file;
+  //   ofstream dbinormal_dx_file;
 
 
-    char filename[100];
-    sprintf(filename, "%s/dboundary_tangent_dx.csv", problem.doc_info().directory().c_str());
-    dtangent_dx_file.open(filename);
-    sprintf(filename, "%s/dboundary_normal_dx.csv", problem.doc_info().directory().c_str());
-    dnormal_dx_file.open(filename);
-    sprintf(filename, "%s/dboundary_binormal_dx.csv", problem.doc_info().directory().c_str());
-    dbinormal_dx_file.open(filename);
+  //   char filename[100];
+  //   sprintf(filename, "%s/dboundary_tangent_dx.csv", problem.doc_info().directory().c_str());
+  //   dtangent_dx_file.open(filename);
+  //   sprintf(filename, "%s/dboundary_normal_dx.csv", problem.doc_info().directory().c_str());
+  //   dnormal_dx_file.open(filename);
+  //   sprintf(filename, "%s/dboundary_binormal_dx.csv", problem.doc_info().directory().c_str());
+  //   dbinormal_dx_file.open(filename);
 
-    unsigned nplot = 2;
-    Global_Parameters::Warped_disk_with_boundary_pt->
-      output_dboundary_triad_dx_csv(nplot, dtangent_dx_file, dnormal_dx_file, dbinormal_dx_file);
+  //   unsigned nplot = 2;
+  //   Global_Parameters::Warped_disk_with_boundary_pt->
+  //     output_dboundary_triad_dx_csv(nplot, dtangent_dx_file, dnormal_dx_file, dbinormal_dx_file);
 
-    dtangent_dx_file.close();
-    dnormal_dx_file.close();
-    dbinormal_dx_file.close();
-  }
+  //   dtangent_dx_file.close();
+  //   dnormal_dx_file.close();
+  //   dbinormal_dx_file.close();
+  // }
   
   // // QUEHACERES for debug
   // problem.newton_solver_tolerance() = 5e-8;
@@ -5032,9 +5048,11 @@ int main(int argc, char* argv[])
     }
   }
 
+  oomph_info << "Done, total runtime: " << TimingHelpers::timer() - t_start << "s\n\n";
+  
   // Shut down oomph-lib's MPI
-  MPI_Helpers::finalize();
-
+  MPI_Helpers::finalize(); 
+  
   return 0;
 }
 

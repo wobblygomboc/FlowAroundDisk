@@ -579,11 +579,11 @@ public:
    normal_in_plane[2] = tangent[0]*surface_normal[1] - tangent[1]*surface_normal[0];
  }
 
- void dboundary_triad_dx(const unsigned& b,
-			 const double& zeta_bound,
-			 DenseMatrix<double>& dtangent_dx,
-			 DenseMatrix<double>& dnormal_dx,
-			 DenseMatrix<double>& dbinormal_dx)
+ void dboundary_triad_dzeta(const unsigned& b,
+			    const double& zeta_bound,
+			    Vector<double>& dtangent_dzeta,
+			    Vector<double>& dnormal_dzeta,
+			    Vector<double>& dbinormal_dzeta)
  {
    double phi = zeta_bound;
 
@@ -594,281 +594,562 @@ public:
    double d2w_dphi2  = d2wdphi2(1,phi);
 
    // make sure we've got enough space
-   dtangent_dx.resize(3,3,0);
-   dnormal_dx.resize(3,3,0);
-   dbinormal_dx.resize(3,3,0);
+   dtangent_dzeta.resize(3,0);
+   dnormal_dzeta.resize(3,0);
+   dbinormal_dzeta.resize(3,0);
+   /* dtangent_dx.resize(3,3,0); */
+   /* dnormal_dx.resize(3,3,0); */
+   /* dbinormal_dx.resize(3,3,0); */
+
+   // ----------------------
+   // tangent
    
+   // dtx_dzeta
+   dtangent_dzeta[0] = (-(cos(phi)*(1 + pow(dw_dphi,2))) + 
+     sin(phi)*dw_dphi*d2w_dphi2)/
+   pow(1 + pow(dw_dphi,2),1.5);
+   
+   // dty_dzeta
+   dtangent_dzeta[1] = -((sin(phi) + sin(phi)*pow(dw_dphi,2) + 
+       cos(phi)*dw_dphi*d2w_dphi2)/
+     pow(1 + pow(dw_dphi,2),1.5));
+   
+   // dtz_dzeta
+   dtangent_dzeta[2] = d2w_dphi2/pow(1 + pow(dw_dphi,2),1.5);
+
+   // ----------------------
+   // in-plane normal
+   
+   // dsx_dzeta
+   dnormal_dzeta[0] = (cos(phi)*dw_dr*((dw_dphi + pow(dw_dphi,3))*
+         (1 + pow(dw_dphi,2) + 
+           dw_dr*(d2w_dphi2 + dw_dr)) - 
+        pow(1 + pow(dw_dphi,2),2)*d2w_drdphi) + 
+     sin(phi)*(-pow(1 + pow(dw_dphi,2),3) - 
+        (-1 + pow(dw_dphi,4))*d2w_dphi2*dw_dr - 
+        pow(1 + pow(dw_dphi,2),2)*pow(dw_dr,2) + 
+        d2w_dphi2*pow(dw_dr,3) + 
+        dw_dphi*pow(1 + pow(dw_dphi,2),2)*d2w_drdphi))/
+   (pow(1 + pow(dw_dphi,2),1.5)*
+     pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5));
+   
+   // dsy_dzeta
+   dnormal_dzeta[1] = (cos(phi)*(pow(dw_dphi,6) - 
+        (-1 + d2w_dphi2*dw_dr)*(1 + pow(dw_dr,2)) + 
+        pow(dw_dphi,2)*(3 + 2*pow(dw_dr,2)) + 
+        pow(dw_dphi,4)*(3 + 
+           dw_dr*(d2w_dphi2 + dw_dr)) - 
+        dw_dphi*d2w_drdphi - 
+        2*pow(dw_dphi,3)*d2w_drdphi - 
+        pow(dw_dphi,5)*d2w_drdphi) + 
+     sin(phi)*dw_dr*((dw_dphi + pow(dw_dphi,3))*
+         (1 + pow(dw_dphi,2) + 
+           dw_dr*(d2w_dphi2 + dw_dr)) - 
+        pow(1 + pow(dw_dphi,2),2)*d2w_drdphi))/
+   (pow(1 + pow(dw_dphi,2),1.5)*
+     pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5));
+   
+   // dsz_dzeta
+   dnormal_dzeta[2] = (-(dw_dphi*d2w_dphi2*dw_dr*
+        (2 + 2*pow(dw_dphi,2) + pow(dw_dr,2))) + 
+     pow(1 + pow(dw_dphi,2),2)*d2w_drdphi)/
+   (pow(1 + pow(dw_dphi,2),1.5)*
+     pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5));
+
+   // ----------------------
+   // out-of-plane binormal
+   
+   // dnx_dzeta
+   dbinormal_dzeta[0] = (cos(phi)*(dw_dphi*(1 + pow(dw_dphi,2) + 
+           dw_dr*(d2w_dphi2 + dw_dr)) - 
+        (1 + pow(dw_dphi,2))*d2w_drdphi) + 
+     sin(phi)*(d2w_dphi2*(1 + pow(dw_dr,2)) + 
+        dw_dr*(1 + pow(dw_dphi,2) + pow(dw_dr,2) - 
+           dw_dphi*d2w_drdphi)))/
+   pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5);
+   
+   // dny_dzeta
+   dbinormal_dzeta[1] = (sin(phi)*pow(dw_dphi,3) - 
+     cos(phi)*(d2w_dphi2 + dw_dr)*(1 + pow(dw_dr,2)) - 
+     sin(phi)*d2w_drdphi - pow(dw_dphi,2)*
+      (cos(phi)*dw_dr + sin(phi)*d2w_drdphi) + 
+     dw_dphi*(sin(phi) + dw_dr*
+         (sin(phi)*(d2w_dphi2 + dw_dr) + cos(phi)*d2w_drdphi)))
+    /pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5);
+   
+   // dnz_dzeta
+   dbinormal_dzeta[2] = -((dw_dphi*d2w_dphi2 + dw_dr*d2w_drdphi)/
+     pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5));
+     
+   // QUEHACERES these are for d/dr = 0 but wrong dzeta/dx
+   /* // ---------------------------- */
+   /* // tangent */
+   /* // ---------------------------- */
+   /* // dtx_dx */
+   /* dtangent_dx(0,0) = (sin(phi)*(cos(phi) + cos(phi)*pow(dw_dphi,2) -  */
+   /*     sin(phi)*dw_dphi*d2w_dphi2))/ */
+   /* pow(1 + pow(dw_dphi,2),1.5); */
+
+   /* // dtx_dy */
+   /* dtangent_dx(0,1) = (cos(phi)*(-(cos(phi)*(1 + pow(dw_dphi,2))) +  */
+   /*     sin(phi)*dw_dphi*d2w_dphi2))/ */
+   /* pow(1 + pow(dw_dphi,2),1.5); */
+
+   /* // dtx_dz */
+   /* dtangent_dx(0,2) = 0; */
+
+   /* // dty_dx */
+   /* dtangent_dx(1,0) = (sin(phi)*(sin(phi) + sin(phi)*pow(dw_dphi,2) +  */
+   /*     cos(phi)*dw_dphi*d2w_dphi2))/ */
+   /* pow(1 + pow(dw_dphi,2),1.5); */
+
+   /* // dty_dy */
+   /* dtangent_dx(1,1) = -((cos(phi)*(sin(phi) + sin(phi)*pow(dw_dphi,2) +  */
+   /*       cos(phi)*dw_dphi*d2w_dphi2))/ */
+   /*   pow(1 + pow(dw_dphi,2),1.5)); */
+
+   /* // dty_dz */
+   /* dtangent_dx(1,2) = 0; */
+
+   /* // dtz_dx */
+   /* dtangent_dx(2,0) = -((sin(phi)*d2w_dphi2)/pow(1 + pow(dw_dphi,2),1.5)); */
+
+   /* // dtz_dy */
+   /* dtangent_dx(2,1) = (cos(phi)*d2w_dphi2)/pow(1 + pow(dw_dphi,2),1.5); */
+
+   /* // dtz_dz */
+   /* dtangent_dx(2,2) = 0; */
+   
+   /* // ---------------------------- */
+   /* // in-plane normal */
+   /* // ---------------------------- */
+
+   /* // dsx_dx */
+   /* dnormal_dx(0,0) = (sin(phi)*(sin(phi)*(pow(dw_dphi,6) -  */
+   /*        (-1 + d2w_dphi2*dw_dr)*(1 + pow(dw_dr,2)) +  */
+   /*        pow(dw_dphi,2)*(3 + 2*pow(dw_dr,2)) +  */
+   /*        pow(dw_dphi,4)*(3 +  */
+   /*           dw_dr*(d2w_dphi2 + dw_dr)) -  */
+   /*        dw_dphi*d2w_drdphi -  */
+   /*        2*pow(dw_dphi,3)*d2w_drdphi -  */
+   /*        pow(dw_dphi,5)*d2w_drdphi) +  */
+   /*     cos(phi)*dw_dr*(-((dw_dphi + pow(dw_dphi,3))* */
+   /*           (1 + pow(dw_dphi,2) +  */
+   /*             dw_dr*(d2w_dphi2 + dw_dr))) +  */
+   /*        pow(1 + pow(dw_dphi,2),2)*d2w_drdphi)))/ */
+   /* (pow(1 + pow(dw_dphi,2),1.5)* */
+   /*   pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5)); */
+
+   /* // dsx_dy */
+   /* dnormal_dx(0,1) = (cos(phi)*(cos(phi)*dw_dr* */
+   /*      ((dw_dphi + pow(dw_dphi,3))* */
+   /*         (1 + pow(dw_dphi,2) +  */
+   /*           dw_dr*(d2w_dphi2 + dw_dr)) -  */
+   /*        pow(1 + pow(dw_dphi,2),2)*d2w_drdphi) +  */
+   /*     sin(phi)*(-pow(1 + pow(dw_dphi,2),3) -  */
+   /*        (-1 + pow(dw_dphi,4))*d2w_dphi2*dw_dr -  */
+   /*        pow(1 + pow(dw_dphi,2),2)*pow(dw_dr,2) +  */
+   /*        d2w_dphi2*pow(dw_dr,3) +  */
+   /*        dw_dphi*pow(1 + pow(dw_dphi,2),2)*d2w_drdphi)))/ */
+   /* (pow(1 + pow(dw_dphi,2),1.5)* */
+   /*   pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5)); */
+
+   /* // dsx_dz */
+   /* dnormal_dx(0,2) = 0; */
+
+   /* // dsy_dx */
+   /* dnormal_dx(1,0) = (sin(phi)*(-cos(phi) + cos(phi)*(-(pow(dw_dphi,2)* */
+   /*           (3 + 3*pow(dw_dphi,2) + pow(dw_dphi,4))) -  */
+   /*        (-1 + pow(dw_dphi,4))*d2w_dphi2*dw_dr -  */
+   /*        pow(1 + pow(dw_dphi,2),2)*pow(dw_dr,2) +  */
+   /*        d2w_dphi2*pow(dw_dr,3)) -  */
+   /*     sin(phi)*(dw_dphi + pow(dw_dphi,3))*dw_dr* */
+   /*      (1 + pow(dw_dphi,2) +  */
+   /*        dw_dr*(d2w_dphi2 + dw_dr)) +  */
+   /*     pow(1 + pow(dw_dphi,2),2)* */
+   /*      (cos(phi)*dw_dphi + sin(phi)*dw_dr)*d2w_drdphi))/ */
+   /* (pow(1 + pow(dw_dphi,2),1.5)* */
+   /*   pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5)); */
+
+   /* // dsy_dy */
+   /* dnormal_dx(1,1) = (cos(phi)*(cos(phi)*(pow(dw_dphi,6) -  */
+   /*        (-1 + d2w_dphi2*dw_dr)*(1 + pow(dw_dr,2)) +  */
+   /*        pow(dw_dphi,2)*(3 + 2*pow(dw_dr,2)) +  */
+   /*        pow(dw_dphi,4)*(3 +  */
+   /*           dw_dr*(d2w_dphi2 + dw_dr)) -  */
+   /*        dw_dphi*d2w_drdphi -  */
+   /*        2*pow(dw_dphi,3)*d2w_drdphi -  */
+   /*        pow(dw_dphi,5)*d2w_drdphi) +  */
+   /*     sin(phi)*dw_dr*((dw_dphi + pow(dw_dphi,3))* */
+   /*         (1 + pow(dw_dphi,2) +  */
+   /*           dw_dr*(d2w_dphi2 + dw_dr)) -  */
+   /*        pow(1 + pow(dw_dphi,2),2)*d2w_drdphi)))/ */
+   /* (pow(1 + pow(dw_dphi,2),1.5)* */
+   /*   pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5)); */
+
+   /* // dsy_dz */
+   /* dnormal_dx(1,2) = 0; */
+
+   /* // dsz_dx */
+   /* dnormal_dx(2,0) = (sin(phi)*(dw_dphi*d2w_dphi2*dw_dr* */
+   /*      (2 + 2*pow(dw_dphi,2) + pow(dw_dr,2)) -  */
+   /*     pow(1 + pow(dw_dphi,2),2)*d2w_drdphi))/ */
+   /* (pow(1 + pow(dw_dphi,2),1.5)* */
+   /*   pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5)); */
+
+   /* // dsz_dy */
+   /* dnormal_dx(2,1) = (cos(phi)*(-(dw_dphi*d2w_dphi2*dw_dr* */
+   /*        (2 + 2*pow(dw_dphi,2) + pow(dw_dr,2))) +  */
+   /*     pow(1 + pow(dw_dphi,2),2)*d2w_drdphi))/ */
+   /* (pow(1 + pow(dw_dphi,2),1.5)* */
+   /*   pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5)); */
+
+   /* // dsz_dz */
+   /* dnormal_dx(2,2) = 0; */
+   
+   /* // ---------------------------- */
+   /* // out-of-plane normal */
+   /* // ---------------------------- */
+
+   /* // dnx_dx */
+   /* dbinormal_dx(0,0) = (sin(phi)*(-(cos(phi)*dw_dphi* */
+   /*        (1 + pow(dw_dphi,2) +  */
+   /*          dw_dr*(d2w_dphi2 + dw_dr))) -  */
+   /*     sin(phi)*(d2w_dphi2*(1 + pow(dw_dr,2)) +  */
+   /*        dw_dr*(1 + pow(dw_dphi,2) + pow(dw_dr,2))) */
+   /*       + (cos(phi) + cos(phi)*pow(dw_dphi,2) +  */
+   /*        sin(phi)*dw_dphi*dw_dr)*d2w_drdphi))/ */
+   /* pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5); */
+
+   /* // dnx_dy */
+   /* dbinormal_dx(0,1) = (cos(phi)*(cos(phi)*(dw_dphi* */
+   /*         (1 + pow(dw_dphi,2) +  */
+   /*           dw_dr*(d2w_dphi2 + dw_dr)) -  */
+   /*        (1 + pow(dw_dphi,2))*d2w_drdphi) +  */
+   /*     sin(phi)*(d2w_dphi2*(1 + pow(dw_dr,2)) +  */
+   /*        dw_dr*(1 + pow(dw_dphi,2) +  */
+   /*           pow(dw_dr,2) - dw_dphi*d2w_drdphi))))/ */
+   /* pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5); */
+
+   /* // dnx_dz */
+   /* dbinormal_dx(0,2) = 0;  */
+
+   /* // dny_dx */
+   /* dbinormal_dx(1,0) = (sin(phi)*(-(sin(phi)*pow(dw_dphi,3)) +  */
+   /*     cos(phi)*(d2w_dphi2 + dw_dr)* */
+   /*      (1 + pow(dw_dr,2)) + sin(phi)*d2w_drdphi +  */
+   /*     pow(dw_dphi,2)*(cos(phi)*dw_dr +  */
+   /*        sin(phi)*d2w_drdphi) -  */
+   /*     dw_dphi*(sin(phi) + dw_dr* */
+   /*         (sin(phi)*(d2w_dphi2 + dw_dr) + cos(phi)*d2w_drdphi) */
+   /*        )))/pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5); */
+
+   /* // dny_dy */
+   /* dbinormal_dx(1,1) = (cos(phi)*(sin(phi)*pow(dw_dphi,3) -  */
+   /*     cos(phi)*(d2w_dphi2 + dw_dr)* */
+   /*      (1 + pow(dw_dr,2)) - sin(phi)*d2w_drdphi -  */
+   /*     pow(dw_dphi,2)*(cos(phi)*dw_dr +  */
+   /*        sin(phi)*d2w_drdphi) +  */
+   /*     dw_dphi*(sin(phi) + dw_dr* */
+   /*         (sin(phi)*(d2w_dphi2 + dw_dr) + cos(phi)*d2w_drdphi) */
+   /*        )))/pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5); */
+
+   /* // dny_dz */
+   /* dbinormal_dx(1,2) = 0; */
+
+   /* // dnz_dx */
+   /* dbinormal_dx(2,0) = (sin(phi)*(dw_dphi*d2w_dphi2 +  */
+   /*     dw_dr*d2w_drdphi))/ */
+   /* pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5); */
+
+   /* // dnz_dy */
+   /* dbinormal_dx(2,1) = -((cos(phi)*(dw_dphi*d2w_dphi2 +  */
+   /*       dw_dr*d2w_drdphi))/ */
+   /*   pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5)); */
+
+   /* // dnz_dz */
+   /* dbinormal_dx(2,2) = 0; */
+
+
+
+   // /////////////////////////////////////////////////////////////////////////
+   // /////////////////////////////////////////////////////////////////////////
+   // /////////////////////////////////////////////////////////////////////////
+
+   
+   // QUEHACERES these assume d/dr != 0, i.e. correct for general triad vectors but
+   // not for boundary vectors
    // =================================================
    // gradient matrices are dVi_dxj
    // results from mathematica
    
-   // ---------------------------
-   // tangent
-   // ---------------------------
+   /* // --------------------------- */
+   /* // tangent */
+   /* // --------------------------- */
    
-   // dtx_dx
-   dtangent_dx(0,0) = (sin(phi)*(cos(phi) + dw_dphi*
-				 (-(sin(phi)*d2w_dphi2) + cos(phi)*d2w_drdphi)))/
-     pow(1 + pow(dw_dphi,2),1.5);
+   /* // dtx_dx */
+   /* dtangent_dx(0,0) = (sin(phi)*(cos(phi) + dw_dphi* */
+   /* 				 (-(sin(phi)*d2w_dphi2) + cos(phi)*d2w_drdphi)))/ */
+   /*   pow(1 + pow(dw_dphi,2),1.5); */
 
-   // dtx_dy
-   dtangent_dx(0,1) = (-pow(cos(phi),2) - pow(dw_dphi,2) + 
-		       sin(phi)*dw_dphi*(cos(phi)*d2w_dphi2 + sin(phi)*d2w_drdphi))
-     /pow(1 + pow(dw_dphi,2),1.5);
+   /* // dtx_dy */
+   /* dtangent_dx(0,1) = (-pow(cos(phi),2) - pow(dw_dphi,2) +  */
+   /* 		       sin(phi)*dw_dphi*(cos(phi)*d2w_dphi2 + sin(phi)*d2w_drdphi)) */
+   /*   /pow(1 + pow(dw_dphi,2),1.5); */
 
-   // dtx_dz
-   dtangent_dx(0,2) = 0;
+   /* // dtx_dz */
+   /* dtangent_dx(0,2) = 0; */
 
-   // dty_dx
-   dtangent_dx(1,0) = (pow(sin(phi),2) + pow(dw_dphi,2) + 
-		       cos(phi)*dw_dphi*(sin(phi)*d2w_dphi2 - cos(phi)*d2w_drdphi))
-     /pow(1 + pow(dw_dphi,2),1.5);
+   /* // dty_dx */
+   /* dtangent_dx(1,0) = (pow(sin(phi),2) + pow(dw_dphi,2) +  */
+   /* 		       cos(phi)*dw_dphi*(sin(phi)*d2w_dphi2 - cos(phi)*d2w_drdphi)) */
+   /*   /pow(1 + pow(dw_dphi,2),1.5); */
 
-   // dty_dy
-   dtangent_dx(1,1) = -((cos(phi)*(sin(phi) + dw_dphi*
-				   (cos(phi)*d2w_dphi2 + sin(phi)*d2w_drdphi)))/
-			pow(1 + pow(dw_dphi,2),1.5));
+   /* // dty_dy */
+   /* dtangent_dx(1,1) = -((cos(phi)*(sin(phi) + dw_dphi* */
+   /* 				   (cos(phi)*d2w_dphi2 + sin(phi)*d2w_drdphi)))/ */
+   /* 			pow(1 + pow(dw_dphi,2),1.5)); */
 
-   // dty_dz
-   dtangent_dx(1,2) = 0;
+   /* // dty_dz */
+   /* dtangent_dx(1,2) = 0; */
 
-   // dtz_dx
-   dtangent_dx(2,0) = -((sin(phi)*d2w_dphi2 + cos(phi)*(dw_dphi - d2w_drdphi))/
-			pow(1 + pow(dw_dphi,2),1.5));
+   /* // dtz_dx */
+   /* dtangent_dx(2,0) = -((sin(phi)*d2w_dphi2 + cos(phi)*(dw_dphi - d2w_drdphi))/ */
+   /* 			pow(1 + pow(dw_dphi,2),1.5)); */
 
-   // dtz_dy
-   dtangent_dx(2,1) = (cos(phi)*d2w_dphi2 + sin(phi)*(-dw_dphi + d2w_drdphi))/
-     pow(1 + pow(dw_dphi,2),1.5);
+   /* // dtz_dy */
+   /* dtangent_dx(2,1) = (cos(phi)*d2w_dphi2 + sin(phi)*(-dw_dphi + d2w_drdphi))/ */
+   /*   pow(1 + pow(dw_dphi,2),1.5); */
 
-   // dtz_dz
-   dtangent_dx(2,2) = 0;
+   /* // dtz_dz */
+   /* dtangent_dx(2,2) = 0; */
 
-   // ===================================================
+   /* // =================================================== */
    
-   // ---------------------------
-   // in-plane normal
-   // ---------------------------
+   /* // --------------------------- */
+   /* // in-plane normal */
+   /* // --------------------------- */
    
-   // dsx_dx
-   dnormal_dx(0,0) = (2*pow(sin(phi),2)*pow(dw_dphi,6) + 
-			2*sin(phi)*(-(sin(phi)*(-1 + d2w_dphi2*dw_dr)*
-				      (1 + pow(dw_dr,2))) + 
-				    cos(phi)*dw_dr*(2 + pow(dw_dr,2))*d2w_drdphi) - 
-			2*pow(cos(phi),2)*dw_dr*d2w_dr2 + 
-			2*sin(phi)*pow(dw_dphi,5)*
-			(-(sin(phi)*d2w_drdphi) + cos(phi)*d2w_dr2) + 
-			2*pow(dw_dphi,3)*(-(cos(phi)*sin(phi)*dw_dr*
-					    (2 + dw_dr*(d2w_dphi2 + dw_dr))) + 
-					  (-2*pow(sin(phi),2) + pow(cos(phi),2)*pow(dw_dr,2))*d2w_drdphi + 
-					  sin(2*phi)*d2w_dr2) + 
-			pow(dw_dphi,2)*(6*pow(sin(phi),2) + 
-					(1 - 3*cos(2*phi))*pow(dw_dr,2) + 
-					4*cos(phi)*dw_dr*(sin(phi)*d2w_drdphi - 
-							  cos(phi)*d2w_dr2)) + 
-			2*dw_dphi*(-2*cos(phi)*sin(phi)*dw_dr - 
-				   2*cos(phi)*sin(phi)*pow(dw_dr,3) + 
-				   cos(phi)*pow(dw_dr,2)*
-				   (-(sin(phi)*d2w_dphi2) + cos(phi)*d2w_drdphi) + 
-				   sin(phi)*(-(sin(phi)*d2w_drdphi) + cos(phi)*d2w_dr2)) + 
-			2*pow(dw_dphi,4)*(3*pow(sin(phi),2) - 
-					  dw_dr*(-(pow(sin(phi),2)*d2w_dphi2) + 
-						 cos(2*phi)*dw_dr + pow(cos(phi),2)*d2w_dr2)))/
-     (2.*pow(1 + pow(dw_dphi,2),1.5)*
-      pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5));
+   /* // dsx_dx */
+   /* dnormal_dx(0,0) = (2*pow(sin(phi),2)*pow(dw_dphi,6) +  */
+   /* 			2*sin(phi)*(-(sin(phi)*(-1 + d2w_dphi2*dw_dr)* */
+   /* 				      (1 + pow(dw_dr,2))) +  */
+   /* 				    cos(phi)*dw_dr*(2 + pow(dw_dr,2))*d2w_drdphi) -  */
+   /* 			2*pow(cos(phi),2)*dw_dr*d2w_dr2 +  */
+   /* 			2*sin(phi)*pow(dw_dphi,5)* */
+   /* 			(-(sin(phi)*d2w_drdphi) + cos(phi)*d2w_dr2) +  */
+   /* 			2*pow(dw_dphi,3)*(-(cos(phi)*sin(phi)*dw_dr* */
+   /* 					    (2 + dw_dr*(d2w_dphi2 + dw_dr))) +  */
+   /* 					  (-2*pow(sin(phi),2) + pow(cos(phi),2)*pow(dw_dr,2))*d2w_drdphi +  */
+   /* 					  sin(2*phi)*d2w_dr2) +  */
+   /* 			pow(dw_dphi,2)*(6*pow(sin(phi),2) +  */
+   /* 					(1 - 3*cos(2*phi))*pow(dw_dr,2) +  */
+   /* 					4*cos(phi)*dw_dr*(sin(phi)*d2w_drdphi -  */
+   /* 							  cos(phi)*d2w_dr2)) +  */
+   /* 			2*dw_dphi*(-2*cos(phi)*sin(phi)*dw_dr -  */
+   /* 				   2*cos(phi)*sin(phi)*pow(dw_dr,3) +  */
+   /* 				   cos(phi)*pow(dw_dr,2)* */
+   /* 				   (-(sin(phi)*d2w_dphi2) + cos(phi)*d2w_drdphi) +  */
+   /* 				   sin(phi)*(-(sin(phi)*d2w_drdphi) + cos(phi)*d2w_dr2)) +  */
+   /* 			2*pow(dw_dphi,4)*(3*pow(sin(phi),2) -  */
+   /* 					  dw_dr*(-(pow(sin(phi),2)*d2w_dphi2) +  */
+   /* 						 cos(2*phi)*dw_dr + pow(cos(phi),2)*d2w_dr2)))/ */
+   /*   (2.*pow(1 + pow(dw_dphi,2),1.5)* */
+   /*    pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5)); */
 
-   // dsx_dy
-   dnormal_dx(0,1) = (-sin(2*phi) - 2*cos(phi)*sin(phi)*pow(dw_dphi,6) + 
-			2*pow(dw_dphi,3)*(cos(phi)*
-					  (cos(phi)*dw_dr*(2 + 
-							   dw_dr*(d2w_dphi2 + dw_dr)) + 
-					   sin(phi)*(2 + pow(dw_dr,2))*d2w_drdphi) + 
-					  2*pow(sin(phi),2)*d2w_dr2) + 
-			2*pow(dw_dphi,5)*(dw_dr + 
-					  sin(phi)*(cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2)) + 
-			2*dw_dphi*(cos(2*phi)*dw_dr + 
-				   cos(2*phi)*pow(dw_dr,3) + 
-				   cos(phi)*pow(dw_dr,2)*
-				   (cos(phi)*d2w_dphi2 + sin(phi)*d2w_drdphi) + 
-				   sin(phi)*(cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2)) - 
-			2*cos(phi)*pow(dw_dphi,2)*
-			(3*sin(phi) + dw_dr*
-			 (3*sin(phi)*dw_dr + 2*cos(phi)*d2w_drdphi + 
-			  2*sin(phi)*d2w_dr2)) + 
-			dw_dr*(sin(2*phi)*d2w_dphi2*(1 + pow(dw_dr,2)) - 
-			       2*cos(2*phi)*d2w_drdphi + 
-			       2*sin(phi)*(sin(phi)*pow(dw_dr,2)*d2w_drdphi - 
-					   cos(phi)*(dw_dr + d2w_dr2))) + 
-			pow(dw_dphi,4)*(-2*dw_dr*d2w_drdphi - 
-					sin(2*phi)*(3 + dw_dr*
-						    (d2w_dphi2 + 2*dw_dr + d2w_dr2))))/
-     (2.*pow(1 + pow(dw_dphi,2),1.5)*
-      pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5));
+   /* // dsx_dy */
+   /* dnormal_dx(0,1) = (-sin(2*phi) - 2*cos(phi)*sin(phi)*pow(dw_dphi,6) +  */
+   /* 			2*pow(dw_dphi,3)*(cos(phi)* */
+   /* 					  (cos(phi)*dw_dr*(2 +  */
+   /* 							   dw_dr*(d2w_dphi2 + dw_dr)) +  */
+   /* 					   sin(phi)*(2 + pow(dw_dr,2))*d2w_drdphi) +  */
+   /* 					  2*pow(sin(phi),2)*d2w_dr2) +  */
+   /* 			2*pow(dw_dphi,5)*(dw_dr +  */
+   /* 					  sin(phi)*(cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2)) +  */
+   /* 			2*dw_dphi*(cos(2*phi)*dw_dr +  */
+   /* 				   cos(2*phi)*pow(dw_dr,3) +  */
+   /* 				   cos(phi)*pow(dw_dr,2)* */
+   /* 				   (cos(phi)*d2w_dphi2 + sin(phi)*d2w_drdphi) +  */
+   /* 				   sin(phi)*(cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2)) -  */
+   /* 			2*cos(phi)*pow(dw_dphi,2)* */
+   /* 			(3*sin(phi) + dw_dr* */
+   /* 			 (3*sin(phi)*dw_dr + 2*cos(phi)*d2w_drdphi +  */
+   /* 			  2*sin(phi)*d2w_dr2)) +  */
+   /* 			dw_dr*(sin(2*phi)*d2w_dphi2*(1 + pow(dw_dr,2)) -  */
+   /* 			       2*cos(2*phi)*d2w_drdphi +  */
+   /* 			       2*sin(phi)*(sin(phi)*pow(dw_dr,2)*d2w_drdphi -  */
+   /* 					   cos(phi)*(dw_dr + d2w_dr2))) +  */
+   /* 			pow(dw_dphi,4)*(-2*dw_dr*d2w_drdphi -  */
+   /* 					sin(2*phi)*(3 + dw_dr* */
+   /* 						    (d2w_dphi2 + 2*dw_dr + d2w_dr2))))/ */
+   /*   (2.*pow(1 + pow(dw_dphi,2),1.5)* */
+   /*    pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5)); */
 
-   // dsx_dz
-   dnormal_dx(0,2) = 0;
+   /* // dsx_dz */
+   /* dnormal_dx(0,2) = 0; */
 
-   // dsy_dx
-   dnormal_dx(1,0) = (-sin(2*phi) - 2*cos(phi)*sin(phi)*pow(dw_dphi,6) - 
-			2*pow(dw_dphi,3)*(sin(phi)*
-					  (sin(phi)*dw_dr*(2 + 
-							   dw_dr*(d2w_dphi2 + dw_dr)) - 
-					   cos(phi)*(2 + pow(dw_dr,2))*d2w_drdphi) + 
-					  2*pow(cos(phi),2)*d2w_dr2) + 
-			2*dw_dphi*(cos(2*phi)*dw_dr + 
-				   cos(2*phi)*pow(dw_dr,3) + 
-				   sin(phi)*pow(dw_dr,2)*
-				   (-(sin(phi)*d2w_dphi2) + cos(phi)*d2w_drdphi) + 
-				   cos(phi)*(sin(phi)*d2w_drdphi - cos(phi)*d2w_dr2)) - 
-			2*pow(dw_dphi,5)*(dw_dr + 
-					  cos(phi)*(-(sin(phi)*d2w_drdphi) + cos(phi)*d2w_dr2)) - 
-			2*sin(phi)*pow(dw_dphi,2)*
-			(3*cos(phi) + dw_dr*
-			 (3*cos(phi)*dw_dr - 2*sin(phi)*d2w_drdphi + 
-			  2*cos(phi)*d2w_dr2)) + 
-			pow(dw_dphi,4)*(2*dw_dr*d2w_drdphi - 
-					sin(2*phi)*(3 + dw_dr*
-						    (d2w_dphi2 + 2*dw_dr + d2w_dr2))) + 
-			dw_dr*(sin(2*phi)*d2w_dphi2*(1 + pow(dw_dr,2)) - 
-			       2*(cos(2*phi)*d2w_drdphi + 
-				  cos(phi)*(cos(phi)*pow(dw_dr,2)*d2w_drdphi + 
-					    sin(phi)*(dw_dr + d2w_dr2)))))/
-     (2.*pow(1 + pow(dw_dphi,2),1.5)*
-      pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5));
+   /* // dsy_dx */
+   /* dnormal_dx(1,0) = (-sin(2*phi) - 2*cos(phi)*sin(phi)*pow(dw_dphi,6) -  */
+   /* 			2*pow(dw_dphi,3)*(sin(phi)* */
+   /* 					  (sin(phi)*dw_dr*(2 +  */
+   /* 							   dw_dr*(d2w_dphi2 + dw_dr)) -  */
+   /* 					   cos(phi)*(2 + pow(dw_dr,2))*d2w_drdphi) +  */
+   /* 					  2*pow(cos(phi),2)*d2w_dr2) +  */
+   /* 			2*dw_dphi*(cos(2*phi)*dw_dr +  */
+   /* 				   cos(2*phi)*pow(dw_dr,3) +  */
+   /* 				   sin(phi)*pow(dw_dr,2)* */
+   /* 				   (-(sin(phi)*d2w_dphi2) + cos(phi)*d2w_drdphi) +  */
+   /* 				   cos(phi)*(sin(phi)*d2w_drdphi - cos(phi)*d2w_dr2)) -  */
+   /* 			2*pow(dw_dphi,5)*(dw_dr +  */
+   /* 					  cos(phi)*(-(sin(phi)*d2w_drdphi) + cos(phi)*d2w_dr2)) -  */
+   /* 			2*sin(phi)*pow(dw_dphi,2)* */
+   /* 			(3*cos(phi) + dw_dr* */
+   /* 			 (3*cos(phi)*dw_dr - 2*sin(phi)*d2w_drdphi +  */
+   /* 			  2*cos(phi)*d2w_dr2)) +  */
+   /* 			pow(dw_dphi,4)*(2*dw_dr*d2w_drdphi -  */
+   /* 					sin(2*phi)*(3 + dw_dr* */
+   /* 						    (d2w_dphi2 + 2*dw_dr + d2w_dr2))) +  */
+   /* 			dw_dr*(sin(2*phi)*d2w_dphi2*(1 + pow(dw_dr,2)) -  */
+   /* 			       2*(cos(2*phi)*d2w_drdphi +  */
+   /* 				  cos(phi)*(cos(phi)*pow(dw_dr,2)*d2w_drdphi +  */
+   /* 					    sin(phi)*(dw_dr + d2w_dr2)))))/ */
+   /*   (2.*pow(1 + pow(dw_dphi,2),1.5)* */
+   /*    pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5)); */
 
-   // dsy_dy
-   dnormal_dx(1,1) = (2*pow(cos(phi),2)*pow(dw_dphi,6) - 
-			2*pow(cos(phi),2)*(-1 + d2w_dphi2*dw_dr)*
-			(1 + pow(dw_dr,2)) - 
-			sin(2*phi)*dw_dr*(2 + pow(dw_dr,2))*d2w_drdphi - 
-			2*pow(sin(phi),2)*dw_dr*d2w_dr2 - 
-			2*cos(phi)*pow(dw_dphi,5)*
-			(cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2) + 
-			pow(dw_dphi,3)*(2*sin(2*phi)*dw_dr + 
-					sin(2*phi)*pow(dw_dr,3) + 
-					2*sin(phi)*pow(dw_dr,2)*
-					(cos(phi)*d2w_dphi2 + sin(phi)*d2w_drdphi) - 
-					4*cos(phi)*(cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2)) + 
-			2*dw_dphi*(sin(2*phi)*dw_dr + 
-				   sin(2*phi)*pow(dw_dr,3) + 
-				   sin(phi)*pow(dw_dr,2)*
-				   (cos(phi)*d2w_dphi2 + sin(phi)*d2w_drdphi) - 
-				   cos(phi)*(cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2)) + 
-			pow(dw_dphi,2)*(6*pow(cos(phi),2) + 
-					(1 + 3*cos(2*phi))*pow(dw_dr,2) - 
-					4*sin(phi)*dw_dr*(cos(phi)*d2w_drdphi + 
-							  sin(phi)*d2w_dr2)) + 
-			2*pow(dw_dphi,4)*(3*pow(cos(phi),2) + 
-					  dw_dr*(pow(cos(phi),2)*d2w_dphi2 + 
-						 cos(2*phi)*dw_dr - pow(sin(phi),2)*d2w_dr2)))/
-     (2.*pow(1 + pow(dw_dphi,2),1.5)*
-      pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5));
+   /* // dsy_dy */
+   /* dnormal_dx(1,1) = (2*pow(cos(phi),2)*pow(dw_dphi,6) -  */
+   /* 			2*pow(cos(phi),2)*(-1 + d2w_dphi2*dw_dr)* */
+   /* 			(1 + pow(dw_dr,2)) -  */
+   /* 			sin(2*phi)*dw_dr*(2 + pow(dw_dr,2))*d2w_drdphi -  */
+   /* 			2*pow(sin(phi),2)*dw_dr*d2w_dr2 -  */
+   /* 			2*cos(phi)*pow(dw_dphi,5)* */
+   /* 			(cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2) +  */
+   /* 			pow(dw_dphi,3)*(2*sin(2*phi)*dw_dr +  */
+   /* 					sin(2*phi)*pow(dw_dr,3) +  */
+   /* 					2*sin(phi)*pow(dw_dr,2)* */
+   /* 					(cos(phi)*d2w_dphi2 + sin(phi)*d2w_drdphi) -  */
+   /* 					4*cos(phi)*(cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2)) +  */
+   /* 			2*dw_dphi*(sin(2*phi)*dw_dr +  */
+   /* 				   sin(2*phi)*pow(dw_dr,3) +  */
+   /* 				   sin(phi)*pow(dw_dr,2)* */
+   /* 				   (cos(phi)*d2w_dphi2 + sin(phi)*d2w_drdphi) -  */
+   /* 				   cos(phi)*(cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2)) +  */
+   /* 			pow(dw_dphi,2)*(6*pow(cos(phi),2) +  */
+   /* 					(1 + 3*cos(2*phi))*pow(dw_dr,2) -  */
+   /* 					4*sin(phi)*dw_dr*(cos(phi)*d2w_drdphi +  */
+   /* 							  sin(phi)*d2w_dr2)) +  */
+   /* 			2*pow(dw_dphi,4)*(3*pow(cos(phi),2) +  */
+   /* 					  dw_dr*(pow(cos(phi),2)*d2w_dphi2 +  */
+   /* 						 cos(2*phi)*dw_dr - pow(sin(phi),2)*d2w_dr2)))/ */
+   /*   (2.*pow(1 + pow(dw_dphi,2),1.5)* */
+   /*    pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5)); */
 
-   // dsy_dz
-   dnormal_dx(1,2) = 0;
+   /* // dsy_dz */
+   /* dnormal_dx(1,2) = 0; */
 
-   // dsz_dx
-   dnormal_dx(2,0) = (-(sin(phi)*d2w_drdphi) + 2*pow(dw_dphi,3)*dw_dr*
-			(sin(phi)*d2w_dphi2 - cos(phi)*d2w_drdphi) + 
-			dw_dphi*dw_dr*(2 + pow(dw_dr,2))*
-			(sin(phi)*d2w_dphi2 - cos(phi)*d2w_drdphi) + 
-			cos(phi)*d2w_dr2 + pow(dw_dphi,4)*
-			(-(sin(phi)*d2w_drdphi) + cos(phi)*(2*dw_dr + d2w_dr2))
-			+ pow(dw_dphi,2)*(-2*sin(phi)*d2w_drdphi + 
-					  cos(phi)*(2*dw_dr + pow(dw_dr,3) + 2*d2w_dr2))
-     )/(pow(1 + pow(dw_dphi,2),1.5)*
-	pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5));
+   /* // dsz_dx */
+   /* dnormal_dx(2,0) = (-(sin(phi)*d2w_drdphi) + 2*pow(dw_dphi,3)*dw_dr* */
+   /* 			(sin(phi)*d2w_dphi2 - cos(phi)*d2w_drdphi) +  */
+   /* 			dw_dphi*dw_dr*(2 + pow(dw_dr,2))* */
+   /* 			(sin(phi)*d2w_dphi2 - cos(phi)*d2w_drdphi) +  */
+   /* 			cos(phi)*d2w_dr2 + pow(dw_dphi,4)* */
+   /* 			(-(sin(phi)*d2w_drdphi) + cos(phi)*(2*dw_dr + d2w_dr2)) */
+   /* 			+ pow(dw_dphi,2)*(-2*sin(phi)*d2w_drdphi +  */
+   /* 					  cos(phi)*(2*dw_dr + pow(dw_dr,3) + 2*d2w_dr2)) */
+   /*   )/(pow(1 + pow(dw_dphi,2),1.5)* */
+   /* 	pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5)); */
 
-   // dsz_dy
-   dnormal_dx(2,1) = (cos(phi)*(-(dw_dphi*d2w_dphi2*dw_dr*
-				    (2 + 2*pow(dw_dphi,2) + pow(dw_dr,2))) + 
-				  pow(1 + pow(dw_dphi,2),2)*d2w_drdphi) + 
-			sin(phi)*(dw_dphi*dw_dr*
-				  (2 + 2*pow(dw_dphi,2) + pow(dw_dr,2))*
-				  (dw_dphi - d2w_drdphi) + 
-				  pow(1 + pow(dw_dphi,2),2)*d2w_dr2))/
-     (pow(1 + pow(dw_dphi,2),1.5)*
-      pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5));
+   /* // dsz_dy */
+   /* dnormal_dx(2,1) = (cos(phi)*(-(dw_dphi*d2w_dphi2*dw_dr* */
+   /* 				    (2 + 2*pow(dw_dphi,2) + pow(dw_dr,2))) +  */
+   /* 				  pow(1 + pow(dw_dphi,2),2)*d2w_drdphi) +  */
+   /* 			sin(phi)*(dw_dphi*dw_dr* */
+   /* 				  (2 + 2*pow(dw_dphi,2) + pow(dw_dr,2))* */
+   /* 				  (dw_dphi - d2w_drdphi) +  */
+   /* 				  pow(1 + pow(dw_dphi,2),2)*d2w_dr2))/ */
+   /*   (pow(1 + pow(dw_dphi,2),1.5)* */
+   /*    pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5)); */
 
-   // dsz_dz
-   dnormal_dx(2,2) = 0;
+   /* // dsz_dz */
+   /* dnormal_dx(2,2) = 0; */
    
-   // ===================================================
+   /* // =================================================== */
    
-   // ---------------------------
-   // out-of-plane (bi)normal
-   // ---------------------------
+   /* // --------------------------- */
+   /* // out-of-plane (bi)normal */
+   /* // --------------------------- */
    
-   // dnx_dx
-   dbinormal_dx(0,0) = (-(sin(2*phi)*pow(dw_dphi,3)) + 
-		      pow(dw_dphi,2)*(-2*dw_dr + sin(2*phi)*d2w_drdphi - 
-				      2*pow(cos(phi),2)*d2w_dr2) - 
-		      2*(-(sin(2*phi)*d2w_drdphi) + 
-			 sin(phi)*(sin(phi)*(d2w_dphi2 + dw_dr)*
-				   (1 + pow(dw_dr,2)) - 
-				   cos(phi)*pow(dw_dr,2)*d2w_drdphi) + 
-			 pow(cos(phi),2)*d2w_dr2) + 
-		      dw_dphi*(2*dw_dr*d2w_drdphi - 
-			       sin(2*phi)*(2 + dw_dr*
-					   (d2w_dphi2 + 2*dw_dr + d2w_dr2))))/
-     (2.*pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5));
+   /* // dnx_dx */
+   /* dbinormal_dx(0,0) = (-(sin(2*phi)*pow(dw_dphi,3)) +  */
+   /* 		      pow(dw_dphi,2)*(-2*dw_dr + sin(2*phi)*d2w_drdphi -  */
+   /* 				      2*pow(cos(phi),2)*d2w_dr2) -  */
+   /* 		      2*(-(sin(2*phi)*d2w_drdphi) +  */
+   /* 			 sin(phi)*(sin(phi)*(d2w_dphi2 + dw_dr)* */
+   /* 				   (1 + pow(dw_dr,2)) -  */
+   /* 				   cos(phi)*pow(dw_dr,2)*d2w_drdphi) +  */
+   /* 			 pow(cos(phi),2)*d2w_dr2) +  */
+   /* 		      dw_dphi*(2*dw_dr*d2w_drdphi -  */
+   /* 			       sin(2*phi)*(2 + dw_dr* */
+   /* 					   (d2w_dphi2 + 2*dw_dr + d2w_dr2))))/ */
+   /*   (2.*pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5)); */
 
-   // dnx_dy
-   dbinormal_dx(0,1) = (pow(cos(phi),2)*pow(dw_dphi,3) - cos(2*phi)*d2w_drdphi + 
-		      sin(phi)*(sin(phi)*pow(dw_dr,2)*d2w_drdphi + 
-				cos(phi)*((d2w_dphi2 + dw_dr)*
-					  (1 + pow(dw_dr,2)) - d2w_dr2)) - 
-		      cos(phi)*pow(dw_dphi,2)*
-		      (cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2) + 
-		      dw_dphi*(cos(2*phi) + dw_dr*
-			       (pow(cos(phi),2)*d2w_dphi2 + cos(2*phi)*dw_dr - 
-				pow(sin(phi),2)*d2w_dr2)))/
-     pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5);
+   /* // dnx_dy */
+   /* dbinormal_dx(0,1) = (pow(cos(phi),2)*pow(dw_dphi,3) - cos(2*phi)*d2w_drdphi +  */
+   /* 		      sin(phi)*(sin(phi)*pow(dw_dr,2)*d2w_drdphi +  */
+   /* 				cos(phi)*((d2w_dphi2 + dw_dr)* */
+   /* 					  (1 + pow(dw_dr,2)) - d2w_dr2)) -  */
+   /* 		      cos(phi)*pow(dw_dphi,2)* */
+   /* 		      (cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2) +  */
+   /* 		      dw_dphi*(cos(2*phi) + dw_dr* */
+   /* 			       (pow(cos(phi),2)*d2w_dphi2 + cos(2*phi)*dw_dr -  */
+   /* 				pow(sin(phi),2)*d2w_dr2)))/ */
+   /*   pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5); */
 
-   // dnx_dz
-   dbinormal_dx(0,2) = 0;
+   /* // dnx_dz */
+   /* dbinormal_dx(0,2) = 0; */
 
-   // dny_dx
-   dbinormal_dx(1,0) = (-(pow(sin(phi),2)*pow(dw_dphi,3)) - cos(2*phi)*d2w_drdphi + 
-		      cos(phi)*(-(cos(phi)*pow(dw_dr,2)*d2w_drdphi) + 
-				sin(phi)*((d2w_dphi2 + dw_dr)*
-					  (1 + pow(dw_dr,2)) - d2w_dr2)) + 
-		      sin(phi)*pow(dw_dphi,2)*
-		      (sin(phi)*d2w_drdphi - cos(phi)*d2w_dr2) + 
-		      dw_dphi*(cos(2*phi) + dw_dr*
-			       (-(pow(sin(phi),2)*d2w_dphi2) + cos(2*phi)*dw_dr + 
-				pow(cos(phi),2)*d2w_dr2)))/
-     pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5);
+   /* // dny_dx */
+   /* dbinormal_dx(1,0) = (-(pow(sin(phi),2)*pow(dw_dphi,3)) - cos(2*phi)*d2w_drdphi +  */
+   /* 		      cos(phi)*(-(cos(phi)*pow(dw_dr,2)*d2w_drdphi) +  */
+   /* 				sin(phi)*((d2w_dphi2 + dw_dr)* */
+   /* 					  (1 + pow(dw_dr,2)) - d2w_dr2)) +  */
+   /* 		      sin(phi)*pow(dw_dphi,2)* */
+   /* 		      (sin(phi)*d2w_drdphi - cos(phi)*d2w_dr2) +  */
+   /* 		      dw_dphi*(cos(2*phi) + dw_dr* */
+   /* 			       (-(pow(sin(phi),2)*d2w_dphi2) + cos(2*phi)*dw_dr +  */
+   /* 				pow(cos(phi),2)*d2w_dr2)))/ */
+   /*   pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5); */
 
-   // dny_dy
-   dbinormal_dx(1,1) = (sin(2*phi)*pow(dw_dphi,3) - 
-		      2*pow(cos(phi),2)*(d2w_dphi2 + dw_dr)*
-		      (1 + pow(dw_dr,2)) - 
-		      sin(2*phi)*pow(dw_dr,2)*d2w_drdphi - 
-		      2*sin(phi)*(2*cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2) - 
-		      2*pow(dw_dphi,2)*(dw_dr + 
-					sin(phi)*(cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2)) + 
-		      dw_dphi*(2*sin(2*phi) + 
-			       dw_dr*(2*d2w_drdphi + 
-				      sin(2*phi)*(d2w_dphi2 + 2*dw_dr + d2w_dr2))))/
-     (2.*pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5));
+   /* // dny_dy */
+   /* dbinormal_dx(1,1) = (sin(2*phi)*pow(dw_dphi,3) -  */
+   /* 		      2*pow(cos(phi),2)*(d2w_dphi2 + dw_dr)* */
+   /* 		      (1 + pow(dw_dr,2)) -  */
+   /* 		      sin(2*phi)*pow(dw_dr,2)*d2w_drdphi -  */
+   /* 		      2*sin(phi)*(2*cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2) -  */
+   /* 		      2*pow(dw_dphi,2)*(dw_dr +  */
+   /* 					sin(phi)*(cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2)) +  */
+   /* 		      dw_dphi*(2*sin(2*phi) +  */
+   /* 			       dw_dr*(2*d2w_drdphi +  */
+   /* 				      sin(2*phi)*(d2w_dphi2 + 2*dw_dr + d2w_dr2))))/ */
+   /*   (2.*pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5)); */
 
-   // dny_dz
-   dbinormal_dx(1,2) = 0;
+   /* // dny_dz */
+   /* dbinormal_dx(1,2) = 0; */
 
-   // dnz_dx
-   dbinormal_dx(2,0) = (cos(phi)*pow(dw_dphi,2) + 
-		      dw_dphi*(sin(phi)*d2w_dphi2 - cos(phi)*d2w_drdphi) + 
-		      dw_dr*(sin(phi)*d2w_drdphi - cos(phi)*d2w_dr2))/
-     pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5);
+   /* // dnz_dx */
+   /* dbinormal_dx(2,0) = (cos(phi)*pow(dw_dphi,2) +  */
+   /* 		      dw_dphi*(sin(phi)*d2w_dphi2 - cos(phi)*d2w_drdphi) +  */
+   /* 		      dw_dr*(sin(phi)*d2w_drdphi - cos(phi)*d2w_dr2))/ */
+   /*   pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5); */
 
-   // dnz_dy
-   dbinormal_dx(2,1) = (sin(phi)*pow(dw_dphi,2) - 
-		      dw_dphi*(cos(phi)*d2w_dphi2 + sin(phi)*d2w_drdphi) - 
-		      dw_dr*(cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2))/
-     pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5);
+   /* // dnz_dy */
+   /* dbinormal_dx(2,1) = (sin(phi)*pow(dw_dphi,2) -  */
+   /* 		      dw_dphi*(cos(phi)*d2w_dphi2 + sin(phi)*d2w_drdphi) -  */
+   /* 		      dw_dr*(cos(phi)*d2w_drdphi + sin(phi)*d2w_dr2))/ */
+   /*   pow(1 + pow(dw_dphi,2) + pow(dw_dr,2),1.5); */
 
-   // dnz_dz
-   dbinormal_dx(2,2) = 0;
+   /* // dnz_dz */
+   /* dbinormal_dx(2,2) = 0; */
  }
 
 
@@ -881,6 +1162,13 @@ public:
 				    std::ofstream& boundary_dnormal_dx_file,
 				    std::ofstream& boundary_dbinormal_dx_file)
  {
+   std::ostringstream error_message;
+   error_message << "Output_dboundary_triad_dx_csv() currently broken\n\n";
+
+   throw OomphLibError(error_message.str(),
+		       OOMPH_CURRENT_FUNCTION,
+		       OOMPH_EXCEPTION_LOCATION);
+   
    Vector<double> r(3);
    Vector<double> zeta(2);
    double zeta_bound=0.0;
@@ -911,7 +1199,7 @@ public:
        
        position_on_boundary(b, zeta_bound, r);  
        zeta_on_boundary(b, zeta_bound, zeta);     
-       dboundary_triad_dx(b, zeta_bound, dtangent_dx, dnormal_dx, dbinormal_dx);
+       /* dboundary_triad_dx(b, zeta_bound, dtangent_dx, dnormal_dx, dbinormal_dx); */
 
        boundary_dtangent_dx_file << r[0] << "," 
 				 << r[1] << "," 
