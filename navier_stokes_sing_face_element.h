@@ -163,7 +163,7 @@ namespace oomph
         ->value(index_of_value_that_stores_amplitude_of_singular_fct());
     }
 
-    ///Set the amplitude of thz singular function
+    ///Set the amplitude of the singular function
     void set_amplitude_of_singular_fct(const double& value)
     {
       data_that_stores_amplitude_of_singular_fct()
@@ -1429,7 +1429,9 @@ namespace oomph
 
     // set the identifier for the boundary we're on
     Boundary_id = id;
-    
+
+    // QUEHACERES don't know ahead of time how many singular elements we'll have
+    // so can't initialise here
     /* // Initialise singular element pointer */
     /* Navier_stokes_sing_el_pt = 0; */
 
@@ -1452,6 +1454,8 @@ namespace oomph
 	  if (this->has_hanging_nodes())
 	  {
 	    throw OomphLibError(
+
+
 	      "This face element will not work correctly if nodes are hanging\n",
 	      OOMPH_CURRENT_FUNCTION,
 	      OOMPH_EXCEPTION_LOCATION);
@@ -1740,8 +1744,7 @@ namespace oomph
 	  // that u_fe + C u_sing = u_bc
 	  if(local_eqn_lagr >= 0)
 	  {
-	    // QUEHACERES don't fuck about with this sign, it's right!
-	    residuals[local_eqn_lagr] -= (u_fe[d] + u_sing[d] - u_bc[d]) * test[l]*W;
+	    residuals[local_eqn_lagr] += (u_fe[d] + u_sing[d] - u_bc[d]) * test[l]*W;
 	      
 	    // Jacobian?
 	    if (flag == 1)
@@ -1768,8 +1771,7 @@ namespace oomph
 	  // Contribution of Lagrange multiplier to bulk eqn:
 	  if (local_eqn_u_fe >= 0)
 	  {
-	    //QUEHACERES review
-	    /* residuals[local_eqn_u_fe] -= lambda[d] * test[l] * W; */
+	    residuals[local_eqn_u_fe] += lambda[d] * test[l] * W;
 
 	    // QUEHACERES need to review this code, never been tested
 	    if (flag == 1)
@@ -1841,7 +1843,7 @@ namespace oomph
 /// element.
 //======================================================================
   template <class ELEMENT>
-    class NavierStokesWithSingularityFluxJumpFaceElement :
+    class NavierStokesWithSingularityStressJumpFaceElement :
     public virtual FaceGeometry<ELEMENT>, 
     public virtual FaceElement
     {
@@ -1853,33 +1855,33 @@ namespace oomph
       /// Map keeps a running count of duplicate nodes already created;
       /// existing_duplicate_node_pt[orig_node_pt]=new_node_pt.
       /// Optional final arg is the identifier for the lagrange multiplier
-      NavierStokesWithSingularityFluxJumpFaceElement(
+      NavierStokesWithSingularityStressJumpFaceElement(
 	FiniteElement* const &bulk_el_pt, 
 	const int& face_index,   
 	std::map<Node*,Node*>& existing_duplicate_node_pt,
 	const unsigned &id=0); 
 
       ///\short  Broken empty constructor
-      NavierStokesWithSingularityFluxJumpFaceElement()
+      NavierStokesWithSingularityStressJumpFaceElement()
       {
 	std::string error_string = "Don't call empty constructor for ";
-	error_string+="NavierStokesWithSingularityFluxJumpFaceElement";
+	error_string+="NavierStokesWithSingularityStressJumpFaceElement";
 	throw OomphLibError(error_string,
 			    OOMPH_CURRENT_FUNCTION,
 			    OOMPH_EXCEPTION_LOCATION);
       }
 
       /// Broken copy constructor
-      NavierStokesWithSingularityFluxJumpFaceElement(
-	const NavierStokesWithSingularityFluxJumpFaceElement& dummy) 
+      NavierStokesWithSingularityStressJumpFaceElement(
+	const NavierStokesWithSingularityStressJumpFaceElement& dummy) 
       { 
-	BrokenCopy::broken_copy("NavierStokesWithSingularityFluxJumpFaceElement");
+	BrokenCopy::broken_copy("NavierStokesWithSingularityStressJumpFaceElement");
       } 
  
       /// Broken assignment operator
-      void operator=(const NavierStokesWithSingularityFluxJumpFaceElement&) 
+      void operator=(const NavierStokesWithSingularityStressJumpFaceElement&) 
 	{
-	  BrokenCopy::broken_assign("NavierStokesWithSingularityFluxJumpFaceElement");
+	  BrokenCopy::broken_assign("NavierStokesWithSingularityStressJumpFaceElement");
 	}
       
       /// \short Specify the value of nodal zeta from the face geometry
@@ -2166,8 +2168,8 @@ namespace oomph
 /// Optional final arg is the identifier for the lagrange multiplier
 //===========================================================================
   template<class ELEMENT>
-    NavierStokesWithSingularityFluxJumpFaceElement<ELEMENT>::
-    NavierStokesWithSingularityFluxJumpFaceElement(
+    NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>::
+    NavierStokesWithSingularityStressJumpFaceElement(
       FiniteElement* const& bulk_el_pt, 
       const int& face_index, 
       std::map<Node*,Node*>& existing_duplicate_node_pt,
@@ -2210,11 +2212,11 @@ namespace oomph
     // the first node
     Dim = this->node_pt(0)->ndim();
 
-    //Set up U_index_poisson. Initialise to zero, which probably won't change
+    //Set up P_index_nst. Initialise to Dim, which probably won't change
     //in most cases, oh well, the price we pay for generality
-    P_index_nst = 0;
+    P_index_nst = Dim;
 
-    //Cast to the appropriate PoissonEquation so that we can
+    //Cast to the appropriate NavierStokesEquation so that we can
     //find the index at which the variable is stored
     //We assume that the dimension of the full problem is the same
     //as the dimension of the node, if this is not the case you will have
@@ -2320,7 +2322,7 @@ namespace oomph
     }
   
     // Back up original nodes and make new ones
-    unsigned nnod=nnode();
+    unsigned nnod = nnode();
     Orig_node_pt.resize(nnod);
     External_data_index_for_right_node.resize(nnod);
     
@@ -2454,11 +2456,9 @@ namespace oomph
         } // end existing node is already replacement vs make new one
       } 
 
-
       // The original node now acts as external data for this element
       // (we still need it to enforce continuity)
       External_data_index_for_right_node[j] = add_external_data(Orig_node_pt[j]);
-
     }
 
     // Make space for Dim Lagrange multipliers
@@ -2488,14 +2488,14 @@ namespace oomph
     /* 	Lambda_index[j]--; */
     /*   } */
     /* } */
-  } // end NavierStokesWithSingularityFluxJumpFaceElement constructor
+  } // end NavierStokesWithSingularityStressJumpFaceElement constructor
 
 
 //===========================================================================
 /// Compute the element's residual vector and the Jacobian matrix.
 //===========================================================================
   template<class ELEMENT>
-    void NavierStokesWithSingularityFluxJumpFaceElement<ELEMENT>::
+    void NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>::
     fill_in_generic_residual_contribution_nst_sing_jump(
       Vector<double>& residuals, DenseMatrix<double>& jacobian, 
       const unsigned& flag)
@@ -2553,10 +2553,36 @@ namespace oomph
 	  dynamic_cast<BoundaryNodeBase*>(node_pt)->
 	  index_of_first_value_assigned_by_face_element_pt() );
 
+	if(first_index.find(Boundary_id) == first_index.end())
+	{
+	  ostringstream error_message;
+	  
+	  error_message << "Error: Lagrange multiplier index not found for node "
+			<< l << "and boundary ID: " << Boundary_id << "\n";
+	  
+	  throw OomphLibError( error_message.str().c_str(),
+			       OOMPH_CURRENT_FUNCTION,
+			       OOMPH_EXCEPTION_LOCATION);
+	}
+	
 	for(unsigned i=0; i<Dim; i++)
 	{
 	  // get the nodal index, accounting for the dimension offset
 	  unsigned lambda_index = first_index[Boundary_id] + i;
+
+	  // QUEHACERES
+	  if(lambda_index < 3)
+	  {
+	    ostringstream error_message;
+
+	    error_message << "wrong lambda index! Apparently index for "
+			  << "Boundary_id: " << Boundary_id << " is: "
+			  << first_index[Boundary_id] << "\n";
+	    
+	    throw OomphLibError(error_message.str().c_str(),
+			       OOMPH_CURRENT_FUNCTION,
+			       OOMPH_EXCEPTION_LOCATION);
+	  }
 	  
 	  u_left[i]  += this->nodal_value(l,i) * psi[l];
 	  u_right[i] += Orig_node_pt[l]->value(i) * psi[l];
@@ -2565,13 +2591,13 @@ namespace oomph
 	  interpolated_x[i] += this->nodal_position(l,i) * psi[l];
 	}
       }
-
+      
       // the sum of all scaled singular functions
       Vector<double> u_sing_total(Dim+1, 0.0);
       DenseMatrix<double> dudx_sing_total(Dim, Dim, 0.0);
 
       // total singular pressure
-      double p_sing_total;
+      double p_sing_total = 0;
       
       // unscaled stuff. These are stored in an array so that they can be
       // looped over when implementing analytic jacobian
@@ -2637,8 +2663,7 @@ namespace oomph
       {
 	for(unsigned j=0; j<Dim; j++)
 	{
-	  double strain_rate_sing_ij = 0.5*(dudx_sing_total(i,j) + dudx_sing_total(j,i));	  
-	  strain_rate_sing_total(i,j) += strain_rate_sing_ij;
+	  strain_rate_sing_total(i,j) = 0.5*(dudx_sing_total(i,j) + dudx_sing_total(j,i));
 
 	  for(unsigned ising=0; ising<Nsingular_fct; ising++)
 	  {
@@ -2651,7 +2676,15 @@ namespace oomph
       // get contribution of total singular pressure and
       // total singular velocity gradients to total stress tensor
       DenseMatrix<double> stress_sing_total(Dim, Dim);
-            
+
+      if(bulk_el_pt->stress_fct_pt() == 0)
+      {
+	throw OomphLibError(
+	  "Error: the stress function pointer has not been set for the augmented elements\n",
+	  OOMPH_CURRENT_FUNCTION,
+	  OOMPH_EXCEPTION_LOCATION);
+      }
+      
       stress_sing_total = (*bulk_el_pt->stress_fct_pt())(strain_rate_sing_total, p_sing_total);
 
       // ---------
@@ -2694,15 +2727,29 @@ namespace oomph
 	  // get the nodal index of the Lagrange multiplier for this
 	  // coordinate direction and boundary ID
 	  unsigned lambda_index = first_index[Boundary_id] + d;
+
+	  // QUEHACERES
+	  if(lambda_index < 3)
+	  {
+	    ostringstream error_message;
+
+	    error_message << "wrong lambda index! Apparently index for "
+			  << "Boundary_id: " << Boundary_id << " is: "
+			  << first_index[Boundary_id] << "\n";
+	    
+	    throw OomphLibError(error_message.str().c_str(),
+			       OOMPH_CURRENT_FUNCTION,
+			       OOMPH_EXCEPTION_LOCATION);
+	  }
 	  
 	  int local_eqn_lagr = nodal_local_eqn(l, lambda_index);
 	  
-	  if (local_eqn_lagr>=0)
+	  if (local_eqn_lagr >= 0)
 	  {
 	    residuals[local_eqn_lagr] += ((u_left[d] + u_sing_total[d]) - u_right[d]) * test[l]*W;
 
 	    // compute Jacobian
-	    if (flag==1)
+	    if (flag == 1)
 	    {
 	      for(unsigned l2=0; l2<n_node; l2++)
 	      {
@@ -2740,12 +2787,12 @@ namespace oomph
 	  // Contribution of Lagrange multiplier and traction to bulk eqn on "left"
 	  int local_eqn_left = nodal_local_eqn(l, d);
 	  if (local_eqn_left >= 0)
-	  {
+	  {	    
 	    residuals[local_eqn_left] += lambda[d] * test[l]*W;
-	    
-	    for(unsigned j=0; j< Dim; j++)
+
+	    for(unsigned j=0; j<Dim; j++)
 	    {
-	      residuals[local_eqn_left] += stress_sing_total(d,j)*unit_normal[j] * test[l]*W;
+	      residuals[local_eqn_left] -= stress_sing_total(d,j)*unit_normal[j] * test[l]*W;
 	    }
 
 	    // compute Jacobian
@@ -2796,7 +2843,7 @@ namespace oomph
 	      external_local_eqn(External_data_index_for_right_node[l], d);
 	  
 	    if (local_eqn_right >= 0)
-	    {
+	    {	      
 	      residuals[local_eqn_right] -= lambda[d]*test[l]*W;
 
 	      // compute Jacobian
@@ -2912,18 +2959,17 @@ namespace oomph
 	  residuals,GeneralisedElement::Dummy_matrix,0);
       }
 
-      // hierher forced this to be done by finite differencing (for now)
-      // because the amplitude of the singular function does provide
-      // a contribution to the Jacobian
-      /* /// \short Add the element's contribution to its residual vector and its  */
-      /* /// Jacobian matrix */
-      /* inline void fill_in_contribution_to_jacobian(Vector<double> &residuals, */
-      /*                                          DenseMatrix<double> &jacobian) */
-      /*  { */
-      /*   //Call the generic routine with the flag set to 1 */
-      /*   fill_in_generic_residual_contribution_navier_stokes_traction(residuals,jacobian,1); */
-      /*  } */
-
+#ifndef USE_FD_JACOBIAN      
+      /// \short Add the element's contribution to its residual vector and its
+      /// Jacobian matrix
+      inline void fill_in_contribution_to_jacobian(Vector<double> &residuals,
+                                               DenseMatrix<double> &jacobian)
+       {
+        //Call the generic routine with the flag set to 1
+        fill_in_generic_residual_contribution_navier_stokes_traction(residuals,jacobian,1);
+       }
+#endif
+      
       /// Output function
       void output(std::ostream &outfile)
       {
@@ -3503,53 +3549,7 @@ namespace oomph
     {
     }
 
-    /// \short Return FE representation of function value u_navier_stokes(s) 
-    /// plus scaled singular fct (if provided) at local coordinate s
-    inline Vector<double> interpolated_u_total_navier_stokes(const Vector<double>& s) const
-    {
-      // FE part of the solution
-      Vector<double> u_fe(DIM);
-      
-      // get the interpolated FE velocities
-      TTaylorHoodElement<DIM>::interpolated_u_nst(s, u_fe);
-
-      // get the interpolated FE pressure
-      double p = TTaylorHoodElement<DIM>::interpolated_p_nst(s);
-
-      // add pressure to the solution vector
-      u_fe.push_back(p);
-
-      for(unsigned ising=0; ising<Nsingular_fct; ising++)
-      {
-	// check if we're subtracting the singularity or not
-	if (Navier_stokes_sing_el_pt[ising] != 0)
-	{
-	  // singular part of the solution
-	  Vector<double> u_sing(DIM);
-
-	  // interpolate the position
-	  Vector<double> x(DIM);
-	
-	  for(unsigned i=0; i<DIM; i++)  
-	  { 
-	    x[i] = this->interpolated_x(s,i); 
-	  }
-	
-	  // get singular part
-	  u_sing = Navier_stokes_sing_el_pt[ising]->singular_fct(x);
-
-	  // add singular part of the solution to the FE part to give the total
-	  // computed solution
-	  for(unsigned i=0; i<DIM+1; i++)
-	  {
-	    u_fe[i] += u_sing[i];
-	  }
-	}
-      }
-      
-      return u_fe;
-    } 
-
+   
     // QUEHACERES make these time dependent
     /// \short Return FE representation of function value u_fe
     inline Vector<double> interpolated_u_fe_navier_stokes(const Vector<double>& s) const
@@ -3574,6 +3574,57 @@ namespace oomph
       return u_fe;
     } 
 
+    /// \short Return FE representation of function value u_navier_stokes(s) 
+    /// plus scaled singular fct (if provided) at local coordinate s
+    inline Vector<double> interpolated_u_total_navier_stokes(const Vector<double>& s) const
+    {
+      // interpolate the position
+      Vector<double> x(DIM);
+	
+      for(unsigned i=0; i<DIM; i++)  
+      { 
+	x[i] = this->interpolated_x(s,i); 
+      }
+      
+      /* // FE part of the solution */
+      /* Vector<double> u_fe(DIM,0); */
+      
+      /* // get the interpolated FE velocities */
+      /* this->interpolated_u_nst(s, u_fe); */
+
+      /* // get the interpolated FE pressure */
+      /* double p = this->interpolated_p_nst(s); */
+
+      /* // add pressure to the solution vector */
+      /* u_fe.push_back(p); */
+
+      // get the interpolated FE bit
+      Vector<double> u_fe = interpolated_u_fe_navier_stokes(s);
+
+      for(unsigned ising=0; ising<Nsingular_fct; ising++)
+      {
+	// check if we're subtracting the singularity or not
+	if (Navier_stokes_sing_el_pt[ising] != 0)
+	{
+	  // singular part of the solution
+	  Vector<double> u_sing(DIM);
+	  	
+	  // get singular part
+	  u_sing = Navier_stokes_sing_el_pt[ising]->singular_fct(x);
+
+	  // add singular part of the solution to the FE part to give the total
+	  // computed solution
+	  for(unsigned i=0; i<DIM+1; i++)
+	  {
+	    u_fe[i] += u_sing[i];
+	  }
+	}
+      }
+      
+      return u_fe;
+    } 
+    
+    
     inline Vector<double> interpolated_edge_coordinates(const Vector<double>& s) const
     {
       unsigned n_node = this->nnode();
@@ -3659,6 +3710,13 @@ namespace oomph
       // output the singular bits
       // ==========================================
 
+      // just output zeros if there are no singular functions so the oomph-convert
+      // script doesn't die when the number of columns isn't the same for all elements
+      if(Nsingular_fct == 0)
+      {
+	outfile << "0 0 0 0";
+      }
+      
       for(unsigned ising=0; ising<Nsingular_fct; ising++)
       {
 	// singular part of the solution
