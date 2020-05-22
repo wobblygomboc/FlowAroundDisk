@@ -64,7 +64,8 @@ namespace oomph
   {
   public:
 
-    typedef Vector<double>(*UnscaledSingSolnFctPt) (const Vector<double>& x);
+    typedef Vector<double>(*UnscaledSingSolnFctPt) (const Vector<double>& x,
+						    const bool& is_lower_disk_element);
 
 
     typedef DenseMatrix<double>(*GradientOfUnscaledSingSolnFctPt)
@@ -90,13 +91,14 @@ namespace oomph
     }
 
     ///Function to compute unscaled version of unscaled version
-    Vector<double> unscaled_singular_fct(const Vector<double>& x, int boundary_id=-1) const
+    Vector<double> unscaled_singular_fct(const Vector<double>& x,
+					 const bool& is_lower_disk_element = false) const
     {
       if(Unscaled_singular_fct_pt == 0)
       {
 	return *(new Vector<double>(x.size(), 0.0));
       }
-      return Unscaled_singular_fct_pt(x);
+      return Unscaled_singular_fct_pt(x, is_lower_disk_element);
     }
 
     ///Compute unscaled version of gradient of singular function
@@ -1580,12 +1582,16 @@ namespace oomph
 	break;
     }
 
-    unsigned nnod = nnode();
+    unsigned n_node = nnode();
 
     // Make space for Dim Lagrange multipliers
-    Vector<unsigned> n_additional_values(nnod, Dim);
-    this->add_additional_values(n_additional_values, id);
+    Vector<unsigned> n_additional_values(n_node, Dim);
 
+    // add them (this takes care of duplicate IDs so no additional
+    // checks needed here to avoid redundant nodal values)
+    this->add_additional_values(n_additional_values, Boundary_id);
+
+    
   } // end NavierStokesWithSingularityBCFaceElement constructor
 
   //===========================================================================
@@ -1661,6 +1667,7 @@ namespace oomph
 
 	  // get the interpolated Lagrange multipliers
 	  lambda[i] += this->nodal_value(l, lambda_index) * psi[l];
+	  
 	  // get the interpolated position
 	  interpolated_x[i] += this->nodal_position(l,i) * psi[l];	    
 	}
@@ -1729,6 +1736,9 @@ namespace oomph
 	  // QUEHACERES get this nodal index systematically, don't assume it starts at 0
 	  int local_eqn_u_fe = nodal_local_eqn(l, d);
 
+	  // QUEHACERES debug
+	  int global_eqn = node_pt->eqn_number(lambda_index);
+	    
 #ifdef PARANOID
 	  // Lagrange multiplier active but u_fe pinned won't work!
 	  if ( (local_eqn_lagr >= 0) && (local_eqn_u_fe < 0) )
@@ -1904,7 +1914,12 @@ namespace oomph
 	  residuals,GeneralisedElement::Dummy_matrix,0);
       }
 
-#ifndef USE_FD_JACOBIAN
+// QUEHACERES analytic jacobian tested and working without r_c, possibly
+      // need to re-enable FD jacobian to test that out.
+      // also re-enable once all these different elements have tested analytic
+      // jacobians so we can legit have USE_FD_JACOBIAN switched on/off
+/* #ifndef USE_FD_JACOBIAN  */
+      
       /// \short Add the element's contribution to its residual vector and its
       /// Jacobian matrix
       inline void fill_in_contribution_to_jacobian(Vector<double> &residuals,
@@ -1914,7 +1929,10 @@ namespace oomph
 	fill_in_generic_residual_contribution_nst_sing_jump
 	  (residuals,jacobian,1);
       }
-#endif
+
+// QUEHACERES
+/* #endif  */
+      
       /// Output function
       void output(std::ostream &outfile)
       {
@@ -2830,7 +2848,7 @@ namespace oomph
 		  // \hat\tau_{ij} n_j
 		  for(unsigned j=0; j< Dim; j++)
 		  {
-		    jacobian(local_eqn_left,local_eqn_c) +=
+		    jacobian(local_eqn_left,local_eqn_c) -=
 		      stress_sing_unscaled[ising](d,j) * unit_normal[j] *test[l]*W;      
 		  }
 
@@ -3576,7 +3594,9 @@ namespace oomph
 
     /// \short Return FE representation of function value u_navier_stokes(s) 
     /// plus scaled singular fct (if provided) at local coordinate s
-    inline Vector<double> interpolated_u_total_navier_stokes(const Vector<double>& s) const
+    inline Vector<double> interpolated_u_total_navier_stokes(
+      const Vector<double>& s,
+      const bool& is_lower_disk_element = false) const
     {
       // interpolate the position
       Vector<double> x(DIM);
@@ -3584,6 +3604,17 @@ namespace oomph
       for(unsigned i=0; i<DIM; i++)  
       { 
 	x[i] = this->interpolated_x(s,i); 
+      }
+
+       double tol = 1e-8;
+
+      // if this is a point sitting on the plate but the flag has been
+      // specified to say it's a lower disk element, then set the
+      // z coordinate to a very small negative number to handle the
+      // branch cut in the pressure above/below the disk
+      if(is_lower_disk_element && abs(x[DIM-1]) < tol)
+      {
+	x[DIM-1] = -tol;
       }
       
       /* // FE part of the solution */
@@ -3657,7 +3688,8 @@ namespace oomph
     }
       
     void output_with_various_contributions(std::ostream& outfile, 
-					   const Vector<double>& s)
+					   const Vector<double>& s,
+					   const bool& is_lower_disk_element = false)
     {
       Vector<double> x(DIM);
       for(unsigned i=0; i<DIM; i++) 
@@ -3665,6 +3697,17 @@ namespace oomph
 	x[i] = this->interpolated_x(s,i);	
       }
 
+      double tol = 1e-8;
+
+      // if this is a point sitting on the plate but the flag has been
+      // specified to say it's a lower disk element, then set the
+      // z coordinate to a very small negative number to handle the
+      // branch cut in the pressure above/below the disk
+      if(is_lower_disk_element && abs(x[DIM-1]) < tol)
+      {
+	x[DIM-1] = -tol;
+      }
+    
       // regular part of the solution
       Vector<double> u_exact_non_sing(DIM+1, 0.0);
 
@@ -3681,7 +3724,7 @@ namespace oomph
       Vector<double> u_fe_plus_sing(DIM+1, 0.0);
 
       u_fe           = this->interpolated_u_fe_navier_stokes(s);
-      u_fe_plus_sing = this->interpolated_u_total_navier_stokes(s);
+      u_fe_plus_sing = this->interpolated_u_total_navier_stokes(s, is_lower_disk_element);
 
 
       // ==========================================
@@ -3725,7 +3768,8 @@ namespace oomph
 	// check we've got a singular function
 	if (Navier_stokes_sing_el_pt[ising] != 0) 
 	{ 
-	  u_sing = Navier_stokes_sing_el_pt[ising]->singular_fct(x); 
+	  u_sing = Navier_stokes_sing_el_pt[ising]->
+	    singular_fct(x, is_lower_disk_element); 
 	}
 	
 	for(unsigned i=0; i<DIM+1; i++)
@@ -3801,7 +3845,8 @@ namespace oomph
     
     /// Output with various contributions
     void output_with_various_contributions(std::ostream& outfile, 
-					   const unsigned& nplot)
+					   const unsigned& nplot,
+					   const bool& is_lower_disk_element = false)
     {
       //Vector of local coordinates
       Vector<double> s(DIM);
@@ -3817,7 +3862,7 @@ namespace oomph
 	this->get_s_plot(iplot, nplot, s);
 
 	// do the output
-	output_with_various_contributions(outfile, s);	
+	output_with_various_contributions(outfile, s, is_lower_disk_element);	
       }
       outfile << std::endl;
       
