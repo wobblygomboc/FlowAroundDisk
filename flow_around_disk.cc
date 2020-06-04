@@ -307,14 +307,20 @@ namespace Analytic_Functions
   // //////////////////////////////////////////////////////////////////////////
   // Main function to compute the singular function and gradient, independent
   // of broadside or in-plane modes - simply takes two constants A and B and
-  // computes the Moffatt solution and it's Cartesian velocity gradients
+  // computes the Moffatt solution and it's Cartesian velocity gradients.
+  // is_lower_disk_element usefull for outputting the solution, as it allows for
+  // getting the pressure jump correct across the plate
   void singular_fct_and_gradient(const Vector<double>& x,
 				 const double& A, const double& B,
 				 Vector<double>& u_cartesian,
-				 DenseMatrix<double>& du_dx)
+				 DenseMatrix<double>& du_dx,
+				 const bool& is_lower_disk_element = false)
   {
     const double infinity = 103;
 
+    // tolerance for some floating-point comparisons
+    const double tol = 1e-8;
+    
     // ------------------------------------------
     // compute the (\rho,\zeta,\phi) coordinates
 
@@ -365,6 +371,11 @@ namespace Analytic_Functions
     // Moffat angle (minus sign accounts for the reflection of the moffat solution, which assumes
     // the semi-infinite plate is at x>0 not x<0 as we have with this coordinate system
     double phi = atan2pi(rho_vector*binormal, -rho_vector*normal);
+
+    // if this point as an angle of zero but is on the lower side of the disk
+    // rather than the upper, set it's angle to 2pi to get the pressure jump right
+    if((abs(phi) < tol) && is_lower_disk_element)
+      phi = 2 * MathematicalConstants::Pi;
     
     // unit vector in the rho direction
     mVector rho_hat = -normal * cos(phi) + binormal * sin(phi);
@@ -380,8 +391,7 @@ namespace Analytic_Functions
     // get the 2D polar Moffat solution (third component is pressure)
     mVector u_polar(3);
     moffatt_solution(rho, phi, A, B, u_polar, u_polar_derivatives);
-
-    
+	
     // ----------------
     // now use the outer normal to convert the rzp velocity into Cartesians
 
@@ -413,9 +423,7 @@ namespace Analytic_Functions
     u_moffat[0] = u_polar[0];
     u_moffat[1] = 0; 
     u_moffat[2] = u_polar[1];
-
-    double tol = 1e-8;
-     
+ 
     // do the conversion
     if(rho > tol)
     {
@@ -621,29 +629,32 @@ namespace Analytic_Functions
   
   void singular_fct_and_gradient_broadside(const EdgeCoordinate& edge_coords,
 					   Vector<double>& u,
-					   DenseMatrix<double>& du_dx)
+					   DenseMatrix<double>& du_dx,
+					   const bool& is_lower_disk_element = false)
   {
     // parameters for broadside motion
     double A = 0;
     double B = 1;
 
     // forward
-    singular_fct_and_gradient(edge_coords, A, B, u, du_dx);
+    singular_fct_and_gradient(edge_coords, A, B, u, du_dx, is_lower_disk_element);
   }
   
   void singular_fct_and_gradient_in_plane(const EdgeCoordinate& edge_coords,
 					  Vector<double>& u,
-					  DenseMatrix<double>& du_dx)
+					  DenseMatrix<double>& du_dx,
+					  const bool& is_lower_disk_element = false)
   {
     // parameters for in-plane motion
     double A = 1;
     double B = 0;
 
     // forward
-    singular_fct_and_gradient(edge_coords, A, B, u, du_dx);
+    singular_fct_and_gradient(edge_coords, A, B, u, du_dx, is_lower_disk_element);
   }
   
-  DenseMatrix<double> gradient_of_singular_fct_broadside(const EdgeCoordinate& edge_coords)
+  DenseMatrix<double> gradient_of_singular_fct_broadside(const EdgeCoordinate& edge_coords,
+							 const bool& is_lower_disk_element = false)
   {
     // dummy solution vector
     Vector<double> u;
@@ -652,12 +663,13 @@ namespace Analytic_Functions
     DenseMatrix<double> du_dx;
     
     // forward
-    singular_fct_and_gradient_broadside(edge_coords, u, du_dx);
+    singular_fct_and_gradient_broadside(edge_coords, u, du_dx, is_lower_disk_element);
 
     return du_dx;
   }
   
-  DenseMatrix<double> gradient_of_singular_fct_in_plane(const EdgeCoordinate& edge_coords)
+  DenseMatrix<double> gradient_of_singular_fct_in_plane(const EdgeCoordinate& edge_coords,
+							const bool& is_lower_disk_element = false)
   {
     // dummy solution vector
     Vector<double> u;
@@ -666,11 +678,12 @@ namespace Analytic_Functions
     DenseMatrix<double> du_dx;
     
     // forward
-    singular_fct_and_gradient_in_plane(edge_coords, u, du_dx);
+    singular_fct_and_gradient_in_plane(edge_coords, u, du_dx, is_lower_disk_element);
 
     return du_dx;
   }
-  Vector<double> singular_fct_broadside(const EdgeCoordinate& edge_coords)
+  Vector<double> singular_fct_broadside(const EdgeCoordinate& edge_coords,
+					const bool& is_lower_disk_element = false)
   {
     // create a dummy gradient tensor
     DenseMatrix<double> du_dx;
@@ -679,12 +692,13 @@ namespace Analytic_Functions
     Vector<double> u; 
     
     // forward 
-    singular_fct_and_gradient_broadside(edge_coords, u, du_dx);
+    singular_fct_and_gradient_broadside(edge_coords, u, du_dx, is_lower_disk_element);
     
     return u;
   }
 
-   Vector<double> singular_fct_in_plane(const EdgeCoordinate& edge_coords)
+  Vector<double> singular_fct_in_plane(const EdgeCoordinate& edge_coords,
+				       const bool& is_lower_disk_element = false)
   {
     // create a dummy gradient tensor
     DenseMatrix<double> du_dx;
@@ -693,7 +707,7 @@ namespace Analytic_Functions
     Vector<double> u;
     
     // forward 
-    singular_fct_and_gradient_in_plane(edge_coords, u, du_dx);
+    singular_fct_and_gradient_in_plane(edge_coords, u, du_dx, is_lower_disk_element);
     
     return u;
   }
@@ -746,7 +760,7 @@ namespace Analytic_Functions
     double Pi = MathematicalConstants::Pi;
 
     // plate velocity
-    double V = 1;
+    double V = -1;
 
     // plate radius
     double a = 1;
@@ -756,7 +770,7 @@ namespace Analytic_Functions
     
     double p0 = 0;
     
-    double tol = 1e-6;
+    double tol = 1e-8;
 
     // if this is a point sitting on the plate but the flag has been
     // specified to say it's a lower disk element, then set the
@@ -764,7 +778,7 @@ namespace Analytic_Functions
     // branch cut in the pressure above/below the disk
     if(is_lower_disk_element && abs(z) < tol)
     {
-      z = -1e-8;
+      z = -tol;
     }
     
     Vector<double> r_edge(3, 0.0);
@@ -808,7 +822,7 @@ namespace Analytic_Functions
     // convert to Cartesians (flow is axisymmetric so no azimuthal component)
     u_cartesian[0] = ur * cos(phi);
     u_cartesian[1] = ur * sin(phi);
-    u_cartesian[2] = uz; //  - V;
+    u_cartesian[2] = uz - V; // QUEHACERES subtracting for consistency with Moffatt
 
     u_cartesian[3] = p;
     
@@ -999,12 +1013,15 @@ namespace Analytic_Functions
   {
     DenseMatrix<double> dudx_dummy;
     Vector<double> u(4,0);
-    
-    if(Global_Parameters::Do_gupta_traction_problem)
-      gupta_solution_and_gradient(x, u, dudx_dummy, is_lower_disk_element);
 
-    if(Global_Parameters::Do_poiseuille_traction_problem)
-      poiseuille_solution_and_gradient(x, u, dudx_dummy);
+    u = singular_fct_broadside(x, is_lower_disk_element);
+
+    // QUEHACERES
+    // if(Global_Parameters::Do_gupta_traction_problem)
+    //   gupta_solution_and_gradient(x, u, dudx_dummy, is_lower_disk_element);
+
+    // if(Global_Parameters::Do_poiseuille_traction_problem)
+    //   poiseuille_solution_and_gradient(x, u, dudx_dummy);
     
     return u;
   }
@@ -1013,12 +1030,15 @@ namespace Analytic_Functions
   {
     Vector<double> u_dummy;
     DenseMatrix<double> dudx(3,3,0);
-    
-    if(Global_Parameters::Do_gupta_traction_problem)    
-      gupta_solution_and_gradient(x, u_dummy, dudx);
 
-    if(Global_Parameters::Do_poiseuille_traction_problem)
-      poiseuille_solution_and_gradient(x, u_dummy, dudx);
+    dudx = gradient_of_singular_fct_broadside(x);
+
+    // QUEHACERES
+    // if(Global_Parameters::Do_gupta_traction_problem)    
+    //   gupta_solution_and_gradient(x, u_dummy, dudx);
+
+    // if(Global_Parameters::Do_poiseuille_traction_problem)
+    //   poiseuille_solution_and_gradient(x, u_dummy, dudx);
     
     return dudx;
   }
@@ -1032,6 +1052,12 @@ namespace Analytic_Functions
     
     if(Global_Parameters::Do_poiseuille_traction_problem)
       prescribed_poiseuille_traction(x, outer_unit_normal, traction);
+  }
+
+  void exact_solution_fct(const Vector<double>& x, Vector<double>& exact_soln,
+			  const bool& is_lower_disk_element = false)
+  {
+    exact_soln = test_singular_function(x, is_lower_disk_element);
   }
   
 } // end of Analytic_Functions namespace
@@ -1339,8 +1365,6 @@ private:
       {
 	return;
       }
-
-      // QUEHACERES delete torus traction elements here
       
       // Loop over the bc elements
       n_element = Face_mesh_for_bc_pt->nelement();
@@ -1391,7 +1415,9 @@ private:
 
   /// \short function to setup the map from the nodes in the augmented region to their
   /// coordinates in the edge coordinate system (\rho, \zeta, \phi)
-  void setup_edge_coordinates_map();
+  void setup_edge_coordinates_map(const ELEMENT* elem_pt,
+				  std::map<Node*, Vector<double> >*
+				  node_to_edge_coordinates_map_pt) const;
   
   /// Setup disk on disk plots
   void setup_disk_on_disk_plots();
@@ -1428,6 +1454,9 @@ private:
   /// Mesh of face elements which impose Dirichlet boundary conditions
   Mesh* Face_mesh_for_bc_pt;
 
+  /// Mesh of elements within the torus region for the computation of Z2
+  RefineableTetgenMesh<ELEMENT>* Torus_region_mesh_pt;
+  
   /// \short Enumeration for IDs of FaceElements (used to figure out
   /// who's added what additional nodal data...)
   enum{ bla_hierher, Stress_jump_el_id, BC_el_id };
@@ -1711,8 +1740,8 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
 
   // @@@@@@@@@@@@@@@@@@@@@@@@@@@@
   
-  // Look, we can visualise the faceted surface!
-  disk_with_torus_pt->output("warped_disk_with_torus_faceted_surface.dat");
+  // // Look, we can visualise the faceted surface!
+  // disk_with_torus_pt->output("warped_disk_with_torus_faceted_surface.dat");
  
   // Add as inner boundary for mesh
   Inner_boundary_pt.push_back(disk_with_torus_pt);
@@ -1900,6 +1929,12 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
 #endif
   
   build_global_mesh();
+
+  Torus_region_mesh_pt = new RefineableTetgenMesh<ELEMENT>;
+  
+  // create a Z2 error estimator for this region mesh
+  Z2ErrorEstimator* torus_region_error_estimator_pt = new Z2ErrorEstimator;
+  Torus_region_mesh_pt->spatial_error_estimator_pt() = torus_region_error_estimator_pt;
   
   // Complete problem setup
   complete_problem_setup();
@@ -2064,6 +2099,14 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
       }
       
     }
+  }
+
+  // set the flag for the lower disk elements so we output the correct pressure value  
+  for(typename std::set<ELEMENT*>::iterator it = Elements_on_lower_disk_surface_pt.begin();
+      it != Elements_on_lower_disk_surface_pt.end(); it++)
+  {
+    bool is_lower_disk_element = true;
+    (*it)->set_lower_disk_element(is_lower_disk_element);
   }
   
   // QUEHACERES move this to after so that we output all of them including the touching elems
@@ -3437,125 +3480,87 @@ void FlowAroundDiskProblem<ELEMENT>::duplicate_plate_nodes_and_add_boundaries()
 /// \short function to setup the map from the nodes in the augmented region
 /// to their coordinates in the edge coordinate system (\rho, \zeta, \phi)
 //========================================================================
-template<class ELEMENT>
-void FlowAroundDiskProblem<ELEMENT>::setup_edge_coordinates_map()
-{  
-  // loop over all the elements in the torus region
-  unsigned region_id = Torus_region_id;
-  unsigned n_el = Bulk_mesh_pt->nregion_element(region_id);
-  
-  for (unsigned e=0; e<n_el; e++)
-  {
-    ELEMENT* bulk_elem_pt = dynamic_cast<ELEMENT*>(
-      Bulk_mesh_pt->region_element_pt(region_id, e));
+template<class ELEMENT> void FlowAroundDiskProblem<ELEMENT>::
+setup_edge_coordinates_map(const ELEMENT* elem_pt,
+			   std::map<Node*, Vector<double> >* node_to_edge_coordinates_map_pt) const
+{    
+  // Loop over nodes    
+  unsigned nnod = elem_pt->nnode();
+  for (unsigned j=0; j<nnod; j++)
+  {      
+    Node* nod_pt = elem_pt->node_pt(j);
 
-    // Now loop over nodes    
-    unsigned nnod = bulk_elem_pt->nnode();
-    for (unsigned j=0; j<nnod; j++)
-    {      
-      Node* nod_pt = bulk_elem_pt->node_pt(j);
+    Vector<double> x(3);
+    x[0] = nod_pt->x(0);
+    x[1] = nod_pt->x(1);
+    x[2] = nod_pt->x(2);
 
-      Vector<double> x(3);
-      x[0] = nod_pt->x(0);
-      x[1] = nod_pt->x(1);
-      x[2] = nod_pt->x(2);
 
-      // ----------------------------------------------------------------------
-      // step 1: compute the boundary zeta value which corresponds to the
-      //         s-n plane which contains this bulk point
-      // ----------------------------------------------------------------------
-      
-      // starting guess for boundary zeta is the zeta for a flat disk
-      double zeta_0 = atan2pi(x[1], x[0]);
+    // ------------------------------------------
+    // compute the (\rho,\zeta,\phi) coordinates
 
-      Vector<double> unknowns(1);
-      unknowns[0] = zeta_0;
+    // starting guess for boundary zeta is the zeta for a flat disk
+    double zeta_0 = atan2pi(x[1], x[0]);
 
-      // do the solve to get the boundary zeta
+    Vector<double> unknowns(1);
+    unknowns[0] = zeta_0;
+
+    // do the solve to get the boundary zeta
+    try
+    {
       BlackBoxFDNewtonSolver::black_box_fd_newton_solve(
 	&Analytic_Functions::distance_from_point_to_sn_plane, x, unknowns);
-
-      // interpret the solve
-      double zeta = unknowns[0];
-
-      // ----------------------------------------------------------------------
-      // Step 2: Now compute the Moffatt coordinates (\rho, \phi), and the
-      //         corresponding unit vectors \hat{\rho} and \hat{\phi}
-      // ----------------------------------------------------------------------
-      
-      double b_dummy = 0;
-      mVector r_disk_edge(3);
-      mVector tangent(3);
-      mVector binormal(3);
-      mVector normal(3);
-    
-      // get the unit normal from the disk-like geometric object at this zeta
-      Global_Parameters::Warped_disk_with_boundary_pt->
-	surface_vectors_at_boundary(b_dummy, zeta, r_disk_edge, tangent,
-				    normal, binormal);
-
-      // compute the rho vector, the vector from the edge of the disk at this
-      // zeta to the point in question
-      mVector rho_vector = -(r_disk_edge - x);
-
-      // shorthands
-      double rho  = rho_vector.magnitude();
-    
-      // angle of the rho vector with respect to the x-y plane of the global
-      // Cartesian coordinate system
-      double angle_of_rho_wrt_xy_plane =
-	atan2pi(rho_vector[2], sqrt(rho_vector[0]*rho_vector[0] +
-				    rho_vector[1]*rho_vector[1]));
-
-      // the angle the edge of the sheet makes with the x-y plane
-      double angle_of_normal_wrt_xy_plane = atan2pi(normal[2],
-						    sqrt(normal[0]*normal[0] +
-							 normal[1]*normal[1]));
-
-      // angle of inclination to the point in question from the outer normal vector
-      double elevation_relative_to_disk_edge = 0;
-      double tol = 1e-8;
-      if(rho > tol)
-      {
-	if((angle_of_rho_wrt_xy_plane < angle_of_normal_wrt_xy_plane) &&
-	   (angle_of_rho_wrt_xy_plane > angle_of_normal_wrt_xy_plane - tol) )
-	{
-	  elevation_relative_to_disk_edge = 0;
-	}
-	else
-	{
-	  if(angle_of_rho_wrt_xy_plane > angle_of_normal_wrt_xy_plane)
-	  {
-	    // elevation is the angle between the two
-	    elevation_relative_to_disk_edge =
-	      angle_of_rho_wrt_xy_plane - angle_of_normal_wrt_xy_plane;
-	  }
-	  else
-	  {
-	    // otherwise it's the obtuse angle between them
-	    elevation_relative_to_disk_edge = 2*MathematicalConstants::Pi -
-	      (angle_of_normal_wrt_xy_plane - angle_of_rho_wrt_xy_plane);
-	  }
-	} 
-      }
-
-      double phi = Analytic_Functions::reflect_angle_wrt_z_axis(
-	elevation_relative_to_disk_edge);
-      
-      // ----------------------------------------------------------------------
-      // Step 3: Insert these coordinates into the map
-      // ----------------------------------------------------------------------
-      
-      Vector<double> edge_coordinates(3);
-      edge_coordinates[0] = rho;
-      edge_coordinates[1] = zeta;
-      edge_coordinates[2] = phi;
-
-      // add this node and it's edge coordinates to the map
-      Node_to_edge_coordinates_map_pt->insert(
-	std::pair<Node*, Vector<double> >(nod_pt, edge_coordinates));
     }
+    catch(const std::exception e)
+    {
+      std::ostringstream error_message;
+      error_message << "Couldn't find zeta for the bulk point ("
+		    << x[0] << ", " << x[1] << ", " << x[2] << ")\n\n";
+
+      throw OomphLibError(error_message.str(),
+			  OOMPH_CURRENT_FUNCTION,
+			  OOMPH_EXCEPTION_LOCATION);
+    }
+    
+    // interpret the solve
+    double zeta = unknowns[0];
+          
+    double b_dummy = 0;
+    mVector r_disk_edge(3);
+    mVector tangent(3);
+    mVector binormal(3);
+    mVector normal(3);
+    
+    // get the unit normal from the disk-like geometric object at this zeta
+    Global_Parameters::Warped_disk_with_boundary_pt->
+      boundary_triad(b_dummy, zeta, r_disk_edge, tangent,
+		     normal, binormal);
+    
+    // compute the rho vector, the vector from the edge of the disk at this
+    // zeta to the point in question
+    mVector rho_vector = -(r_disk_edge - x);
+
+    // shorthands
+    double rho  = rho_vector.magnitude();
+    
+    // Moffat angle (minus sign accounts for the reflection of the moffat solution, which assumes
+    // the semi-infinite plate is at x>0 not x<0 as we have with this coordinate system
+    double phi = atan2pi(rho_vector*binormal, -rho_vector*normal);
+      
+    // ----------------------------------------------------------------------
+    // Step 3: Insert these coordinates into the map
+    // ----------------------------------------------------------------------
+      
+    Vector<double> edge_coordinates(3);
+    edge_coordinates[0] = rho;
+    edge_coordinates[1] = zeta;
+    edge_coordinates[2] = phi;
+
+    // add this node and it's edge coordinates to the map
+    node_to_edge_coordinates_map_pt->insert(
+      std::pair<Node*, Vector<double> >(nod_pt, edge_coordinates));
   }
+  return node_to_edge_coordinates_map_pt;
 }
 
 // ///////////////////////////////////////////////////////////////////////
@@ -3606,7 +3611,7 @@ void FlowAroundDiskProblem<ELEMENT>::setup_disk_on_disk_plots()
     for (unsigned i=0; i < Nrho_disk_on_disk_plot; i++) 
     {
       double rho_min = 0.0;
-      double rho_max = Global_Parameters::R_torus;
+      double rho_max = Global_Parameters::R_torus * 1.2;
       double rho = rho_min + (rho_max - rho_min) * double(i) /
 	double(Nrho_disk_on_disk_plot-1);
       
@@ -3709,7 +3714,18 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
   }
   
 #endif
-  
+
+  // add the elements in the torus region to the torus region mesh, so that it
+  // can be used to compute the Z2 error
+  unsigned nel = Bulk_mesh_pt->nregion_element(Torus_region_id);
+  for (unsigned e=0; e<nel; e++)
+  {
+    ELEMENT* el_pt = dynamic_cast<ELEMENT*>(
+      Bulk_mesh_pt->region_element_pt(Torus_region_id, e));
+    
+    Torus_region_mesh_pt->add_element_pt(el_pt);
+  }
+    
   // Apply bcs  
   apply_boundary_conditions();
 }
@@ -4024,9 +4040,10 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
       x[0] = node_pt->x(0);
       x[1] = node_pt->x(1);
       x[2] = node_pt->x(2);
-      
-      // Vector<double> u_gupta = Analytic_Functions::gupta_solution_broadside(x);
-      Vector<double> u = Analytic_Functions::test_singular_function(x);
+
+      DenseMatrix<double> dudx_dummy;
+      Vector<double> u(4,0.0); // = Analytic_Functions::test_singular_function(x);
+	Analytic_Functions::gupta_solution_and_gradient(x, u, dudx_dummy);
 
       for(unsigned i=0; i<3; i++)
       {
@@ -5292,6 +5309,110 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   oomph_info << "Norm of computed solution: "   << sqrt(norm_soln)  << endl;
   some_file.close();
 
+  // Get error from exact solution
+  // -----------------------------
+
+  // global norm and error
+  double norm  = 0;
+  double error = 0;
+
+  sprintf(filename,"%s/error%i.dat",Doc_info.directory().c_str(),
+	  Doc_info.number());
+  some_file.open(filename);
+  
+  for(unsigned e=0; e<Bulk_mesh_pt->nelement(); e++)
+  {
+    // get a pointer to this bulk element
+    ELEMENT* el_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->element_pt(e));
+    
+    // elemental errors and norms
+    double el_norm  = 0.0;
+    double el_error = 0.0;
+    
+    //Calculate the elemental errors for each non-halo element
+#ifdef OOMPH_HAS_MPI
+    if (!(el_pt->is_halo()))
+#endif
+    {
+      el_pt->compute_error(some_file,
+			   &Analytic_Functions::exact_solution_fct,
+			   el_error, el_norm);
+    }
+    //Add each elemental error to the global error
+    norm  += el_norm;
+    error += el_error;
+  }
+  some_file.close();
+
+  oomph_info << "L2 velocity error in total solution: " << error << std::endl;
+
+  // output the Z2 error
+  // ---------------------------------
+  
+  // grab the error in each element from the Z2 estimator
+  Vector<double> elementwise_z2_error(Torus_region_mesh_pt->nelement());
+  Mesh* mesh_pt = dynamic_cast<Mesh*>(Torus_region_mesh_pt);
+
+  // Use actual value without normalisation!
+  Z2ErrorEstimator* z2_pt = dynamic_cast<Z2ErrorEstimator*>(
+    Torus_region_mesh_pt->spatial_error_estimator_pt());
+
+  // keep a copy of the original normalisation
+  double backup = z2_pt->reference_flux_norm();
+
+  // set the normalisation to 1
+  z2_pt->reference_flux_norm() = 1.0;
+
+  // get the element-wise z2 errors
+  z2_pt->get_element_errors(mesh_pt, elementwise_z2_error);
+
+  // Reset the normalisation
+  z2_pt->reference_flux_norm() = backup;
+   
+  double z2_integral = 0;
+
+  sprintf(filename,"%s/elementwise_Z2error%i.dat",
+          Doc_info.directory().c_str(),
+	  Doc_info.number());
+  some_file.open(filename);
+    
+  // sum the errors to get a global measure    
+  for(unsigned e=0; e<elementwise_z2_error.size(); e++)
+  {
+    ELEMENT* el_pt = dynamic_cast<ELEMENT*>(Torus_region_mesh_pt->element_pt(e));
+
+    unsigned npts = 5;
+    Vector<double> s(3);
+    unsigned num_plot_points = el_pt->nplot_points(npts);
+    some_file << el_pt->tecplot_zone_string(npts);
+    
+    for(unsigned j=0; j<num_plot_points; j++)
+    {
+      el_pt->get_s_plot(j, npts, s);
+      Vector<double> x(3);
+      x[0] = el_pt->interpolated_x(s,0);
+      x[1] = el_pt->interpolated_x(s,1);
+      x[2] = el_pt->interpolated_x(s,2);
+      some_file << x[0] << " " << x[1] << " " << x[2] << " "
+		<< elementwise_z2_error[e] << endl;
+    }
+    
+    el_pt->write_tecplot_zone_footer(some_file, npts);
+    
+    // add the weighted conribution of this element to the integral
+    z2_integral += elementwise_z2_error[e] * el_pt->size();
+  }
+  some_file.close();
+  
+  sprintf(filename,"%s/torus_region_z2_error%i.dat", Doc_info.directory().c_str(),
+	  Doc_info.number());
+  some_file.open(filename);
+
+  some_file << z2_integral << " " << z2_integral / volume_in_torus_region << std::endl;
+  some_file.close();
+
+  oomph_info << "Torus region Z2 error: " << z2_integral << std::endl;
+  
   if (CommandLineArgs::command_line_flag_has_been_set("--output_jacobian_sparse"))
   {  
     // residual vector and Jacobian matrix
@@ -5383,14 +5504,7 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
       unsigned npts = 5;
       ELEMENT* el_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->element_pt(e));
 
-      bool is_lower_disk_element = false;
-
-      // search our list of lower disk elements, and record if we find it
-      if(Elements_on_lower_disk_surface_pt.find(el_pt) !=
-	 Elements_on_lower_disk_surface_pt.end())
-	is_lower_disk_element = true;
-	
-      el_pt->output_with_various_contributions(some_file, npts, is_lower_disk_element);
+      el_pt->output_with_various_contributions(some_file, npts);
     }
   
     oomph_info 
