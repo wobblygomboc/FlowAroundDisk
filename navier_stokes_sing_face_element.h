@@ -3863,14 +3863,14 @@ namespace oomph
     inline Vector<double> interpolated_u_total_navier_stokes(
       const Vector<double>& s, const unsigned& iplot) const
     {
-      // ###
-      /* // interpolate the position */
-      /* Vector<double> x(DIM); */
+      // ### keeping in atm for debug
+      // interpolate the position
+      Vector<double> x(DIM);
 	
-      /* for(unsigned i=0; i<DIM; i++)   */
-      /* {  */
-      /* 	x[i] = this->interpolated_x(s,i);  */
-      /* } */
+      for(unsigned i=0; i<DIM; i++)
+      {
+      	x[i] = this->interpolated_x(s,i);
+      }
 
       // get the interpolated FE bit
       Vector<double> u_fe = interpolated_u_fe_navier_stokes(s);
@@ -3886,37 +3886,40 @@ namespace oomph
 	dynamic_cast<ScalableSingularityForNavierStokesLineElement<NNODE_1D>*>
 	(line_elem_and_local_coord.first);
 
-      // local coordinate in the singular element for the zeta of this plot point
-      Vector<double> s_singular_el = line_elem_and_local_coord.second;
-      
-      // get the \rho,\zeta,\phi coordinates at this knot
-      EdgeCoordinates edge_coords_at_plot = this->edge_coordinate_at_plot_point(iplot);
-      
-      for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
+      // check if we're subtracting the singularity or not
+      if (sing_el_pt != 0)
       {
-	// check if we're subtracting the singularity or not
-	if (sing_el_pt != 0)
-	  // ###
-	  /* (Navier_stokes_sing_el_pt[ising] != 0) */
+	// local coordinate in the singular element for the zeta of this plot point
+	Vector<double> s_singular_el = line_elem_and_local_coord.second;
+      
+	// get the \rho,\zeta,\phi coordinates at this knot
+	EdgeCoordinates edge_coords_at_plot = this->edge_coordinate_at_plot_point(iplot);
+      
+	for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
 	{
-	  // singular part of the solution
-	  Vector<double> u_sing = sing_el_pt->singular_fct(edge_coords_at_plot,
-							   s_singular_el,
-							   ising);
-
 	  // ###
-	  /* // get singular part */
-	  /* u_sing = Navier_stokes_sing_el_pt[ising]->singular_fct(x, Is_lower_disk_element); */
+	  /* // check if we're subtracting the singularity or not */
+	  /* if (Navier_stokes_sing_el_pt[ising] != 0)  */
+	  /* { */
+	    // singular part of the solution
+	    Vector<double> u_sing = sing_el_pt->singular_fct(edge_coords_at_plot,
+							     s_singular_el,
+							     ising);
 
-	  // add singular part of the solution to the FE part to give the total
-	  // computed solution
-	  for(unsigned i=0; i<DIM+1; i++)
-	  {
-	    u_fe[i] += u_sing[i];
-	  }
+	    // ###
+	    /* // get singular part */
+	    /* u_sing = Navier_stokes_sing_el_pt[ising]->singular_fct(x, Is_lower_disk_element); */
+
+	    // add singular part of the solution to the FE part to give the total
+	    // computed solution
+	    for(unsigned i=0; i<DIM+1; i++)
+	    {
+	      u_fe[i] += u_sing[i];
+	    }
+	  // ###
+	  /* } */
 	}
       }
-      
       return u_fe;
     } 
       
@@ -3988,8 +3991,7 @@ namespace oomph
       // singular amplitude for this knot
       std::pair<GeomObject*, Vector<double> > line_elem_and_local_coord = 
 	this->line_element_and_local_coordinate_at_plot_point(iplot);
-
-      // QUEHACERES avoid the hard coded template arg here
+      
       // cast the GeomObject to a singular line element      
       ScalableSingularityForNavierStokesLineElement<NNODE_1D>* sing_el_pt =
 	dynamic_cast<ScalableSingularityForNavierStokesLineElement<NNODE_1D>*>
@@ -3998,9 +4000,6 @@ namespace oomph
       // local coordinate in the singular element for the zeta of this plot point
       Vector<double> s_singular_el = line_elem_and_local_coord.second;
       
-      // get the \rho,\zeta,\phi coordinates at this knot
-      EdgeCoordinates edge_coords_at_plot = this->edge_coordinate_at_plot_point(iplot);
-
       // do we actually have a pointer to a singular element?
       if(sing_el_pt == 0)
       {
@@ -4009,6 +4008,9 @@ namespace oomph
 	outfile << "0 0 0 0" << std::endl;
 	return;
       }
+
+      // get the \rho,\zeta,\phi coordinates at this knot
+      EdgeCoordinates edge_coords_at_plot = this->edge_coordinate_at_plot_point(iplot);
       
       for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
       {	
@@ -4237,7 +4239,24 @@ namespace oomph
     std::pair<GeomObject*, Vector<double> >
       line_element_and_local_coordinate_at_plot_point(const unsigned& i) const
     {
-      return Line_element_and_local_coordinate_at_plot_point[i];
+      std::pair<GeomObject*, Vector<double> > return_pair;
+
+      // check if we have an element-coordinate pair for this plot point
+      // (since this bulk element is used everywhere in the bulk not just
+      // in the augmented region, there may be no singular functions
+      // associated with this element, and so we just want to return an
+      // empty pointer and vector)
+      if(i < Line_element_and_local_coordinate_at_plot_point.size())
+      {
+	return_pair = Line_element_and_local_coordinate_at_plot_point[i];
+      }
+      else
+      {
+	GeomObject* dummy_pt = 0;
+	Vector<double> dummy_vec(1,0);
+	return_pair = std::make_pair(dummy_pt, dummy_vec);
+      }
+      return return_pair;
     }
     
   private:

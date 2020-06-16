@@ -1451,8 +1451,9 @@ private:
   /// elements in the torus region. If use_plot_points is true, then the
   /// coordinates are computed for the elements plot points, otherwise it is
   /// for their knots (integration points).
+  template <class T>
   void setup_edge_coordinates_and_singular_element(
-    const FiniteElement* elem_pt,
+    const T* elem_pt,
     Vector<EdgeCoordinates>& edge_coordinates_at_knot_pt,
     Vector<std::pair<GeomObject*, Vector<double> > >& line_element_and_local_coordinate,
     const bool& use_plot_points = false) const;
@@ -3579,13 +3580,14 @@ void FlowAroundDiskProblem<ELEMENT>::duplicate_plate_nodes_and_add_boundaries()
 /// coordinates are computed for the elements plot points, otherwise it is
 /// for their knots (integration points).
 //========================================================================
-template <class ELEMENT> void FlowAroundDiskProblem<ELEMENT>::
-setup_edge_coordinates_and_singular_element(
-  const FiniteElement* elem_pt,
+template <class ELEMENT>
+template <class T>
+void FlowAroundDiskProblem<ELEMENT>::setup_edge_coordinates_and_singular_element(
+  const T* elem_pt,
   Vector<EdgeCoordinates>& edge_coordinates_at_point,
   Vector<std::pair<GeomObject*, Vector<double> > >& line_element_and_local_coordinate,
   const bool& use_plot_points) const
-{
+{  
   // tolerance on point away from the x-axis
   const double tol = 1e-8;
   
@@ -3600,7 +3602,7 @@ setup_edge_coordinates_and_singular_element(
   edge_coordinates_at_point.resize(npt);
   line_element_and_local_coordinate.resize(npt);
   
-  //Loop over the integration points and compute 
+  //Loop over the integration/plot points and compute 
   for(unsigned ipt=0; ipt<npt; ipt++)
   {
     // local coords in this bulk element
@@ -3609,7 +3611,7 @@ setup_edge_coordinates_and_singular_element(
     if(use_plot_points)
     {
       // Get local coordinates of plot point
-      elem_pt->get_s_plot(ipt, npt, s);
+      elem_pt->get_s_plot(ipt, Global_Parameters::Nplot_for_bulk, s);
     }
     else
     {
@@ -6068,6 +6070,8 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
       el_pt->output_with_various_contributions(some_file, npts);
     }
 
+    some_file.close();
+    
     // ### QUEHACERES come back to this, should probably add proper output
     // all the way around the singular line mesh
     // oomph_info 
@@ -6077,6 +6081,110 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
     //   amplitude_of_singular_fct() << std::endl;
   }
 
+
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  // QUEHACERES debug of rzp coords - this is all hacky and will only work for flat disk
+  {
+    sprintf(filename,"%s/rzp_debug.dat",Doc_info.directory().c_str());
+    some_file.open(filename);
+    
+    unsigned nplot = Global_Parameters::Nplot_for_bulk;
+    for(unsigned e=0; e<Bulk_mesh_pt->nregion_element(Torus_region_id); e++)
+    {
+      ELEMENT* el_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->region_element_pt(Torus_region_id,e));
+              
+      unsigned num_plot_points = el_pt->nplot_points(nplot);
+      for (unsigned iplot=0; iplot < num_plot_points; iplot++)
+      {
+	Vector<double> s(3,0);
+      
+	// Get local coordinates of plot point
+	el_pt->get_s_plot(iplot, nplot, s);
+
+	// get the Eulerian coordinates
+	Vector<double> x(3,0);
+	for(unsigned i=0; i<3; i++) 
+	  x[i] = el_pt->interpolated_x(s,i);
+	
+	// get the line element and local coordinate which corresponds to the
+	// singular amplitude for this knot
+	std::pair<GeomObject*, Vector<double> > line_elem_and_local_coord = 
+	  el_pt->line_element_and_local_coordinate_at_plot_point(iplot);
+      
+	// cast the GeomObject to a singular line element      
+	ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
+	  dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>
+	  (line_elem_and_local_coord.first);
+
+	// local coordinate in the singular element for the zeta of this plot point
+	Vector<double> s_singular_el = line_elem_and_local_coord.second;
+      
+	// do we actually have a pointer to a singular element?
+	if(sing_el_pt == 0)
+	{
+	  ostringstream error_message;
+	  error_message << "Found a torus element without a singular pointer:\n"
+			<< "e = " << e << ", x = (" << x[0] << ", " << x[1] << ", " << x[2]
+			<< ")" << std::endl;
+	  
+	  throw OomphLibError(error_message.str(),
+			      OOMPH_CURRENT_FUNCTION,
+			      OOMPH_EXCEPTION_LOCATION);
+	}
+	
+	// get the \rho,\zeta,\phi coordinates at this knot
+	EdgeCoordinates edge_coords_at_plot = el_pt->edge_coordinate_at_plot_point(iplot);
+
+	// this works for a flat disk only
+	double zeta_from_eulerian = atan2pi(x[1],x[0]);
+
+	Vector<double> x_edge_of_disk(3,0);
+
+	x_edge_of_disk[0] = cos(zeta_from_eulerian);
+	x_edge_of_disk[1] = sin(zeta_from_eulerian);
+
+	mVector rho_vec_from_eulerian(3);
+	for(unsigned i=0; i<3; i++) 
+	  rho_vec_from_eulerian[i] = x[i] - x_edge_of_disk[i];
+      
+	double rho_from_eulerian = 0;
+
+	for(unsigned i=0; i<3; i++)
+	  rho_from_eulerian += rho_vec_from_eulerian[i]*rho_vec_from_eulerian[i];
+
+	rho_from_eulerian = sqrt(rho_from_eulerian);
+
+	unsigned b_dummy = 0;
+	mVector x_disk_edge(3);
+	mVector tangent(3);
+	mVector binormal(3);
+	mVector normal(3);
+    
+	// get the unit normal from the disk-like geometric object at this zeta
+	Global_Parameters::Warped_disk_with_boundary_pt->
+	  boundary_triad(b_dummy, zeta_from_eulerian, x_disk_edge, tangent,
+			 normal, binormal);
+    
+	// Moffat angle (minus sign accounts for the reflection of the moffat solution, which assumes
+	// the semi-infinite plate is at x>0 not x<0 as we have with this coordinate system
+	double phi_from_eulerian = atan2pi(rho_vec_from_eulerian*binormal, -rho_vec_from_eulerian*normal);
+
+	// phi_from_eulerian = atan2pi(rho_vec_from_eulerian[1], rho_vec_from_eulerian[0]);
+	// phi_from_eulerian = Analytic_Functions::reflect_angle_wrt_z_axis(phi_from_eulerian);
+
+	some_file << x[0] << " " << " " << x[1] << " " << x[2] << " "
+		  << edge_coords_at_plot.rho  - rho_from_eulerian << " "
+		  << edge_coords_at_plot.zeta - zeta_from_eulerian << " "
+		  << edge_coords_at_plot.phi  - phi_from_eulerian << std::endl;
+      }
+    }
+    some_file.close();
+  }
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+
+
+  
   //Increment counter for solutions 
   Doc_info.number()++;
   
@@ -6175,6 +6283,9 @@ int main(int argc, char* argv[])
   // get output directory
   CommandLineArgs::specify_command_line_flag("--dir", &Global_Parameters::output_directory);
 
+  // number of plot points per side in the bulk elements
+  CommandLineArgs::specify_command_line_flag("--nplot", &Global_Parameters::Nplot_for_bulk);
+  
   CommandLineArgs::specify_command_line_flag(
     "--set_initial_conditions_to_singular_solution_broadside");
   
