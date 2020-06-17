@@ -75,11 +75,9 @@ namespace oomph
     // typedefs for the functions which provide the singular solutions and
     // their derivatives
     typedef Vector<double>(*UnscaledSingSolnFctPt) (const EdgeCoordinates& rzp_coords);
-    // ###
-    /* , const bool& is_lower_disk_element); */
 
     typedef DenseMatrix<double>(*GradientOfUnscaledSingSolnFctPt)
-      (const EdgeCoordinates& rzp_coords); // ### , const bool& is_lower_disk_element);
+      (const EdgeCoordinates& rzp_coords);
 
 
     /// \short Constructor, takes a pointer to the 2D disk element and the
@@ -136,8 +134,7 @@ namespace oomph
 
     ///Function to compute unscaled version of nth unscaled version
     Vector<double> unscaled_singular_fct(const EdgeCoordinates& rzp_coords,
-					 const unsigned& n) /* ### , */
-					 /* const bool& is_lower_disk_element = false) */ const
+					 const unsigned& n) const
     {
       if(Unscaled_singular_fct_pt[n] == 0)
       {
@@ -145,13 +142,12 @@ namespace oomph
 	return empty;
       }
       
-      return Unscaled_singular_fct_pt[n](rzp_coords); // ###, is_lower_disk_element);
+      return Unscaled_singular_fct_pt[n](rzp_coords); 
     }
 
     ///Compute unscaled version of gradient of nth singular function
     DenseMatrix<double> gradient_of_unscaled_singular_fct(const EdgeCoordinates& rzp_coords,
-							  const unsigned& n) /* ### , */
-							  /* const bool& is_lower_disk_element = false) */ const
+							  const unsigned& n) const
     {
       DenseMatrix<double> grad(rzp_coords.ncoord, rzp_coords.ncoord, 0.0);
       
@@ -160,14 +156,13 @@ namespace oomph
 	return grad;
       }
       
-      return Gradient_of_unscaled_singular_fct_pt[n](rzp_coords); // ### , is_lower_disk_element);
+      return Gradient_of_unscaled_singular_fct_pt[n](rzp_coords); 
     }
 
     ///Compute scaled version of nth singular function
     Vector<double> singular_fct(const EdgeCoordinates& rzp_coords,
 				const Vector<double>& s,
-				const unsigned& n) /* ### ,		 */
-				/* const bool& is_lower_disk_element = false) */ const
+				const unsigned& n) const
     {
       // get number of unknowns in the problem; plus one because we want pressure as well
       // as the velocity components
@@ -178,7 +173,7 @@ namespace oomph
 
       // get the unscaled functions
       Vector<double> u_sing_unscaled(Dim);
-      u_sing_unscaled = unscaled_singular_fct(rzp_coords, n); // ### , is_lower_disk_element);
+      u_sing_unscaled = unscaled_singular_fct(rzp_coords, n);
 
       double amplitude = interpolated_amplitude(s, n);
       
@@ -194,11 +189,10 @@ namespace oomph
     ///Compute scaled version of gradient of nth singular function
     DenseMatrix<double> gradient_of_singular_fct(const EdgeCoordinates& rzp_coords,
 						 const Vector<double>& s,
-						 const unsigned& n) /* ### , */
-						 /* const bool& is_lower_disk_element = false) */ const
+						 const unsigned& n) const
     {
       DenseMatrix<double> grad =
-	gradient_of_unscaled_singular_fct(rzp_coords, n); // ###, is_lower_disk_element);
+	gradient_of_unscaled_singular_fct(rzp_coords, n);
       
       const unsigned N = grad.nrow();
       const unsigned M = grad.ncol();
@@ -287,7 +281,7 @@ namespace oomph
       return interpolated_c;
     }
     
-    // Override to provide the global boundary zeta for each node on the
+    // Override to provide the global boundary zeta for the nth node on the
     // edge of the disk. 
     double zeta_nodal(const unsigned &n, const unsigned &k, const unsigned &i) const
     {
@@ -317,18 +311,6 @@ namespace oomph
       //Vector of local coordinates
       Vector<double> s(this->Dim);
 
-      // QUEHACERES debug @@@@@@@@@@@@@@@@@@@@@@
-      for(unsigned j=0; j<this->nnode(); j++)
-      {
-	Vector<double> x(3,0);
-	for(unsigned i=0; i<3; i++)
-	{
-	  x[i] = this->node_pt(j)->x(i);
-	}
-	unsigned breakpoint = 0;
-      }
-      // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-      
       // Tecplot header info
       outfile << this->tecplot_zone_string(nplot);
    
@@ -337,14 +319,23 @@ namespace oomph
       for (unsigned iplot=0; iplot<num_plot_points; iplot++)
       {
 	// Get local coordinates of plot point
-	this->get_s_plot(iplot,nplot,s);
-     
+	this->get_s_plot(iplot, nplot, s);
+	
 	Vector<double> x(node_dim);
 	for(unsigned i=0; i<node_dim; i++) 
 	{
 	  x[i] = this->interpolated_x(s,i);
 	  outfile << x[i] << " ";
 	}
+
+	// now loop over the singular functions and get their
+	// interpolated amplitudes at this plot point
+	for(unsigned n=0; n<Nsingular_fct; n++)
+	{
+	  double amplitude = interpolated_amplitude(s,n);
+	  outfile << amplitude << " ";
+	}
+	
 	outfile << std::endl;
       }
    
@@ -354,8 +345,8 @@ namespace oomph
     }
 
     /// Call this to bypass the correct computation of the
-    /// residual for the ith singular function and replace it by r_c = C-ampl
-    void impose_singular_fct_amplitude(const Vector<double>& ampl, const unsigned& i)
+    /// residual for the nth singular function and replace it by r_c = C-ampl
+    void impose_singular_fct_amplitude(const unsigned& n, const Vector<double>& ampl)
     {
       // check the user has provided enough values for the whole element
       if(ampl.size() != nnode())
@@ -372,32 +363,25 @@ namespace oomph
       }
 
       // check we have enough singular functions
-      if(i >= Nsingular_fct)
+      if(n >= Nsingular_fct)
       {
 	ostringstream error_message;
 	error_message << "Error: provided amplitudes for the singular function i="
-		      << i << ", but this element only has " << Nsingular_fct
+		      << n << ", but this element only has " << Nsingular_fct
 		      << " singular functions\n";
 	
 	throw OomphLibError(error_message.str(),
 			    OOMPH_CURRENT_FUNCTION,
 			    OOMPH_EXCEPTION_LOCATION);
       }
-      
-      // make enough space (outer vector is indexed by node number, inner
-      // vector is the singular function / nodal value)
-      Imposed_amplitude.resize(nnode());
 
       for(unsigned j=0; j<nnode(); j++)
-      {
-	for(unsigned i=0; i<Nsingular_fct; i++)
-	{
-	  // pin it so that the amplitude is no longer a dof
-	  node_pt(j)->pin(i);
+      {	
+	// pin it so that the amplitude is no longer a dof
+	node_pt(j)->pin(n);
 
-	  // set its value to the imposed amplitude
-	  node_pt(j)->set_value(i, ampl[j]);
-	}
+	// set its value to the imposed amplitude
+	node_pt(j)->set_value(n, ampl[j]);	
       }      
     } 
 
@@ -414,11 +398,11 @@ namespace oomph
     } 
 
     // unpin the ith singular amplitude
-    void dont_impose_singular_fct_amplitude(const unsigned& i)
+    void dont_impose_singular_fct_amplitude(const unsigned& n)
     {
       for(unsigned j=0; j<nnode(); j++)
       {
-	  node_pt(j)->unpin_value(i);
+	  node_pt(j)->unpin_value(n);
       }
     }
     
@@ -431,10 +415,12 @@ namespace oomph
 	residuals,GeneralisedElement::Dummy_matrix, 0);
     }
 
-    // function to return whether we're imposing the amplitude or not
-    bool is_singular_fct_amplitude_imposed()
+    // function to return whether we're imposing the amplitude of the nth singular fct
+    bool is_singular_fct_amplitude_imposed(const unsigned& n)
     {
-      return Impose_singular_fct_amplitude;
+      // we're not allowing some nodes to be pinned and others unpinned at the moment,
+      // so it's enough to check the first node
+      return node_pt(0)->is_pinned(n);
     }
     
   private:
@@ -466,17 +452,9 @@ namespace oomph
       //Return the value of the jacobian
       return J_eulerian(s);
     }
-    
-    // dimensionality of this element
-    unsigned Dim;
-
-    bool Impose_singular_fct_amplitude;
-    
-    // imposed singular amplitudes for debug; indexed by node number 
-    Vector<Vector<double> > Imposed_amplitude;
 
     // compute the boundary zeta, which is the initial azimuthal angle
-    void setup_zeta_nodal(const bool& use_zeta_2pi_instead_of_0=false)
+    void setup_zeta_nodal(const bool& use_zeta_2pi_instead_of_0 = false)
     {
       // make sure we've got enough space
       Zeta.resize(nnode(), 0.0);
@@ -524,6 +502,9 @@ namespace oomph
 
     /// Number of singular functions to subtract
     unsigned Nsingular_fct;
+
+    // dimensionality of this element
+    unsigned Dim;
   };
   
   
@@ -537,7 +518,7 @@ namespace oomph
 						  std::map<Node*,Node*>& existing_duplicate_node_pt,
 						  const bool& use_zeta_2pi_instead_of_0) :
     FaceGeometry<TElement<2,NNODE_1D> >(), FaceElement(), Nsingular_fct(nsingular_fct),
-    Zeta_has_been_setup(false), Dim(1), Impose_singular_fct_amplitude(false)    
+    Zeta_has_been_setup(false), Dim(1)
   {
     // make enough space for the singular function pointers
     Unscaled_singular_fct_pt.resize(Nsingular_fct, 0);
@@ -582,11 +563,9 @@ namespace oomph
 	singular_amplitude_node_pt = new Node(n_dim, n_position_type, Nsingular_fct);
 
 	// It has the same coordinates
-	Vector<double> x(3,0); // QUEHACERES debug
 	for (unsigned i=0; i<n_dim; i++)
 	{
 	  singular_amplitude_node_pt->x(i) = original_node_pt->x(i);
-	  x[i] = original_node_pt->x(i);
 	}
 	    
 	// initialise the amplitudes to zero
@@ -691,159 +670,6 @@ namespace oomph
   //////////////////////////////////////////////////////////////////////////////
   //////////////////////////////////////////////////////////////////////////////
   //////////////////////////////////////////////////////////////////////////////
-  // ### QUEHACERES remove both the template-free and the templated classes once
-  // the line elements are working
-  
-  //============================================================================
-  // TemplateFreeScalableSingularityForNavierStokesElement defines the elements managing
-  // the singular function : it is essentially a pointer to the singular function, 
-  // its gradient and its amplitude
-  //============================================================================
-  class TemplateFreeScalableSingularityForNavierStokesElement :
-    public virtual GeneralisedElement
-  {
-  public:
-
-    typedef Vector<double>(*UnscaledSingSolnFctPt) (const Vector<double>& x,
-						    const bool& is_lower_disk_element);
-
-
-    typedef DenseMatrix<double>(*GradientOfUnscaledSingSolnFctPt)
-      (const Vector<double>& x);
-    
-    ///Constructor
-  TemplateFreeScalableSingularityForNavierStokesElement()
-    {
-      //data to store amplitude
-      add_internal_data(new Data(1));
-    }
-
-    ///Function to get pointer to unscaled version of singular function
-    UnscaledSingSolnFctPt& unscaled_singular_fct_pt()
-    {
-      return Unscaled_singular_fct_pt;
-    }
-
-    ///Function to get pointer to unscaled version of gradient of singular function
-    GradientOfUnscaledSingSolnFctPt& gradient_of_unscaled_singular_fct_pt() 
-    {
-      return Gradient_of_unscaled_singular_fct_pt;
-    }
-
-    ///Function to compute unscaled version of unscaled version
-    Vector<double> unscaled_singular_fct(const Vector<double>& x,
-					 const bool& is_lower_disk_element = false) const
-    {
-      if(Unscaled_singular_fct_pt == 0)
-      {
-	return *(new Vector<double>(x.size(), 0.0));
-      }
-      return Unscaled_singular_fct_pt(x, is_lower_disk_element);
-    }
-
-    ///Compute unscaled version of gradient of singular function
-    DenseMatrix<double> gradient_of_unscaled_singular_fct(const Vector<double>& x)
-      const
-    {
-      DenseMatrix<double> grad;
-      
-      if(Gradient_of_unscaled_singular_fct_pt == 0)
-      {
-	return grad;
-      }
-      
-      return Gradient_of_unscaled_singular_fct_pt(x);
-    }
-
-    ///Compute scaled version of singular function
-    Vector<double> singular_fct(const Vector<double>& x,
-				const bool& is_lower_disk_element = false) const
-    {
-      // get dimension of the problem; plus one because we want pressure as well
-      // as the velocity components
-      const unsigned Dim = x.size() + 1;
-
-      // storage for the scaled basis functions
-      Vector<double> scaled_singular_fct(Dim, 0.0);
-
-      // get the unscaled functions
-      Vector<double> u_sing_unscaled(Dim);
-      u_sing_unscaled = unscaled_singular_fct(x, is_lower_disk_element);
-
-      double amplitude = amplitude_of_singular_fct();
-      
-      // scale 'em
-      for(unsigned i=0; i<Dim; i++)
-      {
-	scaled_singular_fct[i] = amplitude * u_sing_unscaled[i];
-      }
-      
-      return scaled_singular_fct;
-    }
-
-    ///Compute scaled version of gradient of singular function
-    DenseMatrix<double> gradient_of_singular_fct(const Vector<double>& x) const
-    {
-      DenseMatrix<double> grad(gradient_of_unscaled_singular_fct(x));
-      
-      const unsigned n = grad.nrow();
-      const unsigned m = grad.ncol();
-      
-      for(unsigned i=0; i<n; i++)
-      {
-	for(unsigned j=0; j<m; j++)
-	{
-	  grad(i,j) *= amplitude_of_singular_fct();
-	}
-      }
-      return grad;
-    }
-
-    ///Access the amplitude of the singular function
-    double amplitude_of_singular_fct() const
-    {
-      return data_that_stores_amplitude_of_singular_fct()
-        ->value(index_of_value_that_stores_amplitude_of_singular_fct());
-    }
-
-    ///Set the amplitude of the singular function
-    void set_amplitude_of_singular_fct(const double& value)
-    {
-      data_that_stores_amplitude_of_singular_fct()
-        ->set_value(index_of_value_that_stores_amplitude_of_singular_fct(),value);
-    }
-
-    ///pin amplitude of singular function
-    void pin_amplitude_of_singular_fct()
-    {
-      data_that_stores_amplitude_of_singular_fct()
-        ->pin(index_of_value_that_stores_amplitude_of_singular_fct());
-    }
-
-    ///Pointer to data that stores the amplitude of singular function
-    Data* data_that_stores_amplitude_of_singular_fct() const
-    {
-      return internal_data_pt(0);
-    }
-
-    ///Gives the index of the amplitude value : default is 0
-    unsigned index_of_value_that_stores_amplitude_of_singular_fct() const 
-    {
-      return 0;
-    }
-      
-  private:
-
-    ///Pointer to singular function
-    UnscaledSingSolnFctPt Unscaled_singular_fct_pt;
-
-    ///Pointer to gradient of singular funcion
-    GradientOfUnscaledSingSolnFctPt Gradient_of_unscaled_singular_fct_pt;
-  };
-
-  ////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////
 
   //===========================================================================
   // QUEHACERES generic base class
@@ -1283,12 +1109,6 @@ namespace oomph
 	BrokenCopy::broken_assign("NavierStokesWithSingularityBoundaryIntegralFaceElement");
       }
 
-    /// Pointer to element that computes singular function related stuff
-    TemplateFreeScalableSingularityForNavierStokesElement*& navier_stokes_sing_el_pt()
-    { 
-      return Navier_stokes_sing_el_pt;
-    } 
- 
     /// Add the element's contribution to its residual vector
     inline void fill_in_contribution_to_residuals(Vector<double> &residuals)
     {
@@ -1378,9 +1198,6 @@ namespace oomph
       Vector<double> &residuals, DenseMatrix<double> &jacobian, 
       const unsigned& flag);
 
-    /// Pointer to element that stores the singular fcts etc.
-    TemplateFreeScalableSingularityForNavierStokesElement* Navier_stokes_sing_el_pt;
-
     /// Pointer to exact non singular fct (and its gradient) only used
     /// to validate the computation of the integral. Ignored if null 
     /// which is the default
@@ -1404,11 +1221,7 @@ namespace oomph
 							   const int& face_index,
 							   const int& boundary_id) : 
   NavierStokesWithSingularityFaceElement<ELEMENT>(bulk_el_pt, face_index, boundary_id),
-    Exact_non_singular_fct_pt(0)
-  { 
-    // Initialising the pointer to the singularity function
-    this->Navier_stokes_sing_el_pt = 0;
-  }
+    Exact_non_singular_fct_pt(0) { }
 
   ////////////////////////////////////////////////////////////////////////////
   ////////////////////////////////////////////////////////////////////////////
@@ -1501,14 +1314,18 @@ namespace oomph
       // Get gradient of scaled/unscaled singular velocity functions
       DenseMatrix<double> dudx_sing(Dim, Dim);
       DenseMatrix<double> dudx_sing_unscaled(Dim, Dim);
-      dudx_sing          = Navier_stokes_sing_el_pt->gradient_of_singular_fct(x);
-      dudx_sing_unscaled = Navier_stokes_sing_el_pt->gradient_of_unscaled_singular_fct(x);
+
+      // ### UPDATE! don't delete entirely
+      /* dudx_sing          = Navier_stokes_sing_el_pt->gradient_of_singular_fct(x); */
+      /* dudx_sing_unscaled = Navier_stokes_sing_el_pt->gradient_of_unscaled_singular_fct(x); */
       
       // Get the values of the singular functions at our current location
       Vector<double> u_sing(Dim+1);
       Vector<double> u_sing_unscaled(Dim+1);
-      u_sing          = Navier_stokes_sing_el_pt->singular_fct(x);
-      u_sing_unscaled = Navier_stokes_sing_el_pt->unscaled_singular_fct(x);
+
+      // ### UPDATE! don't delete entirely
+      /* u_sing          = Navier_stokes_sing_el_pt->singular_fct(x); */
+      /* u_sing_unscaled = Navier_stokes_sing_el_pt->unscaled_singular_fct(x); */
 
       // get singular pressure
       double p_sing          = u_sing[this->P_index_nst];
@@ -1601,160 +1418,6 @@ namespace oomph
   ////////////////////////////////////////////////////////////////////////
   ////////////////////////////////////////////////////////////////////////
   ////////////////////////////////////////////////////////////////////////
-
-  
-  //======================================================================
-  /// \short Class for elements that handle singularities
-  /// in the Navier-Stokes equations. Templated by bulk element within
-  /// which we impose regularity on the FE solution by insisting that
-  /// the slope of the solution at a specified local coordinate, and in
-  /// in a specified direction is zero. Nodal values of that element
-  /// become external data for the current element whose equation
-  /// (zero slope of the FE solution, as discussed) determines the 
-  /// amplitude of the singular function.
-  //======================================================================
-  template <class BULK_ELEMENT> 
-    class ScalableSingularityForNavierStokesElement : 
-    public virtual TemplateFreeScalableSingularityForNavierStokesElement
-  {
-   
-  public:
-   
-    /// Constructor
-  ScalableSingularityForNavierStokesElement() :
-    Bulk_element_pt(0), Face_element_mesh_pt(0), 
-      Impose_singular_fct_amplitude(false)
-      { }
-    
-    /// Set pointer to mesh containing the FaceElements (and flush
-    /// the previous ones first!)
-    void set_mesh_of_face_elements(Mesh* const& face_mesh_pt)
-    {
-      Face_element_mesh_pt = face_mesh_pt;
-      flush_external_data();
-      
-      unsigned nel = face_mesh_pt->nelement();
-      
-      oomph_info << "number of face elements used to compute C: "
-		 << nel << std::endl;
-      
-      for (unsigned e=0; e<nel; e++)
-      {	
-	FiniteElement* el_pt =
-	  dynamic_cast<NavierStokesWithSingularityBoundaryIntegralFaceElement<BULK_ELEMENT>*>(
-	    face_mesh_pt->element_pt(e))->bulk_element_pt();
-	
-	unsigned nnod = el_pt->nnode();
-	
-	for (unsigned j=0; j<nnod; j++)
-	{
-	  add_external_data(el_pt->node_pt(j));
-	}
-      }
-    }
-
-    /// Call this to bypass the correct computation of the
-    /// residual and replace it by r_c = C-ampl
-    void impose_singular_fct_amplitude(double const& ampl)
-    {
-      Impose_singular_fct_amplitude = true;
-      Imposed_amplitude = ampl;
-    } 
-
-    /// Reset to compute r_c properly via integral
-    void dont_impose_singular_fct_amplitude()
-    {
-      Impose_singular_fct_amplitude = false;
-    } 
-
-    /// Add the element's contribution to its residual vector
-    inline void fill_in_contribution_to_residuals(Vector<double> &residuals)
-    {
-      //Call the generic residuals function with flag set to 0
-      //using a dummy matrix argument
-      fill_in_generic_residual_contribution_navier_stokes_sing_fct(
-	residuals,GeneralisedElement::Dummy_matrix, 0);
-    }
-
-    // function to return whether we're imposing the amplitude or not
-    bool is_singular_fct_amplitude_imposed()
-    {
-      return Impose_singular_fct_amplitude;
-    }
-      
-  private:
-
-    /// Add the element's contribution to its residual vector
-    inline void fill_in_generic_residual_contribution_navier_stokes_sing_fct(
-      Vector<double>& residuals,
-      DenseMatrix<double>& jacobian,
-      const unsigned& flag)
-    {
-      
-      if (ndof() == 0)
-      {
-	return;
-      }
-
-#ifdef PARANOID
-      // hierher paranoid check null pointers and zero sized vectors    
-#endif
-      
-      // Get eqn number of residual that determines C
-      int local_eqn_c = internal_local_eqn(0, 0);
-      
-      if (local_eqn_c >= 0)
-      {
-	// Bypass actual computation?
-	if (Impose_singular_fct_amplitude)
-	{
-	  residuals[local_eqn_c] = this->amplitude_of_singular_fct() - Imposed_amplitude;
-	}	
-	// Do it properly
-	else
-	{
-	  unsigned n_element = Face_element_mesh_pt->nelement();
-	  for(unsigned e = 0; e<n_element; e++)
-	  {
-	    // get a pointer to this boundary face element
-	    NavierStokesWithSingularityBoundaryIntegralFaceElement
-	      <BULK_ELEMENT>* face_elem_pt =
-	      dynamic_cast<NavierStokesWithSingularityBoundaryIntegralFaceElement
-	      <BULK_ELEMENT>*>( Face_element_mesh_pt->finite_element_pt(e) );
-
-	    // add it to the r_c residual equation
-	    residuals[local_eqn_c] += face_elem_pt->get_contribution_integral();
-	  }	  
-	}
-      }
-    }
-
-  private:  
-  
-    /// Pointer to bulk element where FE solution is regularised
-    BULK_ELEMENT* Bulk_element_pt;
-
-    /// Pointer to mesh of face elements that contribute to the surface
-    /// integral that determines the amplitude of the unkown function
-    Mesh* Face_element_mesh_pt;
-  
-    /// Imposed amplitude (only used if Impose_singular_fct_amplitude=true)
-    double Imposed_amplitude;  
-
-    /// \short Boolean to bypass the correct computation of the
-    /// residual and replace it by r_c = C-ampl
-    bool Impose_singular_fct_amplitude;
-
-    // QUEHACERES for debug, contribution to the r_c integral from each boundary
-    Vector<double> Integral_contribution_from_boundary;
-  };
-
-
-
-
-  ////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////
   
   //======================================================================
   /// \short A class for elements that imposes Dirichlet boundary 
@@ -1798,14 +1461,6 @@ namespace oomph
 	{
 	  BrokenCopy::broken_assign("NavierStokesWithSingularityBCFaceElement");
 	}
-
-      // ###
-      /* /// Pointer to element that handles the ith singular fct */
-      /* ScalableSingularityForNavierStokesElement<ELEMENT>* */
-      /* 	navier_stokes_sing_el_pt(const unsigned& i) const */
-      /* { */
-      /* 	return Navier_stokes_sing_el_pt[i]; */
-      /* } */
 
       // ### <- but keep around until we've sorted out the external data stuff
       
@@ -2131,11 +1786,6 @@ namespace oomph
       /// values of the amplitudes of the singular functions
       Vector<unsigned> C_external_data_value_index;
 
-      // ###
-      /* /// \short Vector of pointers to elements that store pointers to singular fcts */
-      /* /// (and their gradients etc.) as well as amplitudes */
-      /* Vector<ScalableSingularityForNavierStokesElement<ELEMENT>*> Navier_stokes_sing_el_pt; */
-      
     }; // end of NavierStokesWithSingularityBCFaceElement class 
 
   //////////////////////////////////////////////////////////////////////
@@ -2216,7 +1866,6 @@ namespace oomph
       double W = w*J;
        
       //Calculate stuff at integration point
-      // ### /* Vector<double> interpolated_x(Dim, 0.0); */
       Vector<double> u_fe(Dim, 0.0);
       Vector<double> u_bc(Dim, 0.0);	
       Vector<double> lambda(Dim, 0.0);
@@ -2243,10 +1892,6 @@ namespace oomph
 
 	  // get the interpolated Lagrange multipliers
 	  lambda[i] += this->nodal_value(l, lambda_index) * psi[l];
-
-	  // ###
-	  /* // get the interpolated position */
-	  /* interpolated_x[i] += this->nodal_position(l,i) * psi[l];	     */
 	}
 	  
       }
@@ -2270,43 +1915,21 @@ namespace oomph
        // Stuff related to singular fct
       Vector<double> u_sing(Dim+1, 0.0);
       
-      Vector<Vector<double> > u_sing_unscaled(this->Nsingular_fct);
+      Vector<Vector<double> > u_sing_unscaled(this->Nsingular_fct, Vector<double>(1,0));
       
       // check we've actually got a singular line element pointer	
       if (sing_el_pt != 0)
       {
 	u_sing = sing_el_pt->total_singular_contribution(edge_coords_at_knot,
-							 s_singular_el);	
-      }
-      
-      // loop over the singular functions
-      for(unsigned ising=0; ising<this->Nsingular_fct; ising++)
-      {
-	// check we've actually got a singular line element pointer	
-	if (sing_el_pt != 0)
-	  // ###
-	  /* (Navier_stokes_sing_el_pt[ising] != 0) */
+							 s_singular_el);
+	// loop over the singular functions
+	for(unsigned ising=0; ising<this->Nsingular_fct; ising++)
 	{
-	  // ###
-	  /* // get the scaled and unscaled versions of this singular function */
-	  /* Vector<double> u_sing_i, u_sing_unscaled_i; */
-          /* u_sing_i = Navier_stokes_sing_el_pt[ising]->singular_fct(interpolated_x); */
-	  
 	  u_sing_unscaled[ising] = sing_el_pt->unscaled_singular_fct(edge_coords_at_knot,
-								     ising);
-	  /* ### .resize(Dim+1); */
-
-	  // ###
-	  /* u_sing_unscaled[ising] = Navier_stokes_sing_el_pt[ising]->unscaled_singular_fct(interpolated_x); */
-
-	  // ###
-	  /* // add them onto the total */
-	  /* for(unsigned i=0; i<Dim; i++) */
-	  /* { */
-	  /*   u_sing[i] += u_sing_i[i];	   */
-	  /* } */
+								     ising);	 
 	}
       }
+
       //Now add to the appropriate equations
 
       // number of local equation which determines the singular amplitude
@@ -2626,13 +2249,6 @@ namespace oomph
 	this->write_tecplot_zone_footer(outfile, nplot);    
       }
 
-      // ### QUEHACERES delete once line mesh working
-      /* /// Pointer to element that handles singular fct */
-      /* ScalableSingularityForNavierStokesElement<ELEMENT>* navier_stokes_sing_el_pt() const */
-      /* { */
-      /* 	return Navier_stokes_sing_el_pt; */
-      /* } */
-
       // ### <- but keep around until we've sorted out the external data stuff
       
       /* /// \short Set pointer to element that stores singular fcts. Data that stores */
@@ -2683,10 +2299,6 @@ namespace oomph
 
       /// Vector of pointers to orig nodes
       Vector<Node*> Orig_node_pt;
-
-      // ### QUEHACERES delete once line mesh working
-      /* /// Pointer to element that handles singular fct */
-      /* Vector<ScalableSingularityForNavierStokesElement<ELEMENT>*> Navier_stokes_sing_el_pt; */
 
       /// \short Index of external Data that stores the value of the amplitude of
       /// the singular function
@@ -2916,10 +2528,6 @@ namespace oomph
       //Premultiply the weights and the Jacobian
       double W = w*J;
 
-      // ###
-      /* //Calculate stuff at integration point */
-      /* Vector<double> interpolated_x(Dim, 0.0); */
-      
       Vector<double> u_left(Dim, 0.0);
       Vector<double> u_right(Dim, 0.0);
       Vector<double> lambda(Dim, 0.0);
@@ -2969,9 +2577,6 @@ namespace oomph
 	  u_left[i]  += this->nodal_value(l,i) * psi[l];
 	  u_right[i] += Orig_node_pt[l]->value(i) * psi[l];
 	  lambda[i]  += this->nodal_value(l, lambda_index) * psi[l];
-
-	  // ###
-	  /* interpolated_x[i] += this->nodal_position(l,i) * psi[l]; */
 	}
       }
       
@@ -3026,52 +2631,18 @@ namespace oomph
 	// check we've actually got a singular line element pointer
 	if (sing_el_pt != 0)
 	{
-	  // ###
-	  /* // get the current scaled singular function */
-	  /* Vector<double> u_sing = */
-	  /*   sing_el_pt->singular_fct(edge_coords_at_knot, s_singular_el, ising);	   */
-	  /* // ### */
-	  /* /\* Navier_stokes_sing_el_pt[ising]->singular_fct(interpolated_x); *\/ */
-
-	  /* // get the current scaled singular gradient */
-	  /* DenseMatrix<double> dudx_sing = */
-	  /*   sing_el_pt->gradient_of_singular_fct(edge_coords_at_knot, */
-	  /* 					 s_singular_el, */
-	  /* 					 ising); */
-	  /* // ### */
-	  /* /\* Navier_stokes_sing_el_pt[ising]->gradient_of_singular_fct(interpolated_x); *\/ */
-	
-	  /* // now add to the total */
-	  /* for(unsigned i=0; i<Dim; i++) */
-	  /* { */
-	  /*   u_sing_total[i] += u_sing[i]; */
-
-	  /*   for(unsigned j=0; j<Dim; j++) */
-	  /*   { */
-	  /*     dudx_sing_total(i,j) += dudx_sing(i,j); */
-	  /*   } */
-	  /* } */
-	
 	  // unscaled stuff
 	  // ----------------
 	  // unscaled singular function 
 	  u_sing_unscaled[ising] =	    
 	    sing_el_pt->unscaled_singular_fct(edge_coords_at_knot, ising);	  
-	  // ###
-	  /* Navier_stokes_sing_el_pt[ising]->unscaled_singular_fct(interpolated_x); */
-
+	 
 	  // unscaled singular gradient 
 	  dudx_sing_unscaled[ising] =
 	    sing_el_pt->gradient_of_unscaled_singular_fct(edge_coords_at_knot, ising);
-	  // ###
-	  /* Navier_stokes_sing_el_pt[ising]->gradient_of_unscaled_singular_fct(interpolated_x); */
-
+	 
 	  // unscaled singular pressure 
 	  p_sing_unscaled[ising] = u_sing_unscaled[ising][this->P_index_nst];
-
-	  // ###
-	  /* // total singular pressure */
-	  /* p_sing_total += u_sing[this->P_index_nst]; */
 	}
       }      
 
@@ -3315,409 +2886,6 @@ namespace oomph
   ////////////////////////////////////////////////////////////////////////////
   ////////////////////////////////////////////////////////////////////////////
 
-  //======================================================================
-  /// \short A class for elements that allow the imposition of an 
-  /// applied traction on the boundaries of Navier-Stokes elements.
-  /// The element geometry is obtained from the FaceGeometry<ELEMENT> 
-  /// policy class.
-  //======================================================================
-  template <class ELEMENT>
-    class NavierStokesWithSingularityTractionElement :
-    public NavierStokesWithSingularityFaceElement<ELEMENT>
-    {
- 
-    public:
-
-      /// \short Function pointer to the prescribed-traction function fct(x,f(x))
-      typedef void (*NavierStokesPrescribedTractionFctPt)
-	(const Vector<double>& x, const Vector<double>& outer_unit_normal, Vector<double>& traction);
-
-      /// \short Constructor, takes the pointer to the "bulk" element and the 
-      /// index of the face to which the element is attached.
-      NavierStokesWithSingularityTractionElement(FiniteElement* const &bulk_el_pt, 
-						 const int& face_index,
-						 const unsigned& boundary_id=0); 
-
-      ///\short  Broken empty constructor
-      NavierStokesWithSingularityTractionElement()
-      {
-	throw OomphLibError(
-	  "Don't call empty constructor for NavierStokesWithSingularityTractionElement",
-	  OOMPH_CURRENT_FUNCTION,
-	  OOMPH_EXCEPTION_LOCATION);
-      }
-
-      /// Broken copy constructor
-      NavierStokesWithSingularityTractionElement(const NavierStokesWithSingularityTractionElement& dummy) 
-      { 
-	BrokenCopy::broken_copy("NavierStokesWithSingularityTractionElement");
-      } 
- 
-      /// Broken assignment operator
-      void operator=(const NavierStokesWithSingularityTractionElement&) 
-	{
-	  BrokenCopy::broken_assign("NavierStokesWithSingularityTractionElement");
-	}
-
-      /// Access function for the prescribed-flux function pointer
-      NavierStokesPrescribedTractionFctPt& traction_fct_pt()
-      {
-	return Traction_fct_pt;
-      }
-
-      /// Add the element's contribution to its residual vector
-      inline void fill_in_contribution_to_residuals(Vector<double> &residuals)
-      {
-	//Call the generic residuals function with flag set to 0
-	//using a dummy matrix argument
-	fill_in_generic_residual_contribution_navier_stokes_traction(
-	  residuals,GeneralisedElement::Dummy_matrix,0);
-      }
-
-#ifndef USE_FD_JACOBIAN      
-      /// \short Add the element's contribution to its residual vector and its
-      /// Jacobian matrix
-      inline void fill_in_contribution_to_jacobian(Vector<double> &residuals,
-                                               DenseMatrix<double> &jacobian)
-       {
-        //Call the generic routine with the flag set to 1
-        fill_in_generic_residual_contribution_navier_stokes_traction(residuals,jacobian,1);
-       }
-#endif
-      
-      /// Output function
-      void output(std::ostream &outfile)
-      {
-	const unsigned n_plot = 5;
-	output(outfile, n_plot);
-      }
-
-      // QUEHACERES this needs correcting for dimensions
-      /// \short Output function
-      void output(std::ostream& outfile, const unsigned& nplot)
-      {
-	// shorthand
-	const unsigned Dim = this->Dim;
-	
-	// Dimension of element 
-	unsigned el_dim = this->dim();
-
-	//Vector of local coordinates
-	Vector<double> s(el_dim);
-   
-	// Tecplot header info
-	outfile << this->tecplot_zone_string(nplot);
-   
-	// Loop over plot points
-	unsigned num_plot_points = this->nplot_points(nplot);
-	for (unsigned iplot=0; iplot<num_plot_points; iplot++)
-	{     
-	  // Get local coordinates of plot point
-	  this->get_s_plot(iplot, nplot, s);
-     
-	  Vector<double> x(el_dim+1);
-	  for(unsigned i=0; i<el_dim+1; i++) 
-	  {
-	    x[i] = this->interpolated_x(s,i);
-	    outfile << x[i] << " ";
-	  }
-
-	  // Compute outer unit normal at the specified local coordinate
-	  Vector<double> unit_normal(Dim);
-	  this->outer_unit_normal(s, unit_normal);
-     
-	  Vector<double> s_bulk(Dim);	  
-	  s_bulk = this->local_coordinate_in_bulk(s);
-
-	  // QUEHACERES sort this out
-	  
-	  /* Vector<double> fe_flux(Dim); */
-	  /* bulk_el_pt->get_traction(s_bulk, fe_flux);      */
-     
-	  /* // Get gradient of singular fct (incl. amplitude) */
-	  /* DenseMatrix<double> dudx_sing(Dim, Dim); */
-	  
-	  /* if (Navier_stokes_sing_el_pt != 0) */
-	  /* { */
-	  /*   dudx_sing = Navier_stokes_sing_el_pt->gradient_of_singular_fct(x); */
-	  /* } */
- 
-	  /* // Get actual traction  */
-	  /* Vector<double> actual_traction = 0.0; */
-	  /* for (unsigned i=0; i<Dim; i++) */
-	  /* { */
-	  /*   actual_flux += unit_normal[i] * (fe_flux[i] + dudx_sing[i]); */
-	  /* } */
-     
-	  /* double imposed_flux=0.0; */
-	  /* get_traction(x, imposed_flux); */
-	  /* outfile << imposed_flux << " "  */
-	  /* 	  << actual_flux << std::endl;    */
-	}
-   
-	// Write tecplot footer (e.g. FE connectivity lists)
-	this->write_tecplot_zone_footer(outfile, nplot);
-      }
-      
-      /// \short Set pointer to element that stores singular fct. Data that stores
-      /// the amplitude of the singular fct and its index is retrieved from
-      /// that element so the Data can be used as external Data in this
-      /// element.
-      void set_navier_stokes_sing_el_pt(ScalableSingularityForNavierStokesElement<ELEMENT>* 
-					navier_stokes_sing_el_pt) 
-      {
-	Navier_stokes_sing_el_pt = navier_stokes_sing_el_pt;
-	
-	C_external_data_index =
-	  add_external_data( navier_stokes_sing_el_pt->data_that_stores_amplitude_of_singular_fct() );
-	C_external_data_value_index =
-	  navier_stokes_sing_el_pt->index_of_value_that_stores_amplitude_of_singular_fct();
-      } 
-
-      /// Function to calculate the prescribed traction at a given spatial
-      /// position
-      void get_traction(const Vector<double>& x,
-			const Vector<double>& outer_unit_normal,
-			Vector<double>& traction)
-      {
-	//If the function pointer is zero return zero
-	if(Traction_fct_pt == 0)
-	{
-	  traction = *(new Vector<double>(this->Dim, 0.0));
-	}
-	//Otherwise call the function
-	else
-	{
-	  (*Traction_fct_pt)(x, outer_unit_normal, traction);
-	}
-      }
- 
-      /// Pointer to element that handles singular fct
-      ScalableSingularityForNavierStokesElement<ELEMENT>* navier_stokes_sing_el_pt() const
-      {
-	return Navier_stokes_sing_el_pt;
-      }
- 
-      ELEMENT* bulk_elem_pt()
-      {
-	return Bulk_elem_pt;
-      }
-      
-    private:
-
-      /// \short Add the element's contribution to its residual vector.
-      /// flag=1(or 0): do (or don't) compute the contribution to the
-      /// Jacobian as well. 
-      void fill_in_generic_residual_contribution_navier_stokes_traction(
-	Vector<double>& residuals, DenseMatrix<double>& jacobian, 
-	const unsigned& flag);
-  
-      /// Function pointer to the (global) prescribed-flux function
-      NavierStokesPrescribedTractionFctPt Traction_fct_pt;
- 
-      /// \short Index of external Data that stores the value of the amplitude of
-      /// the singular function
-      unsigned C_external_data_index;
- 
-      /// \short Index of value (within external Data) that stores the
-      /// value of the amplitude of the singular function
-      unsigned C_external_data_value_index;
- 
-      /// \short Pointer to element that stores pointer to singular fct 
-      /// (and its gradients etc.) as well as amplitude
-      ScalableSingularityForNavierStokesElement<ELEMENT>* Navier_stokes_sing_el_pt;
-
-      // pointer to the bulk element this face element is attached to
-      ELEMENT* Bulk_elem_pt;
-    }; 
-
-  //////////////////////////////////////////////////////////////////////
-  //////////////////////////////////////////////////////////////////////
-  //////////////////////////////////////////////////////////////////////
-
-
-
-  //===========================================================================
-  /// Constructor, takes the pointer to the "bulk" element, the 
-  /// index of the fixed local coordinate and its value represented
-  /// by an integer (+/- 1), indicating that the face is located
-  /// at the max. or min. value of the "fixed" local coordinate
-  /// in the bulk element.
-  //===========================================================================
-  template <class ELEMENT>
-    NavierStokesWithSingularityTractionElement<ELEMENT>::
-    NavierStokesWithSingularityTractionElement(FiniteElement* const &bulk_el_pt, 
-					       const int &face_index,
-					       const unsigned& boundary_id) : 
-  NavierStokesWithSingularityFaceElement<ELEMENT>(bulk_el_pt, face_index, boundary_id),
-    Navier_stokes_sing_el_pt(0), Traction_fct_pt(0)
-  {     
-    // set the bulk element pointer
-    Bulk_elem_pt = dynamic_cast<ELEMENT*>(bulk_el_pt);
-  }
-
-
-  //===========================================================================
-  /// Compute the element's residual vector and the (zero) Jacobian matrix.
-  //===========================================================================
-  template <class ELEMENT>
-    void NavierStokesWithSingularityTractionElement<ELEMENT>::
-    fill_in_generic_residual_contribution_navier_stokes_traction(
-      Vector<double> &residuals, DenseMatrix<double> &jacobian, 
-      const unsigned& flag)
-  {
-    /* oomph_info  */
-    /*  << "In NavierStokesWithSingularityTractionElement:: ...residual... Navier_stokes_sing_el_pt = "  */
-    /*  << Navier_stokes_sing_el_pt << " ndof  = " << ndof() << std::endl; */
-
-    if (flag == 1) 
-    {
-      oomph_info << "Never get here -- include derivs w.r.t. C\n";
-      abort();
-    }
-
-    // shorthand
-    const unsigned Dim = this->Dim;
-    
-    //Find out how many nodes there are
-    const unsigned n_node = this->nnode();
-  
-    //Set up memory for the shape and test functions
-    Shape psif(n_node), testf(n_node);
- 
-    //Set the value of Nintpt
-    const unsigned n_intpt = this->integral_pt()->nweight();
- 
-    //Set the Vector to hold local coordinates
-    Vector<double> s(Dim-1);
- 
-    //Integers to hold the local equation and unknown numbers
-    int local_eqn = 0;
-
-    //Loop over the integration points
-    //--------------------------------
-    for(unsigned ipt=0; ipt<n_intpt; ipt++)
-    {
-      //Assign values of s
-      for(unsigned i=0; i<(Dim-1); i++)
-      {
-	s[i] = this->integral_pt()->knot(ipt, i);
-      }
-   
-      //Get the integral weight
-      double w = this->integral_pt()->weight(ipt);
-   
-      //Find the shape and test functions and return the Jacobian
-      //of the mapping
-      double J = this->shape_and_test(s, psif, testf);
-   
-      //Premultiply the weights and the Jacobian
-      double W = w*J;
-   
-      //Need to find position to feed into traction function, initialise to zero
-      Vector<double> interpolated_x(Dim, 0.0);
-   
-      //Calculate coords
-      for(unsigned l=0; l<n_node; l++) 
-      {
-	//Loop over velocity components
-	for(unsigned i=0; i<Dim; i++)
-	{
-	  interpolated_x[i] += this->nodal_position(l,i) * psif[l];
-	}
-      }
-   
-      // Get gradient of singular fct (incl. amplitude)
-      DenseMatrix<double> dudx_sing(Dim, Dim, 0.0);
-      DenseMatrix<double> strain_rate_sing(Dim, Dim, 0.0);
-      
-      // Get the values of the singular functions at our current location
-      Vector<double> u_sing(Dim+1, 0.0);
-      
-      if (Navier_stokes_sing_el_pt != 0)
-      {
-	dudx_sing = Navier_stokes_sing_el_pt->gradient_of_singular_fct(interpolated_x);
-	u_sing    = Navier_stokes_sing_el_pt->singular_fct(interpolated_x);
-
-	// compute the singular contribution to the strain-rate
-	for (unsigned i=0; i<Dim; i++)
-	{
-	  for(unsigned j=0; j<Dim; j++)
-	  {
-	    strain_rate_sing(i,j) = 0.5*(dudx_sing(i,j) + dudx_sing(j,i));
-	  }
-	}
-      }
-
-      // get singular pressure (singular function returns [u,v,p] )
-      double p_sing = u_sing[Dim];
-	
-      // Compute outer unit normal at the specified local coordinate
-      Vector<double> unit_normal(Dim);
-      this->outer_unit_normal(s, unit_normal);
-
-      ELEMENT* bulk_elem_pt = dynamic_cast<ELEMENT*>(this->bulk_element_pt());
-      
-      // stress associated with the singular fct
-      DenseMatrix<double> stress_sing(Dim, Dim, 0.0);
-
-      if (Navier_stokes_sing_el_pt != 0)
-      {
-	stress_sing = (*bulk_elem_pt->stress_fct_pt())(strain_rate_sing, p_sing);
-      }
-      // Get traction associated with singular fct
-      Vector<double> traction_sing(Dim, 0.0);
-
-      for (unsigned i=0; i<Dim; i++)
-      {
-      	for(unsigned j=0; j<Dim; j++)
-      	{
-      	  // t_i = \\tau_{ij}n_j
-      	  traction_sing[i] += stress_sing(i,j) * unit_normal[j];
-      	}
-      }
-
-      //Get the imposed traction
-      Vector<double> traction_imposed(Dim, 0.0);
-      get_traction(interpolated_x, unit_normal, traction_imposed);
-
-      Vector<double> traction_fe(Dim, 0.0);
-      for(unsigned i=0; i<Dim; i++)
-      {
-	// Subtract off the traction from the singular fct
-	traction_fe[i] = traction_imposed[i] - traction_sing[i];
-      }
-      
-      //Now add to the appropriate (bulk) equations
-   
-      //Loop over the test functions
-      for(unsigned l=0; l<n_node; l++)
-      {
-	// loop over traction components
-	for(unsigned i=0; i<Dim; i++)
-	{
-	  local_eqn = this->nodal_local_eqn(l, i);
-	
-	  /*IF it's not a boundary condition*/
-	  if(local_eqn >= 0)
-	  {
-	    //Add the prescribed traction terms	  
-	    residuals[local_eqn] += traction_fe[i] * testf[l]*W;
-	  
-	    // Imposed traction doesn't depend upon the solution, 
-	    // --> the Jacobian is always zero, so no Jacobian
-	    // terms are required
-	  }
-	}
-      }
-    }
-  }
-
-  
-  ////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////
-
   // hierher really need to tidy this up! Should only need one class 
   // for T and Q
   //
@@ -3833,9 +3001,8 @@ namespace oomph
       return Stress_fct_pt;
     }
     
-    /// Constructor                            // ###
-  TNavierStokesElementWithSingularity() : /* Nsingular_fct(0), */ Exact_non_singular_fct_pt(0),
-      /* ### Is_lower_disk_element(false), */ Nplot(0)
+    /// Constructor                            
+  TNavierStokesElementWithSingularity() : Exact_non_singular_fct_pt(0), Nplot(0)
     {   
     }
    
@@ -3880,7 +3047,6 @@ namespace oomph
       std::pair<GeomObject*, Vector<double> > line_elem_and_local_coord = 
 	this->line_element_and_local_coordinate_at_plot_point(iplot);
 
-      // QUEHACERES avoid the hard coded template arg here
       // cast the GeomObject to a singular line element      
       ScalableSingularityForNavierStokesLineElement<NNODE_1D>* sing_el_pt =
 	dynamic_cast<ScalableSingularityForNavierStokesLineElement<NNODE_1D>*>
@@ -3897,27 +3063,18 @@ namespace oomph
       
 	for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
 	{
-	  // ###
-	  /* // check if we're subtracting the singularity or not */
-	  /* if (Navier_stokes_sing_el_pt[ising] != 0)  */
-	  /* { */
-	    // singular part of the solution
-	    Vector<double> u_sing = sing_el_pt->singular_fct(edge_coords_at_plot,
-							     s_singular_el,
-							     ising);
-
-	    // ###
-	    /* // get singular part */
-	    /* u_sing = Navier_stokes_sing_el_pt[ising]->singular_fct(x, Is_lower_disk_element); */
-
-	    // add singular part of the solution to the FE part to give the total
-	    // computed solution
-	    for(unsigned i=0; i<DIM+1; i++)
-	    {
-	      u_fe[i] += u_sing[i];
-	    }
-	  // ###
-	  /* } */
+	  // singular part of the solution
+	  Vector<double> u_sing = sing_el_pt->singular_fct(edge_coords_at_plot,
+							   s_singular_el,
+							   ising);
+	    
+	  // add singular part of the solution to the FE part to give the total
+	  // computed solution
+	  for(unsigned i=0; i<DIM+1; i++)
+	  {
+	    u_fe[i] += u_sing[i];
+	  }
+	  
 	}
       }
       return u_fe;
@@ -3978,15 +3135,6 @@ namespace oomph
       // output the singular bits
       // ==========================================
 
-      // ###
-      /* // just output zeros if there are no singular functions so the oomph-convert */
-      /* // script doesn't die when the number of columns isn't the same for all elements */
-      /* if(Nsingular_fct == 0) */
-      /* { */
-      /* 	outfile << "0 0 0 0" << std::endl; */
-      /* 	return; */
-      /* } */
-
       // get the line element and local coordinate which corresponds to the
       // singular amplitude for this knot
       std::pair<GeomObject*, Vector<double> > line_elem_and_local_coord = 
@@ -4019,18 +3167,6 @@ namespace oomph
 							 s_singular_el,
 							 ising);
 
-	  // ### 
-	  /* (DIM+1, 0.0); */
-
-	
-	// ###
-	/* // check we've got a singular function */
-	/* if (Navier_stokes_sing_el_pt[ising] != 0)  */
-	/* { */	
-	  /* u_sing = Navier_stokes_sing_el_pt[ising]-> */
-	  /*   singular_fct(x, Is_lower_disk_element);  */
-	/* } */
-	
 	for(unsigned i=0; i<DIM+1; i++)
 	{
 	  outfile << u_sing[i] << " ";
@@ -4128,35 +3264,6 @@ namespace oomph
       this->write_tecplot_zone_footer(outfile, nplot);   
     }
     
-    // QUEHACERES delete once line mesh working
-    // ###
-    
-    /* /// Pointer to element that stores ith singular fct */
-    /* TemplateFreeScalableSingularityForNavierStokesElement*& navier_stokes_sing_el_pt(unsigned i) */
-    /* { */
-    /*   return Navier_stokes_sing_el_pt[i]; */
-    /* } */
-
-    /* void add_singular_fct_pt(TemplateFreeScalableSingularityForNavierStokesElement* new_sing_el_pt) */
-    /* { */
-    /*   // add this pointer to the list */
-    /*   Navier_stokes_sing_el_pt.push_back(new_sing_el_pt); */
-
-    /*   // increment the counter of the number of singular functions */
-    /*   Nsingular_fct++; */
-    /* } */
-
-    /* unsigned nsingular_fct() const */
-    /* { */
-    /*   return Nsingular_fct; */
-    /* } */
-    
-    // set the state of this element
-    void set_lower_disk_element(const bool& is_lower_disk_element)
-    {
-      Is_lower_disk_element = is_lower_disk_element;
-    }
-
     // set the edge coordinates of each plot point
     void set_edge_coordinates_at_plot_point(const Vector<EdgeCoordinates>& coords)
     {
@@ -4261,19 +3368,11 @@ namespace oomph
     
   private:
 
-    // ###
-    /* /// Number of singular functions which compose the total solution */
-    /* unsigned Nsingular_fct; */
-
     /// \short Number of plot points - this needs isn't a free choice at point where
     /// we want to output, because we need to have pre-computed the (\rho,\zeta,\phi)
     /// coordinates of each plot point, so this number is set when
     /// set_line_element_and_local_coordinate_at_plot_point() is called
     unsigned Nplot;
-
-    // ###
-    /* /// Pointers to elements that stores singular fcts */
-    /* Vector<TemplateFreeScalableSingularityForNavierStokesElement*> Navier_stokes_sing_el_pt; */
 
     /// Pointer to exact non-singular fct (only for post-processing!)
     ExactNonSingularFctPt Exact_non_singular_fct_pt;
@@ -4292,10 +3391,10 @@ namespace oomph
     Vector<std::pair<GeomObject*, Vector<double> > >
       Line_element_and_local_coordinate_at_plot_point;
 
-    /// \short Flag to keep track of whether this element sits on the lower
-    /// side of the disk; used to distinguish elements with nodes on the plate,
-    /// in order to get the pressure jump right in the output functions
-    bool Is_lower_disk_element;
+    /* /// \short Flag to keep track of whether this element sits on the lower */
+    /* /// side of the disk; used to distinguish elements with nodes on the plate, */
+    /* /// in order to get the pressure jump right in the output functions */
+    /* bool Is_lower_disk_element; */
   };
 
 
