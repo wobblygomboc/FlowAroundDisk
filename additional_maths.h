@@ -246,6 +246,7 @@ mVector(const Vector<double>& v) : Vector<double>(v.size(), 0)
 ///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
 
+
 /// \short Class which implements a mathematical matrix with standard operations
 /// such as matrix and vector multiplication
 class TransformationMatrix : public DenseDoubleMatrix
@@ -424,5 +425,58 @@ TransformationMatrix(const TransformationMatrix& M)
   }
 };
 
+namespace Analytic_Functions
+{ 
+  // secant, for mathematica output
+  double Sec(const double& theta)
+  {
+    return 1.0/cos(theta);
+  }
+
+  double delta(const unsigned& i, const unsigned& j)
+  {
+    return static_cast<double>(i == j);
+  }
+
+  // function to map any angle (+ve or -ve) to [0,2pi)
+  double map_angle_to_range_0_to_2pi(const double& signed_angle)
+  {
+    // shorthand
+    const double two_pi = 2.0 * MathematicalConstants::Pi;
+
+    // effectively implements Python modulo division
+    // (C++ would return a negative angle if we did -angle % 2pi)    
+    return signed_angle - two_pi * floor(signed_angle/two_pi);    
+  }
+  
+  // reflect an angle the z-axis
+  double reflect_angle_wrt_z_axis(const double& theta)
+  {
+    // flip by subtracting from pi, then make map back to [0,2pi)
+    return map_angle_to_range_0_to_2pi(MathematicalConstants::Pi - theta);
+  }
+  
+  /// \short Newtonian stress tensor
+  DenseMatrix<double> stress(const DenseMatrix<double>& strain_rate,
+			     const double& p)
+  {
+    const unsigned dim = 3;
+    
+    // \tau_{ij}
+    DenseMatrix<double> stress(dim,dim);
+    
+    for(unsigned i=0; i<dim; i++)
+    {
+      for(unsigned j=0; j<dim; j++)
+      {
+	// Newtonian constitutive relation
+	stress(i,j) = -p*delta(i,j) + 2.0*strain_rate(i,j);
+      }
+    }
+
+    return stress;
+  }
+  
+} // end of Analytic_Functions namespace
 
 #endif

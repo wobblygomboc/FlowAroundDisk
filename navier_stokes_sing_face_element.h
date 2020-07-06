@@ -745,7 +745,7 @@ namespace oomph
     }
 
     // get the edge coordinates at the ith knot
-    EdgeCoordinates edge_coordinate_at_knot(const unsigned& i)
+    EdgeCoordinates edge_coordinate_at_knot(const unsigned& i) const
     {
       return Edge_coordinates_at_knot[i];
     }
@@ -789,7 +789,7 @@ namespace oomph
 
     // get the line element and local coordinate for the ith knot
     std::pair<GeomObject*, Vector<double> >
-      line_element_and_local_coordinate_at_knot(const unsigned& i)
+      line_element_and_local_coordinate_at_knot(const unsigned& i) const
       {
 	return Line_element_and_local_coordinate_at_knot[i];
       }
@@ -825,6 +825,50 @@ namespace oomph
       return Boundary_id;
     }
 
+    // how many singular functions does this line element know about?
+    unsigned nsingular_fct() const
+    {
+      return Nsingular_fct;
+    }
+
+    // function to get the pressure at local coordinates s in the
+    // face element via the bulk element
+    double interpolated_p_nst(const Vector<double>& s) const
+    {
+      // number of dimensions in the bulk
+      unsigned dim_bulk = Dim + 1;
+      
+      // local coordinates in bulk element
+      Vector<double> s_bulk(dim_bulk);
+      
+      // Get pointer to assocated bulk element
+      ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(bulk_element_pt());
+
+      this->get_local_coordinate_in_bulk(s, s_bulk);
+      
+      //Get pressure from bulk
+      return bulk_el_pt->interpolated_p_nst(s_bulk);
+    }
+    
+    // function to get the strain rate at local coordinates s in the face element
+    // via the bulk element
+    void strain_rate(const Vector<double>& s, DenseMatrix<double>& _strain_rate) const
+    {
+      // number of dimensions in the bulk
+      unsigned dim_bulk = Dim + 1;
+      
+      // local coordinates in bulk element
+      Vector<double> s_bulk(dim_bulk);
+      
+      // Get pointer to assocated bulk element
+      ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(bulk_element_pt());
+
+      this->get_local_coordinate_in_bulk(s, s_bulk);
+      
+      //Get pressure from bulk
+      return bulk_el_pt->strain_rate(s_bulk, _strain_rate);
+    }
+    
   protected:
 
     /// \short Function to compute the shape and test functions and to return 
@@ -1765,6 +1809,10 @@ namespace oomph
 	/*     outfile << std::endl;	   */
 	/* } */
       }
+
+      // function to get the total normal stress acting on this element
+      // (useful for convergence studies of total force, etc.)
+      double get_contribution_to_normal_stress() const;
       
     private:
 
@@ -1817,6 +1865,150 @@ namespace oomph
     
   } // end NavierStokesWithSingularityBCFaceElement constructor
 
+
+  template <class ELEMENT>
+  double NavierStokesWithSingularityBCFaceElement<ELEMENT>::
+    get_contribution_to_normal_stress() const
+  {
+    //Find out how many nodes there are
+    const unsigned n_node = this->nnode();
+
+    // shorthand
+    const unsigned Dim = this->Dim;
+    
+    //Set up memory for the shape and test functions
+    Shape psi(n_node), test(n_node);
+     
+    //Set the value of Nintpt
+    const unsigned n_intpt = this->integral_pt()->nweight();
+     
+    //Set the Vector to hold local coordinates
+    Vector<double> s(Dim-1);
+	
+    // shorthand
+    ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(this->bulk_element_pt());
+
+    // Saves result of integration
+    double normal_stress_integral = 0.0;
+    
+    //Loop over the integration points
+    for(unsigned ipt=0; ipt<n_intpt; ipt++)
+    {       
+      //Assign values of s
+      for(unsigned i=0; i<(Dim-1); i++)
+      {
+	s[i] = this->integral_pt()->knot(ipt,i);
+      }
+
+      //Get the integral weight
+      double w = this->integral_pt()->weight(ipt);
+       
+      //Find the shape and test functions and return the Jacobian
+      //of the mapping
+      double J = this->J_eulerian(s); 
+       
+      //Premultiply the weights and the Jacobian
+      double W = w*J;
+      	  
+      // Compute outer unit normal at the specified local coordinate
+      // to compute scaled and unscaled flux of singular solution
+      Vector<double> unit_normal(Dim);
+      this->outer_unit_normal(s, unit_normal);
+
+      // strain rate tensor
+      DenseMatrix<double> strain_rate_fe(Dim, Dim, 0.0);
+
+      this->strain_rate(s, strain_rate_fe);
+
+      // get the FE pressure
+      double p_fe = this->interpolated_p_nst(s);
+	  
+      // get contribution to the FE stress on this element
+      DenseMatrix<double> stress_fe(Dim, Dim, 0.0);
+
+      stress_fe = (*bulk_el_pt->stress_fct_pt())(strain_rate_fe, p_fe);
+
+      // Now get the total singular contributions
+      // --------------------------------------------------------
+
+      // get the line element and local coordinate which corresponds to the
+      // singular amplitude for this knot
+      std::pair<GeomObject*, Vector<double> > line_elem_and_local_coord = 
+	this->line_element_and_local_coordinate_at_knot(ipt);
+
+      // QUEHACERES avoid the hard coded template arg here
+      // cast the GeomObject to a singular line element      
+      ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
+	dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>
+	(line_elem_and_local_coord.first);
+
+      // local coordinate in the singular element for the zeta of this knot
+      Vector<double> s_singular_el = line_elem_and_local_coord.second;
+      
+      // get the \rho,\zeta,\phi coordinates at this knot
+      EdgeCoordinates edge_coords_at_knot = this->edge_coordinate_at_knot(ipt);
+
+      // the sum of all scaled singular functions
+      Vector<double> u_sing_total(Dim+1, 0.0);
+
+      // total singular contributions to velocity gradient tensor and strain rate
+      DenseMatrix<double> dudx_sing_total(Dim, Dim, 0.0);
+      DenseMatrix<double> strain_rate_sing_total(Dim, Dim, 0.0);
+      
+      if(sing_el_pt != 0)
+      {
+	u_sing_total = sing_el_pt->total_singular_contribution(edge_coords_at_knot,
+							       s_singular_el);
+      
+	dudx_sing_total = sing_el_pt->
+	  total_singular_gradient_contribution(edge_coords_at_knot,
+					       s_singular_el);
+      }
+      
+      // total singular pressure
+      double p_sing_total = u_sing_total[this->P_index_nst];
+
+      // now compute the singular strain rate
+      for(unsigned i=0; i<Dim; i++)
+      {
+	for(unsigned j=0; j<Dim; j++)
+	{
+	  strain_rate_sing_total(i,j) = 0.5 * (dudx_sing_total(i,j) +
+					       dudx_sing_total(j,i));
+	}
+      }
+
+      // total singular stress
+      DenseMatrix<double> stress_sing_total(Dim, Dim, 0.0);
+      stress_sing_total = (*bulk_el_pt->stress_fct_pt())(strain_rate_sing_total,
+							 p_sing_total);
+
+      // add the FE and singular bits together to get the total stress
+      DenseMatrix<double> stress_total(Dim, Dim, 0.0);
+      
+      for(unsigned i=0; i<Dim; i++)
+      {
+	for(unsigned j=0; j<Dim; j++)
+	{
+	  stress_total(i,j) = stress_fe(i,j) + stress_sing_total(i,j);
+	}
+      }
+      
+      // now add the weighted contribution to the normal stress to the
+      // integral over this element
+      for(unsigned i=0; i<Dim; i++)
+      {
+	for(unsigned j=0; j<Dim; j++)
+	{	      
+	  normal_stress_integral += W * unit_normal[j] * stress_total(i,j);
+	}
+      }
+    } // end loop over integration points
+
+    return normal_stress_integral;    
+  }
+
+  
   //===========================================================================
   /// \short Compute the element's residual vector and the Jacobian matrix.
   /// Adds this boundary face element's contribution to the equation which
@@ -2418,12 +2610,13 @@ namespace oomph
 	    // Get/set boundary coordinates
 	    if (nod_pt->boundary_coordinates_have_been_set_up())
             {
-	      unsigned n = nod_pt->ncoordinates_on_boundary(new_boundary_id);
-	      Vector<double> boundary_zeta(n);
-	      nod_pt->get_coordinates_on_boundary(new_boundary_id,
-						  boundary_zeta);
-	      this->node_pt(j)->set_coordinates_on_boundary(new_boundary_id,
-						      boundary_zeta);
+	      // QUEHACERES come back to this!
+	      /* unsigned n = nod_pt->ncoordinates_on_boundary(new_boundary_id); */
+	      /* Vector<double> boundary_zeta(n); */
+	      /* nod_pt->get_coordinates_on_boundary(new_boundary_id, */
+	      /* 					  boundary_zeta); */
+	      /* this->node_pt(j)->set_coordinates_on_boundary(new_boundary_id, */
+	      /* 					      boundary_zeta); */
             }
 	    else
             {
@@ -2686,15 +2879,6 @@ namespace oomph
       
       stress_sing_total = (*bulk_el_pt->stress_fct_pt())(strain_rate_sing_total, p_sing_total);
 
-      // ---------
-      // QUEHACERES debug
-
-      double stress_sing_total_00 = stress_sing_total(0,0);
-      double stress_sing_total_01 = stress_sing_total(0,1);
-      double stress_sing_total_10 = stress_sing_total(1,0);
-      double stress_sing_total_11 = stress_sing_total(1,1);
-      // ---------
-      
       // get stress associated with each singular function
       Vector<DenseMatrix<double> > stress_sing_unscaled(this->Nsingular_fct);
       
@@ -2705,8 +2889,9 @@ namespace oomph
 					 p_sing_unscaled[ising]);
       }
       
-      //Now add to the appropriate equations
-       
+      // Now add to the appropriate equations
+      // -----------------------------------------------
+      
       //Loop over the test functions
       for(unsigned l=0; l<n_node; l++)
       {
@@ -3153,7 +3338,13 @@ namespace oomph
       {
 	// just output zeros if there are no singular functions so the oomph-convert
 	// script doesn't die when the number of columns isn't the same for all elements
-	outfile << "0 0 0 0" << std::endl;
+	for(unsigned ising=0; ising < Nsingular_fct; ising++)
+	{	
+	  outfile << "0 0 0 0 ";
+	}
+	
+	outfile << std::endl;
+	
 	return;
       }
 
@@ -3306,6 +3497,11 @@ namespace oomph
       return Edge_coordinates_at_plot_point[i];
     }
 
+    void set_nsingular_fct(const unsigned& nsing)
+    {
+      Nsingular_fct = nsing;
+    }
+    
     // set the line element and local coordinate at each plot point
     void set_line_element_and_local_coordinate_at_plot_point(
       const Vector<std::pair<GeomObject*, Vector<double> > >&
@@ -3368,12 +3564,18 @@ namespace oomph
     
   private:
 
-    /// \short Number of plot points - this needs isn't a free choice at point where
+    /// \short Number of plot points - this isn't a free choice at point where
     /// we want to output, because we need to have pre-computed the (\rho,\zeta,\phi)
     /// coordinates of each plot point, so this number is set when
     /// set_line_element_and_local_coordinate_at_plot_point() is called
     unsigned Nplot;
 
+    /// \short Number of singular functions we're subtracting (only used for
+    /// output purposes, for bulk elements which have no singular line element pointer
+    /// but need to get the number of output columns to match the elements
+    /// with singular functions)
+    unsigned Nsingular_fct;
+    
     /// Pointer to exact non-singular fct (only for post-processing!)
     ExactNonSingularFctPt Exact_non_singular_fct_pt;
 

@@ -16,7 +16,7 @@
 #ifndef OOMPH_MOFFAT_SOLUTION_HEADER
 #define OOMPH_MOFFAT_SOLUTION_HEADER
 
-namespace Analytic_Functions
+namespace SingularFunctions
 {
   // solution in the original coordinate frame, i.e. a semi-infinite plate at x>0
   void moffatt_solution(const double& r, const double& theta,
