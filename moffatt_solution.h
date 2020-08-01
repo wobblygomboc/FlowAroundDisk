@@ -30,7 +30,7 @@ namespace SingularFunctions
     u_polar[0] = sqrt(r) * (+ A * (-(3.0/2.0)*sin((3.0/2.0)*theta) + 0.5*sin(0.5*theta))
 			    - B * ((3.0/2.0)*cos((3.0/2.0)*theta) - (3.0/2.0)*cos(0.5*theta)) );
 
-    // azimuthal velocity component
+    // elevation angle velocity component
     u_polar[1] = -(3.0/2.0)*sqrt(r) * (+ A * (cos((3.0/2.0)*theta) - cos(0.5*theta))
 				       - B * (sin((3.0/2.0)*theta) - 3*sin(0.5*theta)) );
     

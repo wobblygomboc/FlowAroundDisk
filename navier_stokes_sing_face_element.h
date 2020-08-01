@@ -58,9 +58,12 @@ namespace oomph
     double zeta;
     double phi;
 
+    // QUEHACERES
+    double p0;
+    
     static const unsigned ncoord = 3;
   };
-
+  
   ////////////////////////////////////////////////////////////////////////
   ////////////////////////////////////////////////////////////////////////
   ////////////////////////////////////////////////////////////////////////
@@ -84,7 +87,7 @@ namespace oomph
     /// index of the face to which this element is attached. 
     ScalableSingularityForNavierStokesLineElement(FiniteElement* const& disk_el_pt, 
 						  const int& face_index,
-						  const unsigned& nsingular_function,
+						  // QUEHACERES delete const unsigned& nsingular_function,
 						  std::map<Node*,Node*>& existing_duplicate_node_pt,
 						  const bool& use_zeta_2pi_instead_of_0=false);
     
@@ -118,81 +121,142 @@ namespace oomph
       BrokenCopy::broken_assign("ScalableSingularityForNavierStokesLineElement");
     }
 
-    ///Function to get pointer to the unscaled version of the nth singular function
-    UnscaledSingSolnFctPt& unscaled_singular_fct_pt(const unsigned& n)
-    {
-      return Unscaled_singular_fct_pt[n];
-    }
+    // QUEHACERES delete, now using add_unscaled_sing...()
+    /* ///Function to get pointer to the unscaled version of a singular function */
+    /* UnscaledSingSolnFctPt& unscaled_singular_fct_pt(const unsigned& sing_fct_id) */
+    /* { */
+    /*   // get the index for this ID from the map */
+    /*   // (std::map::at() throws an exception if this index doesn't exist) */
+    /*   unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id); */
+      
+    /*   return Unscaled_singular_fct_pt[sing_fct_index]; */
+    /* } */
 
-    ///Function to get pointer to unscaled version of the gradient of
-    // the nth singular function
-    GradientOfUnscaledSingSolnFctPt&
-      gradient_of_unscaled_singular_fct_pt(const unsigned& n)
-    {
-      return Gradient_of_unscaled_singular_fct_pt[n];
-    }
+    /* ///Function to get pointer to unscaled version of the gradient of */
+    /* // a singular function */
+    /* GradientOfUnscaledSingSolnFctPt& */
+    /*   gradient_of_unscaled_singular_fct_pt(const unsigned& sing_fct_id) */
+    /* { */
+    /*   // get the index for this ID from the map */
+    /*   // (std::map::at() throws an exception if this index doesn't exist) */
+    /*   unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id); */
+      
+    /*   return Gradient_of_unscaled_singular_fct_pt[sing_fct_index]; */
+    /* } */
 
-    ///Function to compute unscaled version of nth unscaled version
-    Vector<double> unscaled_singular_fct(const EdgeCoordinates& rzp_coords,
-					 const unsigned& n) const
-    {
-      if(Unscaled_singular_fct_pt[n] == 0)
+    void add_unscaled_singular_fct_and_gradient_pt(
+      const UnscaledSingSolnFctPt sing_fct_pt,
+      const GradientOfUnscaledSingSolnFctPt grad_of_sing_fct_pt,
+      const unsigned& sing_fct_id)
+    {      
+      // check if we've already got this ID
+      if(Singular_fct_index.find(sing_fct_id) != Singular_fct_index.end())
       {
-	Vector<double> empty(rzp_coords.ncoord, 0.0);
-	return empty;
+	throw OomphLibError(
+	"Can't add duplicate singular function, functions must have a unique ID",
+	OOMPH_CURRENT_FUNCTION,
+	OOMPH_EXCEPTION_LOCATION);
       }
-      
-      return Unscaled_singular_fct_pt[n](rzp_coords); 
-    }
 
-    ///Compute unscaled version of gradient of nth singular function
-    DenseMatrix<double> gradient_of_unscaled_singular_fct(const EdgeCoordinates& rzp_coords,
-							  const unsigned& n) const
-    {
-      DenseMatrix<double> grad(rzp_coords.ncoord, rzp_coords.ncoord, 0.0);
+      // add the ID to the map, index is the current size of the vectors
+      // of function pointers
+      unsigned nsing = Unscaled_singular_fct_pt.size();
+      Singular_fct_index[sing_fct_id] = nsing; // since we're zero-indexed
+
+      // add the ID to the list
+      Singular_fct_id.push_back(sing_fct_id);
       
-      if(Gradient_of_unscaled_singular_fct_pt[n] == 0)
+      // now add the function pointers
+      Unscaled_singular_fct_pt.push_back(sing_fct_pt);
+      Gradient_of_unscaled_singular_fct_pt.push_back(grad_of_sing_fct_pt);
+
+      // and finally, resize the nodes in this element to accommodate
+      // the new singular function
+      for(unsigned j=0; j<this->nnode(); j++)
       {
-	return grad;
+	Node* node_pt = this->node_pt(j);
+
+	// check it hasn't already been resized by a neighbouring element
+	if(node_pt->nvalue() < (nsing + 1))
+	  node_pt->resize(nsing+1);
       }
+    }
+    
+    ///Function to compute unscaled version of the requested unscaled version
+    Vector<double> unscaled_singular_fct(const EdgeCoordinates& edge_coords,
+					 const unsigned& sing_fct_id) const
+    {
+      // QUEHACERES delete
+      /* if(Unscaled_singular_fct_pt[ising] == 0) */
+      /* { */
+      /* 	Vector<double> empty(rzp_coords.ncoord, 0.0); */
+      /* 	return empty; */
+      /* } */
       
-      return Gradient_of_unscaled_singular_fct_pt[n](rzp_coords); 
+      // get the index for this ID from the map
+      // (std::map::at() throws an exception if this index doesn't exist)
+      unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
+      
+      return Unscaled_singular_fct_pt[sing_fct_index](edge_coords); 
     }
 
-    ///Compute scaled version of nth singular function
-    Vector<double> singular_fct(const EdgeCoordinates& rzp_coords,
+    ///Compute unscaled version of gradient of the requested singular function
+    DenseMatrix<double> gradient_of_unscaled_singular_fct(const EdgeCoordinates& edge_coords,
+							  const unsigned& sing_fct_id) const
+    {
+      // QUEHACERES delete
+      /* DenseMatrix<double> grad(rzp_coords.ncoord, rzp_coords.ncoord, 0.0); */
+      
+      /* if(Gradient_of_unscaled_singular_fct_pt[ising] == 0) */
+      /* { */
+      /* 	return grad; */
+      /* } */
+
+      // get the index for this ID from the map
+      // (std::map::at() throws an exception if this index doesn't exist)
+      unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
+      
+      return Gradient_of_unscaled_singular_fct_pt[sing_fct_index](edge_coords); 
+    }
+
+    ///Compute scaled version of the requested singular function
+    Vector<double> singular_fct(const EdgeCoordinates& edge_coords,
 				const Vector<double>& s,
-				const unsigned& n) const
+				const unsigned& sing_fct_id) const
     {
       // get number of unknowns in the problem; plus one because we want pressure as well
       // as the velocity components
-      const unsigned nvalue = rzp_coords.ncoord + 1;
+      const unsigned nvalue = edge_coords.ncoord + 1;
 
       // storage for the scaled basis functions
       Vector<double> scaled_singular_fct(nvalue, 0.0);
 
       // get the unscaled functions
       Vector<double> u_sing_unscaled(Dim);
-      u_sing_unscaled = unscaled_singular_fct(rzp_coords, n);
+      u_sing_unscaled = unscaled_singular_fct(edge_coords, sing_fct_id);
 
-      double amplitude = interpolated_amplitude(s, n);
+      double amplitude = interpolated_amplitude(s, sing_fct_id);
       
       // scale 'em
       for(unsigned i=0; i<nvalue; i++)
       {
 	scaled_singular_fct[i] = amplitude * u_sing_unscaled[i];
       }
+
+      /* // QUEHACERES for debug */
+      /* if(ising == 1) */
+      /* 	scaled_singular_fct[0] += 1; */
       
       return scaled_singular_fct;
     }
             
-    ///Compute scaled version of gradient of nth singular function
-    DenseMatrix<double> gradient_of_singular_fct(const EdgeCoordinates& rzp_coords,
+    ///Compute scaled version of gradient of the requested singular function
+    DenseMatrix<double> gradient_of_singular_fct(const EdgeCoordinates& edge_coords,
 						 const Vector<double>& s,
-						 const unsigned& n) const
+						 const unsigned& sing_fct_id) const
     {
       DenseMatrix<double> grad =
-	gradient_of_unscaled_singular_fct(rzp_coords, n);
+	gradient_of_unscaled_singular_fct(edge_coords, sing_fct_id);
       
       const unsigned N = grad.nrow();
       const unsigned M = grad.ncol();
@@ -201,7 +265,7 @@ namespace oomph
       {
 	for(unsigned j=0; j<M; j++)
 	{
-	  grad(i,j) *= interpolated_amplitude(s, n);
+	  grad(i,j) *= interpolated_amplitude(s, sing_fct_id);
 	}
       }
       return grad;
@@ -215,10 +279,16 @@ namespace oomph
       Vector<double> u_sing_total(rzp_coords.ncoord + 1, 0.0);
 
       // loop over each singular function and add the contribution to the total
-      for(unsigned i=0; i<Nsingular_fct; i++)
+      for(std::map<unsigned,unsigned>::const_iterator it = Singular_fct_index.begin();
+	  it != Singular_fct_index.end(); it++)
+      // QUEHACERES delete
+      /* for(unsigned ising=0; ising<Nsingular_fct; ising++) */
       {
+	// get the singular function ID
+	unsigned sing_fct_id = it->first;
+	
 	// get the contribution of the ith singular function
-	Vector<double> u_sing = singular_fct(rzp_coords, s, i);
+	Vector<double> u_sing = singular_fct(rzp_coords, s, sing_fct_id);
 
 	// add it to the total
 	for(unsigned j=0; j<u_sing.size(); j++)
@@ -240,10 +310,16 @@ namespace oomph
             
 
       // loop over each singular function and add the contribution to the total
-      for(unsigned i=0; i<Nsingular_fct; i++)
+      for(std::map<unsigned,unsigned>::const_iterator it = Singular_fct_index.begin();
+	  it != Singular_fct_index.end(); it++)
+      // QUEHACERES delete
+      /* for(unsigned ising=0; ising<Nsingular_fct; ising++) */
       {
+	// get the singular function ID
+	unsigned sing_fct_id = it->first;
+	
 	// get the contribution of the ith singular function
-	DenseMatrix<double> dudx = gradient_of_singular_fct(rzp_coords, s, i);
+	DenseMatrix<double> dudx = gradient_of_singular_fct(rzp_coords, s, sing_fct_id);
 
 	// add it to the total
 	for(unsigned m=0; m<nval; m++)
@@ -260,22 +336,26 @@ namespace oomph
     
     /// \Short function to compute the interpolated amplitude of the
     /// nth singular function at the local coordinate s
-    double interpolated_amplitude(const Vector<double>& s, const unsigned& n) const
-    {      
+    double interpolated_amplitude(const Vector<double>& s, const unsigned& sing_fct_id) const
+    {
+      // get the index for this ID from the map
+      // (std::map::at() throws an exception if this index doesn't exist)
+      unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
+      
       // make space for the shape functions
       Shape psi(nnode());
       
       // get 'em
       shape(s, psi);
 
-      // ith singularity amplitude
+      // amplitude of this singular function
       double interpolated_c = 0;
 
       // loop over each node in this element and add its contribution to the
       // interpolated amplitude
       for(unsigned j=0; j<nnode(); j++)
       {
-	interpolated_c += this->node_pt(j)->value(n) * psi[j];
+	interpolated_c += this->node_pt(j)->value(sing_fct_index) * psi[j];
       }
 
       return interpolated_c;
@@ -299,7 +379,7 @@ namespace oomph
     // how many singular functions are we subtracting?
     unsigned nsingular_fct() const
     {
-      return Nsingular_fct;
+      return Unscaled_singular_fct_pt.size();
     }
 
     /// Output with various contributions
@@ -330,9 +410,15 @@ namespace oomph
 
 	// now loop over the singular functions and get their
 	// interpolated amplitudes at this plot point
-	for(unsigned n=0; n<Nsingular_fct; n++)
+	for(std::map<unsigned,unsigned>::iterator it = Singular_fct_index.begin();
+	  it != Singular_fct_index.end(); it++)
+	// QUEHACERES delete
+	/* for(unsigned ising=0; ising<Nsingular_fct; ising++) */
 	{
-	  double amplitude = interpolated_amplitude(s,n);
+	  // get the singular function ID
+	  unsigned sing_fct_id = it->first;
+	  
+	  double amplitude = interpolated_amplitude(s, sing_fct_id);
 	  outfile << amplitude << " ";
 	}
 	
@@ -346,7 +432,8 @@ namespace oomph
 
     /// Call this to bypass the correct computation of the
     /// residual for the nth singular function and replace it by r_c = C-ampl
-    void impose_singular_fct_amplitude(const unsigned& n, const Vector<double>& ampl)
+    void impose_singular_fct_amplitude(const unsigned& sing_fct_id,
+				       const Vector<double>& ampl)
     {
       // check the user has provided enough values for the whole element
       if(ampl.size() != nnode())
@@ -362,26 +449,31 @@ namespace oomph
 			    OOMPH_EXCEPTION_LOCATION);
       }
 
-      // check we have enough singular functions
-      if(n >= Nsingular_fct)
-      {
-	ostringstream error_message;
-	error_message << "Error: provided amplitudes for the singular function i="
-		      << n << ", but this element only has " << Nsingular_fct
-		      << " singular functions\n";
+      // QUEHACERES delete
+      /* // check we have enough singular functions */
+      /* if(n >= nsingular_fct()) */
+      /* { */
+      /* 	ostringstream error_message; */
+      /* 	error_message << "Error: provided amplitudes for the singular function ising =" */
+      /* 		      << n << ", but this element only has " << Nsingular_fct */
+      /* 		      << " singular functions\n"; */
 	
-	throw OomphLibError(error_message.str(),
-			    OOMPH_CURRENT_FUNCTION,
-			    OOMPH_EXCEPTION_LOCATION);
-      }
-
+      /* 	throw OomphLibError(error_message.str(), */
+      /* 			    OOMPH_CURRENT_FUNCTION, */
+      /* 			    OOMPH_EXCEPTION_LOCATION); */
+      /* } */
+      
+      // get the index for this ID from the map
+      // (std::map::at() throws an exception if this index doesn't exist)
+      unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
+      
       for(unsigned j=0; j<nnode(); j++)
       {	
 	// pin it so that the amplitude is no longer a dof
-	node_pt(j)->pin(n);
+	node_pt(j)->pin(sing_fct_index);
 
 	// set its value to the imposed amplitude
-	node_pt(j)->set_value(n, ampl[j]);	
+	node_pt(j)->set_value(sing_fct_index, ampl[j]);	
       }      
     } 
 
@@ -397,12 +489,16 @@ namespace oomph
       }
     } 
 
-    // unpin the ith singular amplitude
-    void dont_impose_singular_fct_amplitude(const unsigned& n)
+    // unpin a particular singular amplitude
+    void dont_impose_singular_fct_amplitude(const unsigned& sing_fct_id)
     {
+      // get the index for this ID from the map
+      // (std::map::at() throws an exception if this index doesn't exist)
+      unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
+      
       for(unsigned j=0; j<nnode(); j++)
       {
-	  node_pt(j)->unpin_value(n);
+	  node_pt(j)->unpin_value(sing_fct_index);
       }
     }
     
@@ -416,13 +512,24 @@ namespace oomph
     }
 
     // function to return whether we're imposing the amplitude of the nth singular fct
-    bool is_singular_fct_amplitude_imposed(const unsigned& n)
+    bool is_singular_fct_amplitude_imposed(const unsigned& sing_fct_id)
     {
+      // get the index for this ID from the map
+      // (std::map::at() throws an exception if this index doesn't exist)
+      unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
+      
       // we're not allowing some nodes to be pinned and others unpinned at the moment,
       // so it's enough to check the first node
-      return node_pt(0)->is_pinned(n);
+      return node_pt(0)->is_pinned(sing_fct_index);
     }
-    
+
+    // returns a list of the IDs, i.e. the keys to the ID->index map 
+    Vector<unsigned> singular_fct_ids() const
+    {
+      return Singular_fct_id;
+    }
+      
+      
   private:
 
     /// Add the element's contribution to its residual vector
@@ -493,6 +600,13 @@ namespace oomph
     ///Pointers to gradients of the singular funcions
     Vector<GradientOfUnscaledSingSolnFctPt> Gradient_of_unscaled_singular_fct_pt;
 
+    // object which maps an ID for a given singular function to it's
+    // corresponding index in the vectors of singular function pointers
+    std::map<unsigned, unsigned> Singular_fct_index;
+
+    // the IDs of the singular functions, i.e. the keys for the above map
+    Vector<unsigned> Singular_fct_id;
+    
     // flag to check that the nodal zeta values have been setup appropriately
     // so that we don't need to recompute
     bool Zeta_has_been_setup;
@@ -500,8 +614,9 @@ namespace oomph
     /// the boundary zeta of each node in this element
     Vector<double> Zeta;
 
-    /// Number of singular functions to subtract
-    unsigned Nsingular_fct;
+    // QUEHACERES delete
+    /* /// Number of singular functions to subtract */
+    /* unsigned Nsingular_fct; */
 
     // dimensionality of this element
     unsigned Dim;
@@ -514,15 +629,16 @@ namespace oomph
   ScalableSingularityForNavierStokesLineElement<NNODE_1D>::
     ScalableSingularityForNavierStokesLineElement(FiniteElement* const& disk_el_pt, 
 						  const int& face_index,
-						  const unsigned& nsingular_fct,
+						  // QUEHACERES delete: const unsigned& nsingular_fct,
 						  std::map<Node*,Node*>& existing_duplicate_node_pt,
 						  const bool& use_zeta_2pi_instead_of_0) :
-    FaceGeometry<TElement<2,NNODE_1D> >(), FaceElement(), Nsingular_fct(nsingular_fct),
+    FaceGeometry<TElement<2,NNODE_1D> >(), FaceElement(), // QUEHACERES delete: Nsingular_fct(nsingular_fct),
     Zeta_has_been_setup(false), Dim(1)
   {
-    // make enough space for the singular function pointers
-    Unscaled_singular_fct_pt.resize(Nsingular_fct, 0);
-    Gradient_of_unscaled_singular_fct_pt.resize(Nsingular_fct, 0);
+    // QUEHACERES delete
+    /* // make enough space for the singular function pointers */
+    /* Unscaled_singular_fct_pt.resize(Nsingular_fct, 0); */
+    /* Gradient_of_unscaled_singular_fct_pt.resize(Nsingular_fct, 0); */
       
     // ------------------------------------------------------------------------
     // The nodes of this element are constructed by duplicating the nodes of a
@@ -558,21 +674,21 @@ namespace oomph
 	// QUEHACERES not time dependent for now
 
 	// create a new node - this node stores as many dofs as there are singular
-	// functions, since we're only computing singular amplitudes here, not
-	// Navier-Stokes dofs
-	singular_amplitude_node_pt = new Node(n_dim, n_position_type, Nsingular_fct);
+	// functions, but will be resized later
+	singular_amplitude_node_pt = new Node(n_dim, n_position_type, 0); // QUEHACERES delete: Nsingular_fct);
 
 	// It has the same coordinates
 	for (unsigned i=0; i<n_dim; i++)
 	{
 	  singular_amplitude_node_pt->x(i) = original_node_pt->x(i);
 	}
-	    
-	// initialise the amplitudes to zero
-	for (unsigned i=0; i<Nsingular_fct; i++)
-	{
-	  singular_amplitude_node_pt->set_value(i, 0.0);
-	}
+
+	// QUEHACERES delete
+	/* // initialise the amplitudes to zero */
+	/* for (unsigned i=0; i<Nsingular_fct; i++) */
+	/* { */
+	/*   singular_amplitude_node_pt->set_value(i, 0.0); */
+	/* } */
       }
       else
       {
@@ -825,11 +941,12 @@ namespace oomph
       return Boundary_id;
     }
 
-    // how many singular functions does this line element know about?
-    unsigned nsingular_fct() const
-    {
-      return Nsingular_fct;
-    }
+    // QUEHACERES delete
+    /* // how many singular functions does this face element know about? */
+    /* unsigned nsingular_fct() const */
+    /* { */
+    /*   return Nsingular_fct; */
+    /* } */
 
     // function to get the pressure at local coordinates s in the
     // face element via the bulk element
@@ -920,8 +1037,9 @@ namespace oomph
     /// The index at which the unknown is stored at the nodes
     unsigned P_index_nst;
 
-    /// Number of singular functions to subtract
-    unsigned Nsingular_fct;
+    // QUEHACERES delete
+    /* /// Number of singular functions to subtract */
+    /* unsigned Nsingular_fct; */
 
     /// Number of spatial dimensions in the problem
     unsigned Dim;
@@ -956,7 +1074,7 @@ namespace oomph
     NavierStokesWithSingularityFaceElement(FiniteElement* const& bulk_el_pt, 
 					     const int& face_index, 
 					     const unsigned& id) : 
-  FaceGeometry<ELEMENT>(), FaceElement(), Nsingular_fct(0), Boundary_id(id)
+  FaceGeometry<ELEMENT>(), FaceElement(), /* QUEHACERES delete: Nsingular_fct(0), */ Boundary_id(id)
   {
     // Let the bulk element build the FaceElement, i.e. setup the pointers 
     // to its nodes (by referring to the appropriate nodes in the bulk
@@ -1109,7 +1227,7 @@ namespace oomph
   ////////////////////////////////////////////////////////////////////////
     
 
-  
+  // QUEHACERES probably delete this at some point once Z2 stuff working
   //===========================================================================
   /// NavierStokesWithSingularityBoundaryIntegralFaceElement is a class of face elements 
   ///used to compute the contribution to the residuals from the the singular function
@@ -1546,7 +1664,7 @@ namespace oomph
 	  residuals, GeneralisedElement::Dummy_matrix, 0);
       }
 
-/* #ifndef USE_FD_JACOBIAN  */
+/* #ifndef USE_FD_JACOBIAN */
       /// \short Add the element's contribution to its residual vector and its
       /// Jacobian matrix
       inline void fill_in_contribution_to_jacobian(Vector<double> &residuals,
@@ -1555,7 +1673,7 @@ namespace oomph
       	//Call the generic routine with the flag set to 1
       	fill_in_generic_residual_contribution_navier_stokes_bc(residuals, jacobian, 1);
       }
-/* #endif */ 
+/* #endif   */
 
       /// Output function
       void output(std::ostream &outfile)
@@ -2106,21 +2224,34 @@ namespace oomph
 
        // Stuff related to singular fct
       Vector<double> u_sing(Dim+1, 0.0);
-      
-      Vector<Vector<double> > u_sing_unscaled(this->Nsingular_fct, Vector<double>(1,0));
-      
+
       // check we've actually got a singular line element pointer	
-      if (sing_el_pt != 0)
-      {
-	u_sing = sing_el_pt->total_singular_contribution(edge_coords_at_knot,
-							 s_singular_el);
-	// loop over the singular functions
-	for(unsigned ising=0; ising<this->Nsingular_fct; ising++)
-	{
-	  u_sing_unscaled[ising] = sing_el_pt->unscaled_singular_fct(edge_coords_at_knot,
-								     ising);	 
-	}
+      if (sing_el_pt == 0)
+      { 
+	throw OomphLibError(
+	"This NavierStokesWithSingularityBCFaceElement doesn't have a singular line element pointer",
+	OOMPH_CURRENT_FUNCTION,
+	OOMPH_EXCEPTION_LOCATION);
       }
+      
+      Vector<Vector<double> > u_sing_unscaled(sing_el_pt->nsingular_fct(), Vector<double>(1,0));
+      
+      // get a list of the singular function IDs this element has
+      Vector<unsigned> sing_ids = sing_el_pt->singular_fct_ids();
+      
+      u_sing = sing_el_pt->total_singular_contribution(edge_coords_at_knot,
+						       s_singular_el);
+      // loop over the singular functions
+      for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
+      {
+	// get the ID
+	unsigned sing_fct_id = sing_ids[ising];
+
+	// and get the unscaled singular function associated with this ID
+	u_sing_unscaled[ising] = sing_el_pt->unscaled_singular_fct(edge_coords_at_knot,
+								   sing_fct_id);	 
+      }
+      
 
       //Now add to the appropriate equations
 
@@ -2192,19 +2323,20 @@ namespace oomph
 		  jacobian(local_eqn_lagr, local_unknown_u_fe) += psi[l2] * test[l]*W;
 		}
 	      }
-	      
-	      // Deriv. w.r.t. amplitude is simply the unscaled singular fct.
-	      for(unsigned ising=0; ising<this->Nsingular_fct; ising++)
-	      {
-		int local_eqn_c = this->external_local_eqn(C_external_data_index[ising],
-							   C_external_data_value_index[ising]);
-		if (local_eqn_c >= 0)
-		{
+
+	      // QUEHACERES come back to this when we have a c equation
+	      /* // Deriv. w.r.t. amplitude is simply the unscaled singular fct. */
+	      /* for(unsigned ising=0; ising<sing_el_pt->nsingular_fct(); ising++) */
+	      /* { */
+	      /* 	int local_eqn_c = this->external_local_eqn(C_external_data_index[ising], */
+	      /* 						   C_external_data_value_index[ising]); */
+	      /* 	if (local_eqn_c >= 0) */
+	      /* 	{ */
 		
-		  jacobian(local_eqn_lagr, local_eqn_c) +=
-		    u_sing_unscaled[ising][d] * test[l]*W;
-		}		
-	      }
+	      /* 	  jacobian(local_eqn_lagr, local_eqn_c) += */
+	      /* 	    u_sing_unscaled[ising][d] * test[l]*W; */
+	      /* 	}		 */
+	      /* } */
 	    }
 	  }
          
@@ -2332,7 +2464,7 @@ namespace oomph
       // need to re-enable FD jacobian to test that out.
       // also re-enable once all these different elements have tested analytic
       // jacobians so we can legit have USE_FD_JACOBIAN switched on/off
-/* #ifndef USE_FD_JACOBIAN  */
+/* #ifndef USE_FD_JACOBIAN */
       
       /// \short Add the element's contribution to its residual vector and its
       /// Jacobian matrix
@@ -2345,7 +2477,7 @@ namespace oomph
       }
 
 // QUEHACERES
-/* #endif  */
+ /* #endif  */
       
       /// Output function
       void output(std::ostream &outfile)
@@ -2469,14 +2601,29 @@ namespace oomph
       /* 	} */
       /* }    */
  
-      /// Pin Lagrange multipliers and set to zero at specified local node
+      /// Pin Lagrange multipliers and set to zero
       void pin_lagrange_multipliers_and_set_to_zero()
       {
 	unsigned nnod = this->nnode();
 	for (unsigned j=0; j<nnod; j++)
 	{
-	  this->node_pt(j)->pin(Lambda_index[j]);
-	  this->node_pt(j)->set_value(Lambda_index[j],0.0);
+	  // grab a pointer to the current node
+	  Node* node_pt = this->node_pt(j);
+	  
+	  // get the map which gives the starting nodal index for
+	  // the Lagrange multipliers associated with each boundary ID
+	  std::map<unsigned, unsigned> first_index = *(
+	    dynamic_cast<BoundaryNodeBase*>(node_pt)->
+	    index_of_first_value_assigned_by_face_element_pt() );
+	
+	  for(unsigned i=0; i<this->Dim; i++)
+	  {
+	    // get the nodal index, accounting for the dimension offset
+	    unsigned lambda_index = first_index[this->Boundary_id] + i;
+
+	    node_pt->pin(lambda_index);
+	    node_pt->set_value(lambda_index, 0.0);
+	  }	  
 	}
       }
    
@@ -2500,11 +2647,8 @@ namespace oomph
       /// value of the amplitude of the singular function
       Vector<unsigned> C_external_data_value_index;
 
-      /// Index at which Lagrange multiplier is stored for each node
-      Vector<unsigned> Lambda_index;
-      
       // hierher
-      Vector<unsigned> External_data_index_for_right_node;
+      Vector<unsigned> External_data_index_for_bulk_node;
 
     }; 
 
@@ -2529,7 +2673,7 @@ namespace oomph
     // Back up original nodes and make new ones
     unsigned nnod = this->nnode();
     Orig_node_pt.resize(nnod);
-    External_data_index_for_right_node.resize(nnod);
+    External_data_index_for_bulk_node.resize(nnod);
     
     for (unsigned j=0; j<nnod; j++)
     {
@@ -2600,8 +2744,8 @@ namespace oomph
 	  // It is on the same boundaries
 	  std::set<unsigned>* boundaries_pt;
 	  nod_pt->get_boundaries_pt(boundaries_pt);
-	  for (std::set<unsigned>::iterator it = (*boundaries_pt).begin();
-	       it != (*boundaries_pt).end(); it++)
+	  for (std::set<unsigned>::iterator it = boundaries_pt->begin();
+	       it != boundaries_pt->end(); it++)
           {
 	    // Get/set boundary ID
 	    unsigned new_boundary_id = (*it);
@@ -2664,7 +2808,7 @@ namespace oomph
 
       // The original node now acts as external data for this element
       // (we still need it to enforce continuity)
-      External_data_index_for_right_node[j] = this->add_external_data(Orig_node_pt[j]);
+      External_data_index_for_bulk_node[j] = this->add_external_data(Orig_node_pt[j]);
     }
 
     // Make space for Dim Lagrange multipliers
@@ -2703,8 +2847,7 @@ namespace oomph
     
     //Loop over the integration points
     for(unsigned ipt=0; ipt<n_intpt; ipt++)
-    {
-       
+    {       
       //Assign values of s
       for(unsigned i=0; i<(Dim-1); i++)
       {
@@ -2721,10 +2864,14 @@ namespace oomph
       //Premultiply the weights and the Jacobian
       double W = w*J;
 
-      Vector<double> u_left(Dim, 0.0);
-      Vector<double> u_right(Dim, 0.0);
+      // the velocity fields in the augmented and non-augmented (bulk)
+      // regions, and the Lagrange multipliers which enforce continuity
+      // of the solution across the boundary of the augmented region
+      Vector<double> u_augmented(Dim, 0.0);
+      Vector<double> u_bulk(Dim, 0.0);
       Vector<double> lambda(Dim, 0.0);
-      
+
+      // loop over the nodes and compute the above at this integration point
       for(unsigned l=0; l<n_node; l++) 
       {
 	// grab a pointer to the current node
@@ -2767,20 +2914,12 @@ namespace oomph
 			       OOMPH_EXCEPTION_LOCATION);
 	  }
 	  
-	  u_left[i]  += this->nodal_value(l,i) * psi[l];
-	  u_right[i] += Orig_node_pt[l]->value(i) * psi[l];
-	  lambda[i]  += this->nodal_value(l, lambda_index) * psi[l];
+	  u_augmented[i] += this->nodal_value(l,i) * psi[l];
+	  u_bulk[i]      += Orig_node_pt[l]->value(i) * psi[l];
+	  lambda[i]      += this->nodal_value(l, lambda_index) * psi[l];
 	}
       }
       
-      // unscaled stuff. These are stored in an array so that they can be
-      // looped over when implementing analytic jacobian
-      Vector<Vector<double> > u_sing_unscaled(this->Nsingular_fct);
-      Vector<DenseMatrix<double> > dudx_sing_unscaled(this->Nsingular_fct);
-
-      // unscaled singular pressures
-      Vector<double> p_sing_unscaled(this->Nsingular_fct);
-
       // get the line element and local coordinate which corresponds to the
       // singular amplitude for this knot
       std::pair<GeomObject*, Vector<double> > line_elem_and_local_coord = 
@@ -2792,51 +2931,75 @@ namespace oomph
 	dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>
 	(line_elem_and_local_coord.first);
 
+      // check we've actually got one, or we're in trouble
+      if(sing_el_pt == 0)
+      {
+	ostringstream error_message;
+
+	error_message << "Error: this stress jump element has no "
+		      << "singular line element pointer, so it "
+		      << "cannot compute the correct jump in stress\n";
+	    
+	throw OomphLibError(error_message.str().c_str(),
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
+      }
+      
+      // get the list of singular function IDs
+      Vector<unsigned> sing_ids = sing_el_pt->singular_fct_ids();
+      
       // local coordinate in the singular element for the zeta of this knot
       Vector<double> s_singular_el = line_elem_and_local_coord.second;
       
       // get the \rho,\zeta,\phi coordinates at this knot
       EdgeCoordinates edge_coords_at_knot = this->edge_coordinate_at_knot(ipt);
 
+      // unscaled stuff. These are stored in an array so that they can be
+      // looped over when implementing analytic jacobian
+      Vector<Vector<double> > u_sing_unscaled(sing_el_pt->nsingular_fct());
+      Vector<DenseMatrix<double> > dudx_sing_unscaled(sing_el_pt->nsingular_fct());
+
+      // unscaled singular pressures
+      Vector<double> p_sing_unscaled(sing_el_pt->nsingular_fct());
+      
       // the sum of all scaled singular functions
       Vector<double> u_sing_total(Dim+1, 0.0);
 
+      // get the total contribution from the singular line element
+      u_sing_total = sing_el_pt->total_singular_contribution(edge_coords_at_knot,
+							     s_singular_el);
+
+      // the total contribution of the singular velocity gradients
       DenseMatrix<double> dudx_sing_total(Dim, Dim, 0.0);
-      
-      if(sing_el_pt != 0)
-      {
-	u_sing_total = sing_el_pt->total_singular_contribution(edge_coords_at_knot,
-								   s_singular_el);
-      
-	dudx_sing_total = sing_el_pt->
-	  total_singular_gradient_contribution(edge_coords_at_knot,
-					       s_singular_el);
-      }
+
+      // get 'em from the line element
+      dudx_sing_total = sing_el_pt->
+	total_singular_gradient_contribution(edge_coords_at_knot,
+					     s_singular_el);
       
       // total singular pressure
       double p_sing_total = u_sing_total[this->P_index_nst];
-
       
       // loop over all the singular functions this element knows about and
-      // compute the sum of their conributions to the total solution
-      for(unsigned ising=0; ising<this->Nsingular_fct; ising++)
+      // compute the sum of their contributions to the total solution      
+      for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
       {
-	// check we've actually got a singular line element pointer
-	if (sing_el_pt != 0)
-	{
-	  // unscaled stuff
-	  // ----------------
-	  // unscaled singular function 
-	  u_sing_unscaled[ising] =	    
-	    sing_el_pt->unscaled_singular_fct(edge_coords_at_knot, ising);	  
+	// get the ID
+	unsigned sing_fct_id = sing_ids[ising];
+	
+	// unscaled stuff
+	// ----------------
+	// unscaled singular function 
+	u_sing_unscaled[ising] =	    
+	  sing_el_pt->unscaled_singular_fct(edge_coords_at_knot, sing_fct_id);	  
 	 
-	  // unscaled singular gradient 
-	  dudx_sing_unscaled[ising] =
-	    sing_el_pt->gradient_of_unscaled_singular_fct(edge_coords_at_knot, ising);
+	// unscaled singular gradient 
+	dudx_sing_unscaled[ising] =
+	  sing_el_pt->gradient_of_unscaled_singular_fct(edge_coords_at_knot, sing_fct_id);
 	 
-	  // unscaled singular pressure 
-	  p_sing_unscaled[ising] = u_sing_unscaled[ising][this->P_index_nst];
-	}
+	// unscaled singular pressure 
+	p_sing_unscaled[ising] = u_sing_unscaled[ising][this->P_index_nst];
+	
       }      
 
       // Compute outer unit normal at the specified local coordinate
@@ -2849,15 +3012,18 @@ namespace oomph
 
       // array of strain rate tensors associated with each singular function
       Vector<DenseMatrix<double> > strain_rate_sing_unscaled
-	(this->Nsingular_fct, DenseMatrix<double>(Dim, Dim, 0.0));
-      
+	(sing_el_pt->nsingular_fct(), DenseMatrix<double>(Dim, Dim, 0.0));
+
+      // compute the strain-rate from the velocity gradients,
+      // \epsion_{ij} = 1/2 (du_i/dx_j + du_j/dx_i)
       for (unsigned i=0; i<Dim; i++)
       {
 	for(unsigned j=0; j<Dim; j++)
 	{
 	  strain_rate_sing_total(i,j) = 0.5*(dudx_sing_total(i,j) + dudx_sing_total(j,i));
 
-	  for(unsigned ising=0; ising<this->Nsingular_fct; ising++)
+	  // and compute the individual contributions of each singular function
+	  for(unsigned ising=0; ising<sing_el_pt->nsingular_fct(); ising++)
 	  {
 	    strain_rate_sing_unscaled[ising](i,j) +=
 	      0.5*(dudx_sing_unscaled[ising](i,j) + dudx_sing_unscaled[ising](j,i));
@@ -2866,7 +3032,7 @@ namespace oomph
       }
 	
       // get contribution of total singular pressure and
-      // total singular velocity gradients to total stress tensor
+      // total singular strain-rate to total stress tensor
       DenseMatrix<double> stress_sing_total(Dim, Dim);
 
       if(bulk_el_pt->stress_fct_pt() == 0)
@@ -2880,9 +3046,9 @@ namespace oomph
       stress_sing_total = (*bulk_el_pt->stress_fct_pt())(strain_rate_sing_total, p_sing_total);
 
       // get stress associated with each singular function
-      Vector<DenseMatrix<double> > stress_sing_unscaled(this->Nsingular_fct);
+      Vector<DenseMatrix<double> > stress_sing_unscaled(sing_el_pt->nsingular_fct());
       
-      for(unsigned ising=0; ising<this->Nsingular_fct; ising++)
+      for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
       {
 	stress_sing_unscaled[ising] =
 	  (*bulk_el_pt->stress_fct_pt())(strain_rate_sing_unscaled[ising],
@@ -2906,7 +3072,7 @@ namespace oomph
 	for(unsigned d=0; d<Dim; d++)
 	{
 	  // Lagrange multiplier equations: Determined from continuity of
-	  // solution with (scaled!) singular solution on the "left".
+	  // solution with (scaled!) singular solution in the augmented region.
 
 	  // get the nodal index of the Lagrange multiplier for this
 	  // coordinate direction and boundary ID
@@ -2930,7 +3096,7 @@ namespace oomph
 	  
 	  if (local_eqn_lagr >= 0)
 	  {
-	    residuals[local_eqn_lagr] += ((u_left[d] + u_sing_total[d]) - u_right[d]) * test[l]*W;
+	    residuals[local_eqn_lagr] += ((u_augmented[d] + u_sing_total[d]) - u_bulk[d]) * test[l]*W;
 
 	    // compute Jacobian
 	    if (flag == 1)
@@ -2938,45 +3104,46 @@ namespace oomph
 	      for(unsigned l2=0; l2<n_node; l2++)
 	      {
                
-		int local_unknown_left = this->nodal_local_eqn(l2, d);
-		if (local_unknown_left >= 0)
+		int local_unknown_augmented = this->nodal_local_eqn(l2, d);
+		if (local_unknown_augmented >= 0)
 		{
-		  jacobian(local_eqn_lagr,local_unknown_left) += psi[l2]*test[l]*W;
+		  jacobian(local_eqn_lagr,local_unknown_augmented) += psi[l2]*test[l]*W;
 		}
 
-		int local_unknown_right = this->external_local_eqn(
-		  External_data_index_for_right_node[l2], d);
+		int local_unknown_bulk = this->external_local_eqn(
+		  External_data_index_for_bulk_node[l2], d);
 		
-		if (local_unknown_right >= 0)
+		if (local_unknown_bulk >= 0)
 		{
-		  jacobian(local_eqn_lagr, local_unknown_right) -=
+		  jacobian(local_eqn_lagr, local_unknown_bulk) -=
 		    psi[l2]*test[l]*W;
 		}
 	      }
 
-	      for(unsigned ising=0; ising<this->Nsingular_fct; ising++)
-	      {
-		// Deriv w.r.t. amplitude is simply the unscaled fct
-		int local_eqn_c = this->external_local_eqn(C_external_data_index[ising],
-							   C_external_data_value_index[ising]);
-		if (local_eqn_c >= 0)
-		{
-		  jacobian(local_eqn_lagr, local_eqn_c) +=
-		    u_sing_unscaled[ising][d] * test[l]*W;
-		}
-	      }
+	      // QUEHACERES come back to this when we have a c equation
+	      /* for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++) */
+	      /* { */
+	      /* 	// Deriv w.r.t. amplitude is simply the unscaled fct */
+	      /* 	int local_eqn_c = this->external_local_eqn(C_external_data_index[ising], */
+	      /* 						   C_external_data_value_index[ising]); */
+	      /* 	if (local_eqn_c >= 0) */
+	      /* 	{ */
+	      /* 	  jacobian(local_eqn_lagr, local_eqn_c) += */
+	      /* 	    u_sing_unscaled[ising][d] * test[l]*W; */
+	      /* 	} */
+	      /* } */
 	    } // end Jacobian flag check
 	  }
 
-	  // Contribution of Lagrange multiplier and traction to bulk eqn on "left"
-	  int local_eqn_left = this->nodal_local_eqn(l, d);
-	  if (local_eqn_left >= 0)
+	  // Contribution of Lagrange multiplier and traction to bulk eqn in the aug region
+	  int local_eqn_augmented = this->nodal_local_eqn(l, d);
+	  if (local_eqn_augmented >= 0)
 	  {	    
-	    residuals[local_eqn_left] += lambda[d] * test[l]*W;
+	    residuals[local_eqn_augmented] += lambda[d] * test[l]*W;
 
 	    for(unsigned j=0; j<Dim; j++)
 	    {
-	      residuals[local_eqn_left] -= stress_sing_total(d,j)*unit_normal[j] * test[l]*W;
+	      residuals[local_eqn_augmented] -= stress_sing_total(d,j)*unit_normal[j] * test[l]*W; 
 	    }
 
 	    // compute Jacobian
@@ -2999,37 +3166,44 @@ namespace oomph
 		int local_unknown_lambda = this->nodal_local_eqn(l2, lambda_index);
 		if (local_unknown_lambda >= 0)
 		{
-		  jacobian(local_eqn_left,local_unknown_lambda) +=
+		  jacobian(local_eqn_augmented,local_unknown_lambda) +=
 		    psi[l2]*test[l]*W;
 		}
 	      }
 
-	      for(unsigned ising=0; ising<this->Nsingular_fct; ising++)
-	      {
-		int local_eqn_c = this->external_local_eqn(C_external_data_index[ising],
-							   C_external_data_value_index[ising]);
-		if (local_eqn_c >= 0)
-		{
-		  // Deriv w.r.t. amplitude is simply the unscaled singular traction
-		  // \hat\tau_{ij} n_j
-		  for(unsigned j=0; j< Dim; j++)
-		  {
-		    jacobian(local_eqn_left,local_eqn_c) -=
-		      stress_sing_unscaled[ising](d,j) * unit_normal[j] *test[l]*W;      
-		  }
+	      // QUEHACERES come back to this when we have a c equation
+	      /* for(unsigned ising=0; ising<sing_el_pt->nsingular_fct(); ising++) */
+	      /* { */
+	      /* 	int local_eqn_c = this->external_local_eqn(C_external_data_index[ising], */
+	      /* 						   C_external_data_value_index[ising]); */
+	      /* 	if (local_eqn_c >= 0) */
+	      /* 	{ */
+	      /* 	  // Deriv w.r.t. amplitude is simply the unscaled singular traction */
+	      /* 	  // \hat\tau_{ij} n_j */
+	      /* 	  for(unsigned j=0; j< Dim; j++) */
+	      /* 	  { */
+	      /* 	    jacobian(local_eqn_augmented,local_eqn_c) -= */
+	      /* 	      stress_sing_unscaled[ising](d,j) * unit_normal[j] *test[l]*W;       */
+	      /* 	  } */
 
-		}
-	      }
+	      /* 	} */
+	      /* } */
 	    } // end Jacobian flag check
          
-	    // Contribution of Lagrange multiplier to bulk eqn on "right"
-	    int local_eqn_right =
-	      this->external_local_eqn(External_data_index_for_right_node[l], d);
+	    // Contribution of Lagrange multiplier to bulk eqn in non-augmented region
+	    int local_eqn_bulk =
+	      this->external_local_eqn(External_data_index_for_bulk_node[l], d);
 	  
-	    if (local_eqn_right >= 0)
+	    if (local_eqn_bulk >= 0)
 	    {	      
-	      residuals[local_eqn_right] -= lambda[d]*test[l]*W;
+	      residuals[local_eqn_bulk] -= lambda[d]*test[l]*W;
 
+	      /* // QUEHACERES experimentally adding */
+	      /* for(unsigned j=0; j<Dim; j++) */
+	      /* {		 */
+	      /* 	residuals[local_eqn_bulk] -= stress_sing_total(d,j)*unit_normal[j] * test[l]*W; */
+	      /* } */
+	      
 	      // compute Jacobian
 	      if (flag==1)
 	      {
@@ -3050,7 +3224,7 @@ namespace oomph
 		  int local_unknown_lambda = this->nodal_local_eqn(l2, lambda_index);
 		  if (local_unknown_lambda>=0)
 		  {
-		    jacobian(local_eqn_right, local_unknown_lambda) -=
+		    jacobian(local_eqn_bulk, local_unknown_lambda) -=
 		      psi[l2]*test[l]*W;
 		  }
 		}
@@ -3092,88 +3266,85 @@ namespace oomph
     // function pointer for helper function which computes the stress
     typedef DenseMatrix<double> (*StressFctPt)(const DenseMatrix<double>& du_dx, const double& p);
 
-    /// \short Function pointer for function that computes vector-valued
-    /// steady "exact solution" \f$ {\bf f}({\bf x}) \f$
-    /// as \f$ \mbox{\tt fct}({\bf x}, {\bf f}) \f$. Boolean determines if the
-    /// element is on the lower part of the disk (to account for the pressure jump)
-    typedef void(*SteadyExactSolutionWithBooleanFctPt)
-      (const Vector<double>&, Vector<double>&, const bool&);
-
+    /// Constructor                            
+  TNavierStokesElementWithSingularity() :
+    Exact_non_singular_fct_pt(0), Nplot(0), Is_lower_disk_element(false)
+    { }
+    
     void compute_error(std::ofstream& outfile,
-		       SteadyExactSolutionWithBooleanFctPt exact_soln_fct,
+		       FiniteElement::SteadyExactSolutionFctPt exact_soln_fct,
 		       double& error, double& norm)
-    {
-      // QUEHACERES come back to this, will need to sort out interpolated_u_total() to
-      // handle integration points as well as plot points, and then this element
-      // will need pointers to pairs of <LineElement,s_int> as well as s_plot...
-      
-      /* error = 0.0; */
-      /* norm = 0.0; */
+    {      
+      error = 0.0;
+      norm = 0.0;
 
-      /* //Vector of local coordinates */
-      /* Vector<double> s(DIM); */
+      //Vector of local coordinates
+      Vector<double> s(DIM);
 
-      /* // Vector for coordintes */
-      /* Vector<double> x(DIM); */
+      // Vector for coordintes
+      Vector<double> x(DIM);
 
-      /* //Set the value of n_intpt */
-      /* unsigned n_intpt = this->integral_pt()->nweight(); */
+      //Set the value of n_intpt
+      unsigned n_intpt = this->integral_pt()->nweight();
    
-
-      /* outfile << "ZONE" << std::endl; */
+      outfile << "ZONE" << std::endl;
  
-      /* // Exact solution Vector (u,v,[w],p) */
-      /* Vector<double> exact_soln(DIM+1); */
+      // Exact solution Vector (u,v,[w],p)
+      Vector<double> exact_soln(DIM+1);
    
-      /* //Loop over the integration points */
-      /* for(unsigned ipt=0; ipt<n_intpt; ipt++) */
-      /* { */
+      //Loop over the integration points
+      for(unsigned ipt=0; ipt<n_intpt; ipt++)
+      {
+      	//Assign values of s
+      	for(unsigned i=0; i<DIM; i++)
+      	{
+      	  s[i] = this->integral_pt()->knot(ipt,i);
+      	}
 
-      /* 	//Assign values of s */
-      /* 	for(unsigned i=0; i<DIM; i++) */
-      /* 	{ */
-      /* 	  s[i] = this->integral_pt()->knot(ipt,i); */
-      /* 	} */
+      	//Get the integral weight
+      	double w = this->integral_pt()->weight(ipt);
 
-      /* 	//Get the integral weight */
-      /* 	double w = this->integral_pt()->weight(ipt); */
+      	// Get jacobian of mapping
+      	double J = this->J_eulerian(s);
 
-      /* 	// Get jacobian of mapping */
-      /* 	double J = this->J_eulerian(s); */
+      	//Premultiply the weights and the Jacobian
+      	double W = w*J;
 
-      /* 	//Premultiply the weights and the Jacobian */
-      /* 	double W = w*J; */
+      	// Get x position as Vector
+      	this->interpolated_x(s,x);
 
-      /* 	// Get x position as Vector */
-      /* 	this->interpolated_x(s,x); */
-
-      /* 	// Get exact solution at this point */
-      /* 	(*exact_soln_fct)(x, exact_soln, Is_lower_disk_element); */
-
-      /* 	// get the total solution u = u_{fe} + c \hat u */
-      /* 	Vector<double> u_fe_plus_sing = interpolated_u_total_navier_stokes(s); */
+	// get the side of the disk right
+	const double tol = 1e-8;
+	if((abs(x[2]) < tol) && Is_lower_disk_element)
+	   x[2] = -tol;
 	
-      /* 	// Velocity error */
-      /* 	for(unsigned i=0; i<DIM; i++) */
-      /* 	{ */
-      /* 	  norm  += exact_soln[i] * exact_soln[i] * W; */
-      /* 	  error += (exact_soln[i] - u_fe_plus_sing[i]) * */
-      /* 	    (exact_soln[i] - u_fe_plus_sing[i])*W; */
-      /* 	} */
+      	// Get exact solution at this point
+      	(*exact_soln_fct)(x, exact_soln);
 
-      /* 	//Output x,y,...,u_exact */
-      /* 	for(unsigned i=0; i<DIM; i++) */
-      /* 	{ */
-      /* 	  outfile << x[i] << " "; */
-      /* 	} */
+      	// get the total solution u = u_{fe} + c \hat u
+      	Vector<double> u_fe_plus_sing = interpolated_u_total_navier_stokes(s, ipt);
+	
+      	// Velocity error
+      	for(unsigned i=0; i<DIM; i++)
+      	{
+      	  norm  += exact_soln[i] * exact_soln[i] * W;
+      	  error += (exact_soln[i] - u_fe_plus_sing[i]) *
+      	    (exact_soln[i] - u_fe_plus_sing[i])*W;
+      	}
 
-      /* 	//Output x,y,[z],u_error,v_error,[w_error] */
-      /* 	for(unsigned i=0; i<DIM; i++) */
-      /* 	{ */
-      /* 	  outfile << exact_soln[i] - u_fe_plus_sing[i] << " "; */
-      /* 	} */
-      /* 	outfile << std::endl;    */
-      /* } */
+      	//Output x,y,...,u_exact
+      	for(unsigned i=0; i<DIM; i++)
+      	{
+      	  outfile << x[i] << " ";
+      	}
+
+      	//Output x,y,[z],u_error,v_error,[w_error]
+      	for(unsigned i=0; i<DIM+1; i++)
+      	{
+      	  outfile << exact_soln[i] - u_fe_plus_sing[i] << " ";
+      	}
+      	outfile << std::endl;
+      }
     }
     
     ExactNonSingularFctPt& exact_non_singular_fct_pt()
@@ -3185,12 +3356,14 @@ namespace oomph
     {
       return Stress_fct_pt;
     }
+
     
-    /// Constructor                            
-  TNavierStokesElementWithSingularity() : Exact_non_singular_fct_pt(0), Nplot(0)
-    {   
+    // tell this element that it's on the lower side of the disk
+    void set_lower_disk_element()
+    {
+      Is_lower_disk_element = true;
     }
-   
+    
     // QUEHACERES make these time dependent
     /// \short Return FE representation of function value u_fe
     inline Vector<double> interpolated_u_fe_navier_stokes(const Vector<double>& s) const
@@ -3210,10 +3383,13 @@ namespace oomph
       return u_fe;
     } 
 
+    // ------------------------------------------------------------------------
+    
     /// \short Return FE representation of function value u_navier_stokes(s) 
     /// plus scaled singular fct (if provided) at local coordinate s
     inline Vector<double> interpolated_u_total_navier_stokes(
-      const Vector<double>& s, const unsigned& iplot) const
+      const Vector<double>& s, const unsigned& ipt,
+      const bool& use_plot_points = false) const
     {
       // ### keeping in atm for debug
       // interpolate the position
@@ -3228,10 +3404,20 @@ namespace oomph
       Vector<double> u_fe = interpolated_u_fe_navier_stokes(s);
 
       // get the line element and local coordinate which corresponds to the
-      // singular amplitude for this knot
-      std::pair<GeomObject*, Vector<double> > line_elem_and_local_coord = 
-	this->line_element_and_local_coordinate_at_plot_point(iplot);
-
+      // singular amplitude for this point
+      std::pair<GeomObject*, Vector<double> > line_elem_and_local_coord;
+	
+      if(use_plot_points)
+      {
+	line_elem_and_local_coord = 
+	  this->line_element_and_local_coordinate_at_plot_point(ipt);
+      }
+      else
+      {
+	line_elem_and_local_coord = 
+	  this->line_element_and_local_coordinate_at_knot_point(ipt);
+      }
+      
       // cast the GeomObject to a singular line element      
       ScalableSingularityForNavierStokesLineElement<NNODE_1D>* sing_el_pt =
 	dynamic_cast<ScalableSingularityForNavierStokesLineElement<NNODE_1D>*>
@@ -3244,31 +3430,162 @@ namespace oomph
 	Vector<double> s_singular_el = line_elem_and_local_coord.second;
       
 	// get the \rho,\zeta,\phi coordinates at this knot
-	EdgeCoordinates edge_coords_at_plot = this->edge_coordinate_at_plot_point(iplot);
-      
-	for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
+	EdgeCoordinates edge_coords_at_point;
+
+	if(use_plot_points)
+	  edge_coords_at_point = this->edge_coordinate_at_plot_point(ipt);
+	else
+	  edge_coords_at_point = this->edge_coordinate_at_knot_point(ipt);
+
+	Vector<double> u_sing =
+	  sing_el_pt->total_singular_contribution(edge_coords_at_point,
+						  s_singular_el);
+
+	// add singular part of the solution to the FE part to give the total
+	// computed solution
+	for(unsigned i=0; i<DIM+1; i++)
 	{
-	  // singular part of the solution
-	  Vector<double> u_sing = sing_el_pt->singular_fct(edge_coords_at_plot,
-							   s_singular_el,
-							   ising);
-	    
-	  // add singular part of the solution to the FE part to give the total
-	  // computed solution
-	  for(unsigned i=0; i<DIM+1; i++)
-	  {
-	    u_fe[i] += u_sing[i];
-	  }
-	  
+	  u_fe[i] += u_sing[i];
 	}
+
+	// QUEHACERES delete
+	/* for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++) */
+	/* { */
+	/*   // singular part of the solution */
+	/*   Vector<double> u_sing = sing_el_pt->singular_fct(edge_coords_at_point, */
+	/* 						   s_singular_el, */
+	/* 						   ising); */
+	    
+	/*   // add singular part of the solution to the FE part to give the total */
+	/*   // computed solution */
+	/*   for(unsigned i=0; i<DIM+1; i++) */
+	/*   { */
+	/*     u_fe[i] += u_sing[i]; */
+	/*   } */
+	  
+	/* } */
       }
       return u_fe;
     } 
+
+    void output_error_at_plot_points(std::ostream& outfile, 
+				     const Vector<double>& s,
+				     const unsigned& iplot,
+				     FiniteElement::SteadyExactSolutionFctPt exact_soln_pt) const
+    {
+      // by definition of this function!
+      const bool use_plot_points = true;
       
+      // get the total computed solution at these local coords
+      Vector<double> u_total = 
+	this->interpolated_u_total_navier_stokes(s, iplot, use_plot_points);
+
+      // exact solution at these coords
+      Vector<double> exact_soln(4,0.0);
+
+      // Vector for coordinates
+      Vector<double> x(DIM);
+      
+      // Get x position as Vector
+      this->interpolated_x(s, x);
+	
+      // if we have an exact solution pointer, then get the exact solution
+      if (exact_soln_pt != 0)
+	(*exact_soln_pt)(x, exact_soln);
+
+      // output the difference between the exact and the computed solutions
+      // ------------------------------------------------------------------
+      
+      // coordinates
+      for(unsigned i=0; i<DIM; i++) 
+      {
+	outfile << x[i] << " ";
+      }
+      
+      // output the total solution
+      for(unsigned i=0; i<DIM+1; i++)
+      {
+	outfile << exact_soln[i] - u_total[i] << " ";
+      }
+      outfile << std::endl;
+    }
+
+    /// Output with various contributions
+    void output_error_at_plot_points(std::ostream& outfile, 
+				     const unsigned& nplot,
+				     FiniteElement::SteadyExactSolutionFctPt exact_soln_pt) const
+    {
+      //Vector of local coordinates
+      Vector<double> s(DIM);
+   
+      // Tecplot header info
+      outfile << this->tecplot_zone_string(nplot);
+   
+      // Loop over plot points
+      unsigned num_plot_points = this->nplot_points(nplot);
+      for (unsigned iplot=0; iplot < num_plot_points; iplot++)
+      {
+	// Get local coordinates of plot point
+	this->get_s_plot(iplot, nplot, s);
+
+	// do the output
+	output_error_at_plot_points(outfile, s, iplot, exact_soln_pt);
+      }
+      outfile << std::endl;
+      
+      // Write tecplot footer (e.g. FE connectivity lists)
+      this->write_tecplot_zone_footer(outfile, nplot);   
+    }
+
+    void output_divergence(std::ostream& outfile,
+			   const unsigned& nplot) const
+    {
+      //Vector of local coordinates
+      Vector<double> s(DIM);
+   
+      // Tecplot header info
+      outfile << this->tecplot_zone_string(nplot);
+   
+      // Loop over plot points
+      unsigned num_plot_points = this->nplot_points(nplot);
+      for (unsigned iplot=0; iplot < num_plot_points; iplot++)
+      {
+	// Get local coordinates of plot point
+	this->get_s_plot(iplot, nplot, s);
+
+	// get the interpolated position
+	Vector<double> x(DIM);
+	for(unsigned i=0; i<DIM; i++) 
+	{
+	  outfile << this->interpolated_x(s,i) << " ";	
+	}
+
+	// do the divergence, div u = du_i/dx_i
+	double div_u = 0;
+	
+	for(unsigned i=0; i<DIM; i++)
+	{
+	  // get derivative du_i/dx_i and add to divergence
+	  div_u += this->interpolated_dudx_nst(s, i, i);	 
+	}
+
+	outfile << div_u << std::endl;
+      }
+      outfile << std::endl;
+      
+      // Write tecplot footer (e.g. FE connectivity lists)
+      this->write_tecplot_zone_footer(outfile, nplot);   
+    }
+    
     void output_with_various_contributions(std::ostream& outfile, 
 					   const Vector<double>& s,
-					   const unsigned& iplot)
+					   const unsigned& iplot,
+					   FiniteElement::SteadyExactSolutionFctPt exact_soln_pt) const
     {
+      // since this is just the solution output (not integration)
+      // we want to use plot points not knot points
+      const bool use_plot_points = true;
+      
       Vector<double> x(DIM);
       for(unsigned i=0; i<DIM; i++) 
       {
@@ -3277,21 +3594,21 @@ namespace oomph
 
       // regular part of the solution
       Vector<double> u_exact_non_sing(DIM+1, 0.0);
-
-      DenseMatrix<double> dudx(DIM, DIM);
-
-      // Overwrite with exact version!
-      if (Exact_non_singular_fct_pt != 0)
-      {
-	Exact_non_singular_fct_pt(x, u_exact_non_sing, dudx);
-      }
+            
+      // QUEHACERES delete?
+      /* DenseMatrix<double> dudx(DIM, DIM); */
+      /* // Overwrite with exact version! */
+      /* if (Exact_non_singular_fct_pt != 0) */
+      /* { */
+      /* 	Exact_non_singular_fct_pt(x, u_exact_non_sing, dudx); */
+      /* } */
 		
       // get the regular FE solution, and the full computed solution u = u_FE + u_sing
       Vector<double> u_fe(DIM+1, 0.0);
       Vector<double> u_fe_plus_sing(DIM+1, 0.0);
 
       u_fe           = this->interpolated_u_fe_navier_stokes(s);
-      u_fe_plus_sing = this->interpolated_u_total_navier_stokes(s, iplot);
+      u_fe_plus_sing = this->interpolated_u_total_navier_stokes(s, iplot, use_plot_points);
 
 
       // ==========================================
@@ -3336,8 +3653,32 @@ namespace oomph
       // do we actually have a pointer to a singular element?
       if(sing_el_pt == 0)
       {
-	// just output zeros if there are no singular functions so the oomph-convert
-	// script doesn't die when the number of columns isn't the same for all elements
+	// output the regular part of the exact solution, which is the same as
+	// the total exact solution if there's no singular part (i.e. we're in the bulk)
+	if(exact_soln_pt != 0)
+	{
+	  Vector<double> exact_soln(4, 0.0);
+	  
+	  // Get exact solution at this point
+	  (*exact_soln_pt)(x, exact_soln);
+
+	  for(unsigned i=0; i<DIM+1; i++)
+	  {
+	    outfile << exact_soln[i] << " ";
+	  }	  
+	}
+	else
+	{
+	  // if no exact solution function pointer has been provided,
+	  // just output zeros to keep oomph-convert happy
+	  outfile << "0 0 0 0 ";
+	}
+
+	// -----------------
+	
+	// now for the singular contributions, just output zeros if there are
+	// no singular functions so the oomph-convert script doesn't die
+	// when the number of columns isn't the same for all elements
 	for(unsigned ising=0; ising < Nsingular_fct; ising++)
 	{	
 	  outfile << "0 0 0 0 ";
@@ -3348,15 +3689,42 @@ namespace oomph
 	return;
       }
 
-      // get the \rho,\zeta,\phi coordinates at this knot
-      EdgeCoordinates edge_coords_at_plot = this->edge_coordinate_at_plot_point(iplot);
+      // get the \rho,\zeta,\phi coordinates at this plot point
+      EdgeCoordinates edge_coords_at_plot =
+	this->edge_coordinate_at_plot_point(iplot);
+
+      // get the total singular contribution at this point
+      Vector<double> u_sing_total = 
+	sing_el_pt->total_singular_contribution(edge_coords_at_plot,
+						s_singular_el);
+
+      // Get exact solution at this point
+      Vector<double> exact_soln(4, 0.0);
+      if(exact_soln_pt != 0)
+      {
+	(*exact_soln_pt)(x, exact_soln);
+      }
+
+      // now subtract off the singular contributions to get the regular part of
+      // the exact solution
+      for(unsigned i=0; i<DIM+1; i++)
+      {
+	outfile << exact_soln[i] - u_sing_total[i] << " ";
+      }
       
-      for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
-      {	
+      // get a list of the singular function IDs this element has
+      Vector<unsigned> sing_ids = sing_el_pt->singular_fct_ids();
+
+      // now loop over the singular functions and output each contribution
+      for(unsigned ising=0; ising < sing_ids.size(); ising++)
+      {
+	// get the ID
+	unsigned sing_fct_id = sing_ids[ising];
+	
 	// singular part of the solution
 	Vector<double> u_sing = sing_el_pt->singular_fct(edge_coords_at_plot,
 							 s_singular_el,
-							 ising);
+							 sing_fct_id);
 
 	for(unsigned i=0; i<DIM+1; i++)
 	{
@@ -3431,7 +3799,8 @@ namespace oomph
     
     /// Output with various contributions
     void output_with_various_contributions(std::ostream& outfile, 
-					   const unsigned& nplot)
+					   const unsigned& nplot,
+					   FiniteElement::SteadyExactSolutionFctPt exact_soln_pt = 0) const
     {
       //Vector of local coordinates
       Vector<double> s(DIM);
@@ -3447,13 +3816,15 @@ namespace oomph
 	this->get_s_plot(iplot, nplot, s);
 
 	// do the output
-	output_with_various_contributions(outfile, s, iplot);
+	output_with_various_contributions(outfile, s, iplot, exact_soln_pt);
       }
       outfile << std::endl;
       
       // Write tecplot footer (e.g. FE connectivity lists)
       this->write_tecplot_zone_footer(outfile, nplot);   
     }
+    
+    // ------------------------------------------------------------------------
     
     // set the edge coordinates of each plot point
     void set_edge_coordinates_at_plot_point(const Vector<EdgeCoordinates>& coords)
@@ -3485,18 +3856,53 @@ namespace oomph
       // set 'em
       for(unsigned i=0; i<Nplot; i++)
       {
-	Edge_coordinates_at_plot_point[i].rho  = coords[i].rho;
-	Edge_coordinates_at_plot_point[i].zeta = coords[i].zeta;
-	Edge_coordinates_at_plot_point[i].phi  = coords[i].phi;
+	Edge_coordinates_at_plot_point[i]  = coords[i];
       }
     }
 
+    // set the edge coordinates of each knot point
+    void set_edge_coordinates_at_knot_point(const Vector<EdgeCoordinates>& coords)
+    {
+      // Number of integration points
+      const unsigned n_intpt = this->integral_pt()->nweight();
+      
+      if(coords.size() != n_intpt)
+      {
+	ostringstream error_message;
+	error_message << "number of sets of coordinates provided is not consistent "
+		      << "with number of integration points in this element\n"
+		      << "Number of supplied coordinate sets: " << coords.size() << "\n"
+		      << "Number of integration points:       " << n_intpt;
+	throw OomphLibError(
+	  error_message.str(),
+	  OOMPH_CURRENT_FUNCTION,
+	  OOMPH_EXCEPTION_LOCATION);
+      }
+
+      // make sure we've got enough space
+      Edge_coordinates_at_knot_point.resize(n_intpt);
+
+      // set 'em
+      for(unsigned i=0; i<n_intpt; i++)
+      {
+	Edge_coordinates_at_knot_point[i]  = coords[i];
+      }
+    }
+    
+    // ------------------------------------------------------------------------
+    
     // get the edge coordinates at the ith plot point
     EdgeCoordinates edge_coordinate_at_plot_point(const unsigned& i) const
     {
       return Edge_coordinates_at_plot_point[i];
     }
 
+    // get the edge coordinates at the ith knot point
+    EdgeCoordinates edge_coordinate_at_knot_point(const unsigned& i) const
+    {
+      return Edge_coordinates_at_knot_point[i];
+    }
+    
     void set_nsingular_fct(const unsigned& nsing)
     {
       Nsingular_fct = nsing;
@@ -3508,6 +3914,7 @@ namespace oomph
       line_element_and_local_coordinate_at_plot_point)
     {
       unsigned ncoordinates = line_element_and_local_coordinate_at_plot_point.size();
+      
       // check if this has already been set
       if(Nplot == 0)
       {
@@ -3538,6 +3945,45 @@ namespace oomph
       }
     }
 
+    // set the line element and local coordinate at each knot point
+    void set_line_element_and_local_coordinate_at_knot_point(
+      const Vector<std::pair<GeomObject*, Vector<double> > >&
+      line_element_and_local_coordinate_at_knot_point)
+    {
+      // Number of integration points
+      const unsigned n_intpt = this->integral_pt()->nweight();
+      
+      unsigned ncoordinates = line_element_and_local_coordinate_at_knot_point.size();
+      
+      // check if this has already been set
+      if(ncoordinates != n_intpt)
+      {
+	ostringstream error_message;
+	error_message << "number of coordinates provided is not consistent "
+		      << "with the number of integration points in this element\n"
+		      << "Number of supplied coordinate sets: " << ncoordinates << "\n"
+		      << "Number of integration points:       " << n_intpt;
+	throw OomphLibError(
+	  error_message.str(),
+	  OOMPH_CURRENT_FUNCTION,
+	  OOMPH_EXCEPTION_LOCATION);
+      }
+      
+      // make sure we've got enough space
+      Line_element_and_local_coordinate_at_knot_point.resize(n_intpt);
+
+      // set 'em
+      for(unsigned i=0; i<n_intpt; i++)
+      {
+	Line_element_and_local_coordinate_at_knot_point[i] =
+	  line_element_and_local_coordinate_at_knot_point[i];
+      }
+    }
+
+
+    
+    // -------------------------------------
+    
     // get the line element and local coordinate for the ith plot point
     std::pair<GeomObject*, Vector<double> >
       line_element_and_local_coordinate_at_plot_point(const unsigned& i) const
@@ -3561,7 +4007,144 @@ namespace oomph
       }
       return return_pair;
     }
+
+    // get the line element and local coordinate for the ith knot point
+    std::pair<GeomObject*, Vector<double> >
+      line_element_and_local_coordinate_at_knot_point(const unsigned& i) const
+    {
+      std::pair<GeomObject*, Vector<double> > return_pair;
+
+      // check if we have an element-coordinate pair for this plot point
+      // (since this bulk element is used everywhere in the bulk not just
+      // in the augmented region, there may be no singular functions
+      // associated with this element, and so we just want to return an
+      // empty pointer and vector)
+      if(i < Line_element_and_local_coordinate_at_knot_point.size())
+      {
+	return_pair = Line_element_and_local_coordinate_at_knot_point[i];
+      }
+      else
+      {
+	GeomObject* dummy_pt = 0;
+	Vector<double> dummy_vec(1,0);
+	return_pair = std::make_pair(dummy_pt, dummy_vec);
+      }
+      return return_pair;
+    }
     
+    /* // override to output scalar values for paraview format */
+    /* void scalar_value_fct_paraview(std::ofstream& file_out, */
+    /* 				   const unsigned& i, */
+    /* 				   const unsigned& nplot) const */
+    /* { */
+      
+    /* } */
+    
+    // override to output scalar values for paraview format
+    void scalar_value_fct_paraview(std::ofstream& file_out,
+				   const unsigned& i,
+				   const unsigned& nplot,
+				   FiniteElement::SteadyExactSolutionFctPt exact_soln_pt) const
+    {
+      //Vector of local coordinates
+      Vector<double> s(DIM);
+   
+      // Vector for coordinates
+      Vector<double> x(DIM);
+    
+      // Exact solution Vector
+      Vector<double> exact_soln(4,0.0);
+
+      // tolerance on node sitting on the disk surface
+      const double tol = 1e-8;
+	
+      // Loop over plot points
+      unsigned num_plot_points = this->nplot_points_paraview(nplot);
+      
+      for (unsigned iplot=0; iplot<num_plot_points; iplot++)
+      {
+	// Get local coordinates of plot point
+	this->get_s_plot(iplot,nplot,s);
+         
+	// Get x position as Vector
+	this->interpolated_x(s, x);
+
+	// catch the case where the node should be sitting on the lower
+	// side of the disk
+	if((abs(x[2]) < tol) && Is_lower_disk_element)
+	  x[2] = -tol;
+	 
+	// Get exact solution at this point
+	(*exact_soln_pt)(x, exact_soln);
+
+	// output this component
+	file_out << exact_soln[i] << std::endl;
+      }
+    }
+    
+    // specific override for column names for paraview output
+    std::string scalar_name_paraview(const unsigned& i) const
+    {
+      std::string name;
+
+      switch(i)
+      {
+	case 0:
+	  name = "Total Velocity x";
+	  break;
+	case 1:
+	  name = "Total Velocity y";
+	  break;
+	case 2:
+	  name = "Total Velocity z";
+	  break;
+	case 3:
+	  name = "Total Pressure";
+	  break;
+	case 4:
+	  name = "FE Velocity x";
+	  break;
+	case 5:
+	  name = "FE Velocity y";
+	  break;
+	case 6:
+	  name = "FE Velocity z";
+	  break;
+	case 7:
+	  name = "FE Pressure";
+	  break;
+	case 8:
+	  name = "Singular Velocity (broadside) x";
+	  break;
+	case 9:
+	  name = "Singular Velocity (broadside) y";
+	  break;
+	case 10:
+	  name = "Singular Velocity (broadside) z";
+	  break;
+	case 11:
+	  name = "Singular Pressure (broadside)";
+	  break;
+	case 12:
+	  name = "Singular Velocity (in-plane) x";
+	  break;
+	case 13:
+	  name = "Singular Velocity (in-plane) y";
+	  break;
+	case 14:
+	  name = "Singular Velocity (in-plane) z";
+	  break;
+	case 15:
+	  name = "Singular Pressure (in-plane)";
+	  break;
+	default:
+	  name = "V"+StringConversion::to_string(i);
+	  break;	  
+      }
+
+      return name;
+    }
+
   private:
 
     /// \short Number of plot points - this isn't a free choice at point where
@@ -3586,6 +4169,9 @@ namespace oomph
     /// plot points
     Vector<EdgeCoordinates> Edge_coordinates_at_plot_point;
 
+    // same as above but for each knot point (to compute error)
+    Vector<EdgeCoordinates> Edge_coordinates_at_knot_point;
+    
     /// \short The line element and its local coordinate(s) which correspond to the zeta
     /// values at each plot point in this bulk element. N.B. the element
     /// is 1D so only has 1 local coordinate, but we keep this as a vector
@@ -3593,10 +4179,15 @@ namespace oomph
     Vector<std::pair<GeomObject*, Vector<double> > >
       Line_element_and_local_coordinate_at_plot_point;
 
-    /* /// \short Flag to keep track of whether this element sits on the lower */
-    /* /// side of the disk; used to distinguish elements with nodes on the plate, */
-    /* /// in order to get the pressure jump right in the output functions */
-    /* bool Is_lower_disk_element; */
+    // same as above but for knot points (to compute error)
+    Vector<std::pair<GeomObject*, Vector<double> > >
+      Line_element_and_local_coordinate_at_knot_point;
+
+    /// \short Flag to store whether this is a lower disk element
+    /// (useful for output stuff where we're using Eulerian coordinates and need to
+    /// decide whether a point on the disk surface has phi=0 or phi=2pi to get
+    /// the pressure jump correct)
+    bool Is_lower_disk_element;
   };
 
 

@@ -455,6 +455,21 @@ namespace Analytic_Functions
     // flip by subtracting from pi, then make map back to [0,2pi)
     return map_angle_to_range_0_to_2pi(MathematicalConstants::Pi - theta);
   }
+
+  DenseMatrix<double> strain_rate(const DenseMatrix<double>& du_dx)
+  {
+    DenseMatrix<double> strain_rate(3,3,0);
+    
+    for(unsigned i=0; i<3; i++)
+    {
+      for(unsigned j=0; j<3; j++)
+      {
+	strain_rate(i,j) = 0.5*(du_dx(i,j) + du_dx(j,i));
+      }
+    }
+
+    return strain_rate;
+  }
   
   /// \short Newtonian stress tensor
   DenseMatrix<double> stress(const DenseMatrix<double>& strain_rate,
