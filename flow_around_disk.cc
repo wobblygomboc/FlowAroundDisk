@@ -1614,6 +1614,14 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
       	nodal_radius += pow(node_of_interest_pt->x(i), 2);
       }
       nodal_radius = sqrt(nodal_radius);
+
+      // don't want to add elements which only touch the edge if we're not
+      // duplicating the edge nodes
+#ifndef DUPLICATE_EDGE_NODES
+      double tol = 1e-6;
+      if (abs(nodal_radius - 1) < 1e-6)
+	continue;
+#endif
       
       // vector to store the outer unit normal for the upper surface at this node
       Vector<double> unit_normal(3);
@@ -3554,67 +3562,62 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
 	&Global_Parameters::SingularFunctions::wrapper_to_exact_velocity_gradient_broadside,
 	Sing_fct_id_broadside);
 
-      // QUEHACERES delete
-      // sing_el_pt->unscaled_singular_fct_pt(Sing_fct_id_broadside) =
-      // 	&Global_Parameters::SingularFunctions::wrapper_to_exact_solution_broadside;
-      
-      // sing_el_pt->gradient_of_unscaled_singular_fct_pt(Sing_fct_id_broadside) =
-      // 	&Global_Parameters::SingularFunctions::wrapper_to_exact_velocity_gradient_broadside;
-
       // In-plane singular function ----------------------------------
       sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
 	&Global_Parameters::SingularFunctions::wrapper_to_exact_solution_in_plane,
 	&Global_Parameters::SingularFunctions::wrapper_to_exact_velocity_gradient_in_plane,
 	Sing_fct_id_in_plane);
 
-      // QUEHACERES delete
-      // sing_el_pt->unscaled_singular_fct_pt(Sing_fct_id_in_plane) =
-      // 	&Global_Parameters::SingularFunctions::wrapper_to_exact_solution_in_plane;
-      
-      // sing_el_pt->gradient_of_unscaled_singular_fct_pt(Sing_fct_id_in_plane) =
-      // 	&Global_Parameters::SingularFunctions::wrapper_to_exact_velocity_gradient_in_plane;
-
       // QUEHACERES maybe add in-plane rotation here too
     }
     else
     {
       // Broadside singular function ------------------------------------------
-      sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-	&Global_Parameters::SingularFunctions::singular_fct_broadside,
-	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_broadside,
-	Sing_fct_id_broadside);
-      
-      // QUEHACERES delete
-      // sing_el_pt->unscaled_singular_fct_pt(Sing_fct_id_broadside) =
-      // 	&Global_Parameters::SingularFunctions::singular_fct_broadside;
-      
-      // sing_el_pt->gradient_of_unscaled_singular_fct_pt(Sing_fct_id_broadside) =
-      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_broadside;
 
+      // QUEHACERES using the asymptotically expanded exact solution for now 11/08      
+      sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+      	&Global_Parameters::SingularFunctions::singular_fct_exact_asyptotic_broadside,
+      	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asyptotic_broadside,
+      	Sing_fct_id_broadside);
+      
+      // QUEHACERES taking out moffatt versions for the time being 11/08
+      // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+      // 	&Global_Parameters::SingularFunctions::singular_fct_broadside,
+      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_broadside,
+      // 	Sing_fct_id_broadside);
+
+      
       // In-plane singular function -------------------------------------------
-      sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-	&Global_Parameters::SingularFunctions::singular_fct_in_plane,
-	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_in_plane,
-	Sing_fct_id_in_plane);
-      
-      // sing_el_pt->unscaled_singular_fct_pt(Sing_fct_id_in_plane) =
-      // 	&Global_Parameters::SingularFunctions::singular_fct_in_plane;
-      
-      // sing_el_pt->gradient_of_unscaled_singular_fct_pt(Sing_fct_id_in_plane) =
-      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_in_plane;
 
-      // In-plane rotation singular function ----------------------------------
+      // QUEHACERES using the asymptotically expanded exact solution for now 12/08
       sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-	&Global_Parameters::SingularFunctions::singular_fct_in_plane_rotation,
-	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_in_plane_rotation,
-	Sing_fct_id_in_plane_rotation);
-      
-      // sing_el_pt->unscaled_singular_fct_pt(Sing_fct_id_in_plane_rotation) =
-      // 	&Global_Parameters::SingularFunctions::singular_fct_in_plane_rotation;
+      	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_in_plane,
+      	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_in_plane,
+      	Sing_fct_id_in_plane);
 
-      // sing_el_pt->gradient_of_unscaled_singular_fct_pt(Sing_fct_id_in_plane_rotation) =
-      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_in_plane_rotation;
+      // // QUEHACERES taking out moffatt versions for the time being 12/08
+      // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+      // 	&Global_Parameters::SingularFunctions::singular_fct_in_plane,
+      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_in_plane,
+      // 	Sing_fct_id_in_plane);
+
+      // u_zeta velocity component for in-plane singular function ----------------
+      // QUEHACERES if this works, change the enum name for the ID
+      sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+      	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_in_plane_zeta,
+      	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_in_plane_zeta,
+      	Sing_fct_id_in_plane_rotation);
+
+      // QUEHACERES taking out the proper rotational bit for the time being
+      // // In-plane rotation singular function ----------------------------------
+      // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+      // 	&Global_Parameters::SingularFunctions::singular_fct_in_plane_rotation,
+      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_in_plane_rotation,
+      // 	Sing_fct_id_in_plane_rotation);
     }
+
+    // set the function pointer to the function which computes dzeta/dx
+    sing_el_pt->dzeta_dx_fct_pt() = &Global_Parameters::SingularFunctions::compute_dzeta_dx;
   }
 
   for(unsigned e=0; e<Singular_fct_element_mesh_lower_pt->nelement(); e++)
@@ -3641,23 +3644,50 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
     else
     {
       // Broadside singular function ------------------------------------------
-      sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-	&Global_Parameters::SingularFunctions::singular_fct_broadside,
-	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_broadside,
-	Sing_fct_id_broadside);
 
-      // In-plane rotation singular function ----------------------------------
+      // QUEHACERES using the asymptotically expanded exact solution for now 11/08      
       sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-	&Global_Parameters::SingularFunctions::singular_fct_in_plane,
-	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_in_plane,
-	Sing_fct_id_in_plane);
+      	&Global_Parameters::SingularFunctions::singular_fct_exact_asyptotic_broadside,
+      	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asyptotic_broadside,
+      	Sing_fct_id_broadside);
 
-      // In-plane rotation singular function ----------------------------------
+      // QUEHACERES taking out moffatt versions for the time being 11/08
+      // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+      // 	&Global_Parameters::SingularFunctions::singular_fct_broadside,
+      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_broadside,
+      // 	Sing_fct_id_broadside);
+
+      // In-plane singular function -------------------------------------------
+
+      // QUEHACERES using the asymptotically expanded exact solution for now 12/08
       sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-	&Global_Parameters::SingularFunctions::singular_fct_in_plane_rotation,
-	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_in_plane_rotation,
-	Sing_fct_id_in_plane_rotation);
+      	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_in_plane,
+      	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_in_plane,
+      	Sing_fct_id_in_plane);
+
+      // // QUEHACERES taking out moffatt versions for the time being 12/08
+      // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+      // 	&Global_Parameters::SingularFunctions::singular_fct_in_plane,
+      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_in_plane,
+      // 	Sing_fct_id_in_plane);
+      
+      // u_zeta velocity component for in-plane singular function ----------------
+      // QUEHACERES if this works, change the enum name for the ID
+      sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+      	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_in_plane_zeta,
+      	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_in_plane_zeta,
+      	Sing_fct_id_in_plane_rotation);
+
+      // QUEHACERES taking out the proper rotational bit for the time being
+      // // In-plane rotation singular function ----------------------------------
+      // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+      // 	&Global_Parameters::SingularFunctions::singular_fct_in_plane_rotation,
+      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_in_plane_rotation,
+      // 	Sing_fct_id_in_plane_rotation);
     }
+
+    // set the function pointer to the function which computes dzeta/dx
+    sing_el_pt->dzeta_dx_fct_pt() = &Global_Parameters::SingularFunctions::compute_dzeta_dx;
   }
   
   // add the elements in the torus region to the torus region mesh, so that it
@@ -3763,10 +3793,10 @@ void FlowAroundDiskProblem<ELEMENT>::create_face_elements()
 
       // now add the new node to the same boundaries in the bulk mesh
       // so that the boundary_node_pt() lookups still work
-      for(std::set<unsigned>::iterator it = boundaries_pt->begin();
-	  it != boundaries_pt->end(); it++)
+      for(std::set<unsigned>::iterator it_bound = boundaries_pt->begin();
+	  it_bound != boundaries_pt->end(); it_bound++)
       {
-	Bulk_mesh_pt->add_boundary_node(*it, new_node_pt);
+	Bulk_mesh_pt->add_boundary_node(*it_bound, new_node_pt);
       }
       
       some_file << it->second->x(0) << " " 
@@ -4674,14 +4704,9 @@ void FlowAroundDiskProblem<ELEMENT>::impose_fake_singular_amplitude()
 				      Global_Parameters::Imposed_singular_amplitude_in_plane);
 
     // same amplitude as for the in-plane, but will be modulated pi/2 out of phase
-    Vector<double> amplitude_in_plane_rotation(sing_el_pt->nnode(),
-				      Global_Parameters::Imposed_singular_amplitude_in_plane);
+    Vector<double> amplitude_in_plane_rotation(sing_el_pt->nnode(),  
+					       Global_Parameters::Imposed_singular_amplitude_in_plane);
     
-    // pin the nth singular function dof and set its amplitude to the
-    // imposed amplitude
-    sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_broadside,
-					      amplitude_broadside);
-
     // if we're subtracting the exact solution for debug, the modulation is already
     // taken care of
     // // QUEHACERES taking this out for the zeta=0 rotated exact solution
@@ -4693,7 +4718,10 @@ void FlowAroundDiskProblem<ELEMENT>::impose_fake_singular_amplitude()
       {
 	// get the zeta for this node
 	double zeta = sing_el_pt->zeta_nodal(j,0,0);
-      
+
+	// // modulate the broadside amplitude to account for rotations about a diameter
+	// amplitude_broadside[j] *= -cos(zeta) * Global_Parameters::omega_disk[1];
+	
 	// modulate the in-plane amplitude
 	amplitude_in_plane[j] *= cos(zeta);
 
@@ -4701,15 +4729,20 @@ void FlowAroundDiskProblem<ELEMENT>::impose_fake_singular_amplitude()
 	// in-plane translation amplitude
 	amplitude_in_plane_rotation[j] *= sin(zeta);
       }
+
+      sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane_rotation,
+      						amplitude_in_plane_rotation);
     }
+
+    // pin the broadside singular function dof and set its amplitude to the
+    // imposed amplitude
+    sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_broadside,
+					      amplitude_broadside);
     
     // pin the in-plane translation and rotation singular function dofs
     // and set their amplitude to the imposed amplitude
     sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane,
     					      amplitude_in_plane);
-
-    sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane_rotation,
-    					      amplitude_in_plane_rotation);
   }
   
   // and again for the lower half
@@ -4727,13 +4760,12 @@ void FlowAroundDiskProblem<ELEMENT>::impose_fake_singular_amplitude()
 				      Global_Parameters::Imposed_singular_amplitude_in_plane);
 
     // same amplitude as for the in-plane, but will be modulated pi/2 out of phase
-    Vector<double> amplitude_in_plane_rotation(sing_el_pt->nnode(),
-				      Global_Parameters::Imposed_singular_amplitude_in_plane);
+    Vector<double> amplitude_in_plane_rotation(sing_el_pt->nnode(), 
+					       Global_Parameters::Imposed_singular_amplitude_in_plane);
     
     // pin the nth singular function dof and set its amplitude to the
     // imposed amplitude
-    sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_broadside,
-					      amplitude_broadside);
+
 
     // if we're subtracting the exact solution for debug, the modulation is already
     // taken care of
@@ -4746,7 +4778,10 @@ void FlowAroundDiskProblem<ELEMENT>::impose_fake_singular_amplitude()
       {
 	// get the zeta for this node
 	double zeta = sing_el_pt->zeta_nodal(j,0,0);
-      
+
+	// // modulate the broadside amplitude to account for rotations about a diameter
+	// amplitude_broadside[j] *= -cos(zeta) * Global_Parameters::omega_disk[1];
+	 
 	// modulate the in-plane amplitude
 	amplitude_in_plane[j] *= cos(zeta);
 
@@ -4754,15 +4789,20 @@ void FlowAroundDiskProblem<ELEMENT>::impose_fake_singular_amplitude()
 	// in-plane translation amplitude
 	amplitude_in_plane_rotation[j] *= sin(zeta);
       }
+
+      sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane_rotation,
+      						amplitude_in_plane_rotation);
     }
 
+    // pin the broadside singular function dof and set its amplitude to the
+    // imposed amplitude    
+    sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_broadside,
+					      amplitude_broadside);
+	
     // pin the in-plane translation and rotation singular function dofs
     // and set their amplitude to the imposed amplitude
     sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane,
     					      amplitude_in_plane);
-
-    sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane_rotation,
-    					      amplitude_in_plane_rotation);
   }  
 }
 
@@ -5422,6 +5462,8 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
     oomph_info << "Output description of nodes to " << filename << std::endl;
   }
 
+  oomph_info << "Outputting extended solution..." << std::endl;
+  
   // Plot "extended solution" showing contributions
   sprintf(filename,"%s/extended_soln%i.dat",Doc_info.directory().c_str(),
 	  Doc_info.number());
@@ -5584,7 +5626,7 @@ int main(int argc, char* argv[])
     "--set_initial_conditions_to_non_singular_solution");
     
   // Modulate the singular amplitude by cos(zeta)
-  CommandLineArgs::specify_command_line_flag(  "--cosine_amplitude");
+  CommandLineArgs::specify_command_line_flag("--cosine_amplitude");
   
   // // Angular speed scaling for rotation about y-axis (diameter)
   // CommandLineArgs::specify_command_line_flag("--omega_minus_y",

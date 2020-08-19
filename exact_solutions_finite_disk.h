@@ -435,6 +435,19 @@ namespace FlatDiskExactSolutions
   // //////////////////////////////////////////////////////////////////////////
   // //////////////////////////////////////////////////////////////////////////
 
+  // rotation matrix for right-handed rotation of theta about e_y
+  DenseMatrix<double> R_y(const double& theta)
+  {  
+    DenseMatrix<double> R(3,3,0.0);
+    R(0,0) = cos(theta);
+    R(0,2) = sin(theta);
+    R(1,1) = 1;
+    R(2,0) = -sin(theta);
+    R(2,2) = cos(theta);
+
+    return R;
+  }
+  
   /// \short Exact solution for out-of-plane rotation (about -y axis).
   void out_of_plane_rotation_solution(const Vector<double>& x_const,
 				      Vector<double>& u)
@@ -442,6 +455,33 @@ namespace FlatDiskExactSolutions
     // check if this point is exactly on the edge of the disk,
     // and move it slightly away if so
     Vector<double> x = shift_x_away_from_disk_edge(x_const);
+
+    // rotate the point 180deg around the y-axis
+
+    const double pi = MathematicalConstants::Pi;
+
+    bool in_lower_half_space = (x[2] < 0);
+
+    // the solution is only valid for the half-space z>=0,
+    // so if we're in the half-space z<0, rotate the point by pi around the y-axis
+    if(in_lower_half_space)
+    {
+      Vector<double> x_rotated(3, 0.0);
+
+      // get the rotation matrix for a rotation of pi around e_y
+      DenseMatrix<double> Ry = R_y(pi);
+      
+      // now rotate the position vector
+      for(unsigned i=0; i<3; i++)
+      {
+	for(unsigned j=0; j<3; j++)
+	{
+	  x_rotated[i] += Ry(i,j)*x[j];
+	}
+      }
+
+      x = x_rotated;
+    }
     
     // x-y radius
     const double r = sqrt(x[0]*x[0] + x[1]*x[1]);
@@ -449,12 +489,9 @@ namespace FlatDiskExactSolutions
     // azimuthal angle
     const double theta = atan2(x[1], x[0]);
 
-    // the solution is only valid for the half-space z>=0,
-    // so flip the z coordinate if we're in the lower half-space
-    // and apply the appropriate symmetries after
-    bool in_lower_half_space = (x[2] < 0);
-    const double z = in_lower_half_space ? -x[2] : x[2];
-      
+    // z coordinate
+    const double z = x[2];
+          
     // oblate spheroidal coordinates
     double lambda = 0;
     double zeta   = 0;
@@ -467,24 +504,36 @@ namespace FlatDiskExactSolutions
 	(1 + (1 - zeta*zeta) / (1 + lambda*lambda) ) );
     
     double u_theta = (2*sin(theta)/pi) * lambda*zeta *
-      ( acot(lambda) - lambda / (lambda*lambda + zeta*zeta) );
+      ( acot(lambda) - lambda / (1 + lambda*lambda) );
     
     double u_z = (2*cos(theta)/pi) * sqrt((1 - zeta*zeta)/(1+lambda*lambda)) *
       ( (1+lambda*lambda)*acot(lambda) -
 	lambda*(lambda*lambda - zeta*zeta) / (lambda*lambda + zeta*zeta) );
     
     double p = (8*cos(theta)/pi) * sqrt((1 - zeta*zeta)/(1+lambda*lambda)) *
-      lambda / (lambda*lambda + zeta*zeta);
+      zeta / (lambda*lambda + zeta*zeta);
+
+    // convert
+    u = velocity_cylindrical_to_cartesian(u_r, u_theta, u_z, theta);
 
     if(in_lower_half_space)
     {
-      // u_z is symmetric about z=0, u_r, and p are anti-symmetric
-      u_r = -u_r;
-      p   = -p;
+      Vector<double> u_rotated(3, 0.0);
+
+      // get the rotation matrix for a rotation of -pi around e_y
+      DenseMatrix<double> Ry = R_y(-pi);
+      
+      // now rotate the velocity vector back again
+      for(unsigned i=0; i<3; i++)
+      {
+	for(unsigned j=0; j<3; j++)
+	{
+	  u_rotated[i] += Ry(i,j)*u[j];
+	}
+      }
+
+      u = u_rotated;
     }
-    
-    // convert
-    u = velocity_cylindrical_to_cartesian(u_r, u_theta, u_z, theta);
     
     // and add pressure to solution vector
     u.push_back(p);
@@ -800,7 +849,7 @@ namespace FlatDiskExactSolutions
 				     DenseMatrix<double>& du_dx)
   {
     // coordinate increment for finite-difference gradient
-    const double fd_dx = 1e-6;
+    const double fd_dx = 1e-8;
 
     // make enough space
     du_dx.resize(3,3, 0.0);

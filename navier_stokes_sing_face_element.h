@@ -79,10 +79,13 @@ namespace oomph
     // their derivatives
     typedef Vector<double>(*UnscaledSingSolnFctPt) (const EdgeCoordinates& rzp_coords);
 
+    // QUEHACERES probably want to delete this if we don't need it for the C residuals
     typedef DenseMatrix<double>(*GradientOfUnscaledSingSolnFctPt)
       (const EdgeCoordinates& rzp_coords);
 
-
+    // function which provides dzeta/dx
+    typedef Vector<double>(*DzetaDxFctPt)(const EdgeCoordinates& edge_coords);
+	
     /// \short Constructor, takes a pointer to the 2D disk element and the
     /// index of the face to which this element is attached. 
     ScalableSingularityForNavierStokesLineElement(FiniteElement* const& disk_el_pt, 
@@ -121,6 +124,12 @@ namespace oomph
       BrokenCopy::broken_assign("ScalableSingularityForNavierStokesLineElement");
     }
 
+    // Function to get the pointer to the function which computes dzeta/dx
+    DzetaDxFctPt& dzeta_dx_fct_pt()
+    {
+      return Dzeta_dx_fct_pt;
+    }
+    
     // QUEHACERES delete, now using add_unscaled_sing...()
     /* ///Function to get pointer to the unscaled version of a singular function */
     /* UnscaledSingSolnFctPt& unscaled_singular_fct_pt(const unsigned& sing_fct_id) */
@@ -145,8 +154,8 @@ namespace oomph
     /* } */
 
     void add_unscaled_singular_fct_and_gradient_pt(
-      const UnscaledSingSolnFctPt sing_fct_pt,
-      const GradientOfUnscaledSingSolnFctPt grad_of_sing_fct_pt,
+      const UnscaledSingSolnFctPt& sing_fct_pt,
+      const GradientOfUnscaledSingSolnFctPt& grad_of_sing_fct_pt,
       const unsigned& sing_fct_id)
     {      
       // check if we've already got this ID
@@ -158,6 +167,26 @@ namespace oomph
 	OOMPH_EXCEPTION_LOCATION);
       }
 
+#ifdef PARANOID
+
+      if(sing_fct_pt == 0)
+      {
+	throw OomphLibError(
+	"Unscaled singular function pointer is null!",
+	OOMPH_CURRENT_FUNCTION,
+	OOMPH_EXCEPTION_LOCATION);
+      }
+
+      if(grad_of_sing_fct_pt == 0)
+      {
+	throw OomphLibError(
+	"Gradient of unscaled singular function pointer is null!",
+	OOMPH_CURRENT_FUNCTION,
+	OOMPH_EXCEPTION_LOCATION);
+      }
+	    
+#endif
+      
       // add the ID to the map, index is the current size of the vectors
       // of function pointers
       unsigned nsing = Unscaled_singular_fct_pt.size();
@@ -232,15 +261,15 @@ namespace oomph
       Vector<double> scaled_singular_fct(nvalue, 0.0);
 
       // get the unscaled functions
-      Vector<double> u_sing_unscaled(Dim);
-      u_sing_unscaled = unscaled_singular_fct(edge_coords, sing_fct_id);
+      Vector<double> u_sing_unscaled = unscaled_singular_fct(edge_coords, sing_fct_id);
 
-      double amplitude = interpolated_amplitude(s, sing_fct_id);
+      // get the singular amplitude associated with this ID and these local coords
+      double c = interpolated_amplitude(s, sing_fct_id);
       
       // scale 'em
       for(unsigned i=0; i<nvalue; i++)
       {
-	scaled_singular_fct[i] = amplitude * u_sing_unscaled[i];
+	scaled_singular_fct[i] = c * u_sing_unscaled[i];
       }
 
       /* // QUEHACERES for debug */
@@ -255,20 +284,48 @@ namespace oomph
 						 const Vector<double>& s,
 						 const unsigned& sing_fct_id) const
     {
-      DenseMatrix<double> grad =
+      // get the interpolated singular amplitude
+      const double c = interpolated_amplitude(s, sing_fct_id);
+
+      // get the unscaled singular velocity
+      Vector<double> u_sing_unscaled = unscaled_singular_fct(edge_coords, sing_fct_id);
+      
+      // get the unscaled singular velocity gradient
+      DenseMatrix<double> dudx_sing_unscaled =
 	gradient_of_unscaled_singular_fct(edge_coords, sing_fct_id);
+
+      // get the Lagrangian derivative of the singular amplitude, dc/dzeta
+      double dc_dzeta = interpolated_dc_dzeta(s, sing_fct_id);
+
+#ifdef PARANOID
+      if (Dzeta_dx_fct_pt == 0)
+      {
+	throw OomphLibError("Error: function pointer for dzeta/dx hasn't been set\n",
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
+      }
+#endif
+
+      // get the Eulerian derivatives dzeta/dx from the function pointer
+      Vector<double> dzeta_dx = Dzeta_dx_fct_pt(edge_coords);
       
-      const unsigned N = grad.nrow();
-      const unsigned M = grad.ncol();
+      // number of rows and columns
+      const unsigned N = dudx_sing_unscaled.nrow();
+      const unsigned M = dudx_sing_unscaled.ncol();
+
+      // the scaled Eulerian velocity gradient
+      DenseMatrix<double> dudx_sing(N,M, 0.0);
       
+      // now compute it: d(c*u_sing)/dx = dc/dzeta * dzeta/dx * u_sing + c*du_sing/dx      
       for(unsigned i=0; i<N; i++)
       {
 	for(unsigned j=0; j<M; j++)
 	{
-	  grad(i,j) *= interpolated_amplitude(s, sing_fct_id);
+	  dudx_sing(i,j) = u_sing_unscaled[i] * dc_dzeta * dzeta_dx[j] +
+	    c * dudx_sing_unscaled(i,j);
 	}
       }
-      return grad;
+      return dudx_sing;
     }
 
     // wrapper to get the total contribution of the singular part of the solution
@@ -340,7 +397,7 @@ namespace oomph
     {
       // get the index for this ID from the map
       // (std::map::at() throws an exception if this index doesn't exist)
-      unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
+      const unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
       
       // make space for the shape functions
       Shape psi(nnode());
@@ -355,10 +412,48 @@ namespace oomph
       // interpolated amplitude
       for(unsigned j=0; j<nnode(); j++)
       {
-	interpolated_c += this->node_pt(j)->value(sing_fct_index) * psi[j];
+	interpolated_c += nodal_value(j, sing_fct_index) * psi[j];
       }
 
       return interpolated_c;
+    }
+
+    /// \short Function to compute the interpolated value of dc/dzeta, i.e. the
+    /// variation in the singular amplitude w.r.t. zeta
+    double interpolated_dc_dzeta(const Vector<double>& s, const unsigned& sing_fct_id) const
+    {
+      // get the index for this ID from the map
+      // (std::map::at() throws an exception if this index doesn't exist)
+      const unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
+
+      // make space for the shape functions and their derivatives
+      Shape psi(nnode());      
+      DShape dpsi_ds(nnode(), Dim);
+
+      // Find values of shape functions and their derivatives
+      this->dshape_local(s, psi, dpsi_ds);
+
+      // compute interpolated local derivatives dc/ds and dzeta/ds
+      Vector<double> interpolated_dc_ds(Dim, 0.0);
+      Vector<double> interpolated_dzeta_ds(Dim, 0.0);
+      
+      for(unsigned l=0; l<nnode(); l++) 
+      {
+	for(unsigned j=0; j<Dim; j++)
+	{
+	  interpolated_dc_ds[j]    += nodal_value(l, sing_fct_index) * dpsi_ds(l,j);
+	  interpolated_dzeta_ds[j] += zeta_nodal(l,0,j) * dpsi_ds(l,j);
+	}
+      }
+
+      // now compute dc/dzeta = dc/ds * 1/(dzeta/ds)
+      double interp_dc_dzeta = 0.0;
+      for(unsigned j=0; j<Dim; j++)
+      {
+	interp_dc_dzeta += interpolated_dc_ds[j] / interpolated_dzeta_ds[j];
+      }
+            
+      return interp_dc_dzeta;
     }
     
     // Override to provide the global boundary zeta for the nth node on the
@@ -594,37 +689,44 @@ namespace oomph
       Zeta_has_been_setup = true;
     }
 
-    ///Pointers to the singular functions
+    /// Pointers to the singular functions
     Vector<UnscaledSingSolnFctPt> Unscaled_singular_fct_pt;
 
-    ///Pointers to gradients of the singular funcions
+    /// Pointers to gradients of the singular funcions
     Vector<GradientOfUnscaledSingSolnFctPt> Gradient_of_unscaled_singular_fct_pt;
 
-    // object which maps an ID for a given singular function to it's
+    /// Function pointer to a function which computes dzeta/dx_j
+    DzetaDxFctPt Dzeta_dx_fct_pt;
+      
+    /// Object which maps an ID for a given singular function to it's
     // corresponding index in the vectors of singular function pointers
     std::map<unsigned, unsigned> Singular_fct_index;
 
-    // the IDs of the singular functions, i.e. the keys for the above map
+    /// The IDs of the singular functions, i.e. the keys for the above map
     Vector<unsigned> Singular_fct_id;
     
-    // flag to check that the nodal zeta values have been setup appropriately
+    /// Flag to check that the nodal zeta values have been setup appropriately
     // so that we don't need to recompute
     bool Zeta_has_been_setup;
     
-    /// the boundary zeta of each node in this element
+    /// The boundary zeta of each node in this element
     Vector<double> Zeta;
 
     // QUEHACERES delete
     /* /// Number of singular functions to subtract */
     /* unsigned Nsingular_fct; */
 
-    // dimensionality of this element
+    /// Dimensionality of this element
     unsigned Dim;
+
+    /// Dimensionality of the whole problem
+    unsigned Bulk_dim;
   };
   
   
   /// \short Constructor, takes a pointer to the 2D disk element and the
   /// index of the face to which this element is attached
+  // QUEHACERES don't hard code the dimensions
   template <unsigned NNODE_1D>
   ScalableSingularityForNavierStokesLineElement<NNODE_1D>::
     ScalableSingularityForNavierStokesLineElement(FiniteElement* const& disk_el_pt, 
@@ -633,7 +735,7 @@ namespace oomph
 						  std::map<Node*,Node*>& existing_duplicate_node_pt,
 						  const bool& use_zeta_2pi_instead_of_0) :
     FaceGeometry<TElement<2,NNODE_1D> >(), FaceElement(), // QUEHACERES delete: Nsingular_fct(nsingular_fct),
-    Zeta_has_been_setup(false), Dim(1)
+    Zeta_has_been_setup(false), Dim(1), Bulk_dim(3), Dzeta_dx_fct_pt(0)
   {
     // QUEHACERES delete
     /* // make enough space for the singular function pointers */
@@ -774,7 +876,7 @@ namespace oomph
 	      // the dofs are pinned
 	      throw OomphLibError("QUEHACERES not implemented yet",
 				  OOMPH_CURRENT_FUNCTION,
-				  OOMPH_EXCEPTION_LOCATION);	     
+				  OOMPH_EXCEPTION_LOCATION);
 	    }
 	  } // end loop over singular amplitudes
 	}
@@ -3592,6 +3694,11 @@ namespace oomph
 	x[i] = this->interpolated_x(s,i);	
       }
 
+      // QUEHACERES debug @@@@@@
+      double tol = 1e-6;
+      if(abs(x[0]+0.9) < tol && abs(x[1]-0.0945938) < tol && abs(x[2]) < tol)
+      	double breakpoint = 1;
+      
       // regular part of the solution
       Vector<double> u_exact_non_sing(DIM+1, 0.0);
             
@@ -3616,7 +3723,7 @@ namespace oomph
       // ==========================================
       // coordinates
       for(unsigned i=0; i<DIM; i++) 
-      {
+      { 
 	outfile << x[i] << " ";
       }
       
@@ -3726,6 +3833,16 @@ namespace oomph
 							 s_singular_el,
 							 sing_fct_id);
 
+	// QUEHACERES debug
+	bool is_finite = isfinite(u_sing[0]) && isfinite(u_sing[1])
+	  && isfinite(u_sing[2]) && isfinite(u_sing[3]);
+
+	if(!is_finite)
+	{
+	  oomph_info << "NOT FINITE!!" << std::endl;
+	  abort();
+	}
+	
 	for(unsigned i=0; i<DIM+1; i++)
 	{
 	  outfile << u_sing[i] << " ";
@@ -4136,6 +4253,18 @@ namespace oomph
 	  break;
 	case 15:
 	  name = "Singular Pressure (in-plane)";
+	  break;
+	case 16:
+	  name = "Singular Velocity (in-plane rotation) x";
+	  break;
+	case 17:
+	  name = "Singular Velocity (in-plane rotation) y";
+	  break;
+	case 18:
+	  name = "Singular Velocity (in-plane rotation) z";
+	  break;
+	case 19:
+	  name = "Singular Pressure (in-plane rotation)";
 	  break;
 	default:
 	  name = "V"+StringConversion::to_string(i);
