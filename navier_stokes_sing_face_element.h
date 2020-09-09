@@ -233,14 +233,6 @@ namespace oomph
     DenseMatrix<double> gradient_of_unscaled_singular_fct(const EdgeCoordinates& edge_coords,
 							  const unsigned& sing_fct_id) const
     {
-      // QUEHACERES delete
-      /* DenseMatrix<double> grad(rzp_coords.ncoord, rzp_coords.ncoord, 0.0); */
-      
-      /* if(Gradient_of_unscaled_singular_fct_pt[ising] == 0) */
-      /* { */
-      /* 	return grad; */
-      /* } */
-
       // get the index for this ID from the map
       // (std::map::at() throws an exception if this index doesn't exist)
       unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
@@ -329,11 +321,11 @@ namespace oomph
     }
 
     // wrapper to get the total contribution of the singular part of the solution
-    Vector<double> total_singular_contribution(const EdgeCoordinates& rzp_coords,
+    Vector<double> total_singular_contribution(const EdgeCoordinates& edge_coords,
 					       const Vector<double>& s) const
     {
       // total singular part of the solution
-      Vector<double> u_sing_total(rzp_coords.ncoord + 1, 0.0);
+      Vector<double> u_sing_total(edge_coords.ncoord + 1, 0.0);
 
       // loop over each singular function and add the contribution to the total
       for(std::map<unsigned,unsigned>::const_iterator it = Singular_fct_index.begin();
@@ -345,7 +337,7 @@ namespace oomph
 	unsigned sing_fct_id = it->first;
 	
 	// get the contribution of the ith singular function
-	Vector<double> u_sing = singular_fct(rzp_coords, s, sing_fct_id);
+	Vector<double> u_sing = singular_fct(edge_coords, s, sing_fct_id);
 
 	// add it to the total
 	for(unsigned j=0; j<u_sing.size(); j++)
@@ -360,7 +352,7 @@ namespace oomph
       total_singular_gradient_contribution(const EdgeCoordinates& rzp_coords,
 					   const Vector<double>& s) const
     {
-      const unsigned nval = rzp_coords.ncoord + 1;
+      const unsigned nval = rzp_coords.ncoord;
       
       // total of the singular derivatives      
       DenseMatrix<double> dudx_total(nval, nval, 0.0);
@@ -517,6 +509,16 @@ namespace oomph
 	  outfile << amplitude << " ";
 	}
 	
+	// and the gradients
+	for(std::map<unsigned,unsigned>::iterator it = Singular_fct_index.begin();
+	  it != Singular_fct_index.end(); it++)
+	{
+	  // get the singular function ID
+	  unsigned sing_fct_id = it->first;
+	  
+	  double dc_dzeta = interpolated_dc_dzeta(s, sing_fct_id);
+	  outfile << dc_dzeta << " ";
+	}
 	outfile << std::endl;
       }
    
@@ -1012,6 +1014,41 @@ namespace oomph
 	return Line_element_and_local_coordinate_at_knot[i];
       }
 
+    void edge_coords_and_singular_element_at_knot(const unsigned& ipt,
+						  EdgeCoordinates& edge_coords,
+						  ScalableSingularityForNavierStokesLineElement<3>*& sing_el_pt,
+						  Vector<double>& s_singular_el) const
+    {
+      // get the line element and local coordinate which corresponds to the
+      // singular amplitude for this knot
+      std::pair<GeomObject*, Vector<double> > line_elem_and_local_coord = 
+	this->line_element_and_local_coordinate_at_knot(ipt);
+
+      // QUEHACERES avoid the hard coded template arg here
+      // cast the GeomObject to a singular line element      
+      sing_el_pt = dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>
+	(line_elem_and_local_coord.first);
+
+      // check we've actually got one, or we're in trouble
+      if(sing_el_pt == 0)
+      {
+	ostringstream error_message;
+
+	error_message << "Error: this singular face element has no "
+		      << "singular line element pointer\n";
+	    
+	throw OomphLibError(error_message.str().c_str(),
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
+      }
+
+      // local coordinate in the singular element for the zeta of this knot
+      s_singular_el = line_elem_and_local_coord.second;
+
+      // get the \rho,\zeta,\phi coordinates at this knot
+      edge_coords = this->edge_coordinate_at_knot(ipt);
+    }
+    
     /// \short Specify the value of nodal zeta from the face geometry
     /// The "global" intrinsic coordinate of the element when
     /// viewed as part of a geometric object should be given by
@@ -1646,18 +1683,18 @@ namespace oomph
       }
       
       // get the FE strain rate 1/2(du_i/dx_j + du_j/dx_i)
-      DenseMatrix<double> strain_rate_fe(Dim, Dim);
+      DenseMatrix<double> strain_rate_fe(Dim, Dim, 0.0);
       
       bulk_el_pt->strain_rate(s_bulk, strain_rate_fe);
       
       // FE part of the stress
-      DenseMatrix<double> stress_fe(Dim, Dim);
+      DenseMatrix<double> stress_fe(Dim, Dim, 0.0);
 
       // compute it from consitutive equation
       stress_fe = (*bulk_el_pt->stress_fct_pt())(strain_rate_fe, p_fe);
             
       // get FE part of the traction
-      Vector<double> traction_fe(Dim);
+      Vector<double> traction_fe(Dim, 0.0);
 
       // get FE traction from bulk element
       bulk_el_pt->get_traction(s_bulk, unit_normal, traction_fe);
@@ -2308,21 +2345,36 @@ namespace oomph
 	  
       }
 
-      // get the line element and local coordinate which corresponds to the
-      // singular amplitude for this knot
-      std::pair<GeomObject*, Vector<double> > line_elem_and_local_coord = 
-	this->line_element_and_local_coordinate_at_knot(ipt);
-
-      // cast the GeomObject to a singular line element
-      ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
-	dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>
-	(line_elem_and_local_coord.first);
-
-      // local coordinate in the singular element for the zeta of this knot
-      Vector<double> s_singular_el = line_elem_and_local_coord.second;
+      // QUEHACERES avoid the hard coded template arg here
+      // cast the GeomObject to a singular line element      
+      ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt = 0;
       
-      // get the \rho,\zeta,\phi coordinates at this knot
-      EdgeCoordinates edge_coords_at_knot = this->edge_coordinate_at_knot(ipt);
+      EdgeCoordinates edge_coords_at_knot;
+      Vector<double> s_singular_el(1, 0.0);
+      
+      // get the edge coordinates at this knot, the corresponding singular
+      // line element and it's local coordinates
+      this->edge_coords_and_singular_element_at_knot(ipt,						       
+						     edge_coords_at_knot,
+						     sing_el_pt,
+						     s_singular_el);
+      
+      // QUEHACERES delete
+      /* // get the line element and local coordinate which corresponds to the */
+      /* // singular amplitude for this knot */
+      /* std::pair<GeomObject*, Vector<double> > line_elem_and_local_coord =  */
+      /* 	this->line_element_and_local_coordinate_at_knot(ipt); */
+
+      /* // cast the GeomObject to a singular line element */
+      /* ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt = */
+      /* 	dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*> */
+      /* 	(line_elem_and_local_coord.first); */
+
+      /* // local coordinate in the singular element for the zeta of this knot */
+      /* Vector<double> s_singular_el = line_elem_and_local_coord.second; */
+      
+      /* // get the \rho,\zeta,\phi coordinates at this knot */
+      /* EdgeCoordinates edge_coords_at_knot = this->edge_coordinate_at_knot(ipt); */
 
        // Stuff related to singular fct
       Vector<double> u_sing(Dim+1, 0.0);
@@ -2619,8 +2671,8 @@ namespace oomph
       
 	  //Calculate stuff at integration point
 	  Vector<double> x(Dim, 0.0);
-	  Vector<double> u_left(Dim, 0.0);
-	  Vector<double> u_right(Dim, 0.0);
+	  Vector<double> u_augmented(Dim, 0.0);
+	  Vector<double> u_bulk(Dim, 0.0);
 	  Vector<double> lambda(Dim, 0.0);
 	  
 	  for(unsigned l=0; l<n_node; l++) 
@@ -2639,37 +2691,39 @@ namespace oomph
 	      // get the nodal index, accounting for the dimension offset
 	      unsigned lambda_index = first_index[this->Boundary_id] + i;
 	  
-	      u_left[i]  += this->nodal_value(l,i) * psi[l];
-	      u_right[i] += Orig_node_pt[l]->value(i) * psi[l];
+	      u_augmented[i]  += this->nodal_value(l,i) * psi[l];
+	      u_bulk[i] += Orig_node_pt[l]->value(i) * psi[l];
 	      lambda[i]  += this->nodal_value(l,lambda_index) * psi[l];
 	    
 	      x[i] += this->nodal_position(l,i) * psi[l];
 	    }
 	  }
-      
+	  
 	  for(unsigned i=0; i<Dim; i++) 
 	  {
 	    outfile << x[i] << " ";
 	  }
 	  for(unsigned i=0; i<Dim; i++) 
 	  {
-	    outfile << u_left[i] << " ";
+	    outfile << u_augmented[i] << " ";
 	  }
 	  for(unsigned i=0; i<Dim; i++) 
 	  {
-	    outfile << u_right[i] << " ";
+	    outfile << u_bulk[i] << " ";
 	  }
 	  for(unsigned i=0; i<Dim; i++) 
 	  {
-	    outfile << u_right[i] - u_left[i] << " ";
+	    outfile << u_bulk[i] - u_augmented[i] << " ";
 	  }
 	  for(unsigned i=0; i<Dim; i++) 
 	  {
 	    outfile << lambda[i] << " ";
 	  }
 	
-	  outfile << std::endl;   
-	}
+	  outfile << std::endl;
+	  
+	} // end loop over plot points
+	
     
 	// Write tecplot footer (e.g. FE connectivity lists)
 	this->write_tecplot_zone_footer(outfile, nplot);    
@@ -2728,7 +2782,115 @@ namespace oomph
 	  }	  
 	}
       }
+
+      // compute the contribution of this face element to the mean-squared of the
+      // pressure jump across the boundary of the torus
+      Vector<double> mean_squared_pressure_jump() const
+      {
+	double mean_sqr_dp = 0;
+	double mean_sqr_p_bulk = 0;
+	
+	// number of integration points
+	const unsigned n_intpt = this->integral_pt()->nweight();
+
+	// number of nodes
+	const unsigned n_node = this->nnode();
+
+	// local coordinates of each integration point
+	Vector<double> s(this->Dim-1, 0.0);
+
+	// Set up memory for the shape and test functions
+	Shape psi(n_node), test(n_node);
+    
+	//Loop over the integration points
+	//--------------------------------
+	for(unsigned ipt=0; ipt<n_intpt; ipt++)
+	{
+	  // get local coordinates of this integration point
+	  for(unsigned i=0; i<(this->Dim-1); i++)
+	  {
+	    s[i] = this->integral_pt()->knot(ipt,i);
+	  }
    
+	  // Get the integral weight
+	  double w = this->integral_pt()->weight(ipt);
+   
+	  //Find the shape and test functions and return the Jacobian
+	  //of the mapping
+	  double J = this->shape_and_test(s, psi, test);
+   
+	  //Premultiply the weights and the Jacobian
+	  double W = w*J;
+
+	  // pressure index
+	  const unsigned p_index = this->Dim;
+	  	  
+	  // interpolated pressure values at this integration point
+	  double interpolated_p_augmented = 0;
+	  double interpolated_p_bulk = 0;
+
+	  // QUEHACERES avoid the hard coded template arg here
+	  // cast the GeomObject to a singular line element      
+	  ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt;
+
+	  EdgeCoordinates edge_coords_at_knot;
+	  Vector<double> s_singular_el(1, 0.0);
+
+	  // get the edge coordinates at this knot, the corresponding singular
+	  // line element and it's local coordinates
+	  this->edge_coords_and_singular_element_at_knot(ipt,
+	    edge_coords_at_knot,
+	    sing_el_pt,
+	    s_singular_el);
+	  
+	  // get the total contribution of the singular functions and their gradients
+	  // at this integration point
+
+	  // the sum of all scaled singular functions
+	  Vector<double> u_sing_total =
+	    sing_el_pt->total_singular_contribution(edge_coords_at_knot,
+	                                            s_singular_el);
+  
+	  // loop over the nodes and compute the interpolated pressure
+	  // on both sides of the torus boundary
+	  for(unsigned l=0; l<n_node; l++) 
+	  {
+	    // QUEHACERES for debug
+	    unsigned nval = Orig_node_pt[l]->nvalue();
+	    
+	    // make sure we're not at an mid-edge node which doesn't
+	    // contain the pressure
+	    if(Orig_node_pt[l]->nvalue() % this->Dim != 0)
+	    {
+	      // QUEHACERES debug
+	      double p_nodal_val_aug = this->nodal_value(l, p_index);
+	      double p_nodal_val_bulk = Orig_node_pt[l]->value(p_index);
+	      double psi_l = psi[l];
+	      
+	      interpolated_p_augmented += this->nodal_value(l, p_index)   * psi[l];
+	      interpolated_p_bulk      += Orig_node_pt[l]->value(p_index) * psi[l];
+
+	      // QUEHACERES debug
+	      if(!isfinite(interpolated_p_augmented) || !isfinite(interpolated_p_bulk))
+		unsigned breakpoint = 1;
+	    }
+	  }
+
+	  // add on the singular contributions to the pressure
+	  interpolated_p_augmented = u_sing_total[p_index];
+	    
+	  // and add the weighted contribution to the integral
+	  mean_sqr_dp     += W * pow(interpolated_p_bulk - interpolated_p_augmented, 2);
+	  mean_sqr_p_bulk += W * pow(interpolated_p_bulk, 2);
+	}
+
+	Vector<double> mean_squares(2, 0.0);
+	mean_squares[0] = mean_sqr_dp;
+	mean_squares[1] = mean_sqr_p_bulk;
+	
+	return mean_squares;
+      }
+      
     private:   
 
       /// \short Add the element's contribution to its residual vector.
@@ -3021,17 +3183,31 @@ namespace oomph
 	  lambda[i]      += this->nodal_value(l, lambda_index) * psi[l];
 	}
       }
-      
-      // get the line element and local coordinate which corresponds to the
-      // singular amplitude for this knot
-      std::pair<GeomObject*, Vector<double> > line_elem_and_local_coord = 
-	this->line_element_and_local_coordinate_at_knot(ipt);
+
+      // QUEHACERES delete
+      /* // get the line element and local coordinate which corresponds to the */
+      /* // singular amplitude for this knot */
+      /* std::pair<GeomObject*, Vector<double> > line_elem_and_local_coord =  */
+      /* 	this->line_element_and_local_coordinate_at_knot(ipt); */
 
       // QUEHACERES avoid the hard coded template arg here
       // cast the GeomObject to a singular line element      
-      ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
-	dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>
-	(line_elem_and_local_coord.first);
+      ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt;
+
+      EdgeCoordinates edge_coords_at_knot;
+      Vector<double> s_singular_el(1, 0.0);
+
+      // get the edge coordinates at this knot, the corresponding singular
+      // line element and it's local coordinates
+      this->edge_coords_and_singular_element_at_knot(ipt,
+	    edge_coords_at_knot,
+	    sing_el_pt,
+	    s_singular_el);
+      
+	// QUEHACERES delete;
+	/* = */
+	/* dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*> */
+	/* (line_elem_and_local_coord.first); */
 
       // check we've actually got one, or we're in trouble
       if(sing_el_pt == 0)
@@ -3049,12 +3225,13 @@ namespace oomph
       
       // get the list of singular function IDs
       Vector<unsigned> sing_ids = sing_el_pt->singular_fct_ids();
+
+      // QUEHACERES delete
+      /* // local coordinate in the singular element for the zeta of this knot */
+      /* Vector<double> s_singular_el = line_elem_and_local_coord.second; */
       
-      // local coordinate in the singular element for the zeta of this knot
-      Vector<double> s_singular_el = line_elem_and_local_coord.second;
-      
-      // get the \rho,\zeta,\phi coordinates at this knot
-      EdgeCoordinates edge_coords_at_knot = this->edge_coordinate_at_knot(ipt);
+      /* // get the \rho,\zeta,\phi coordinates at this knot */
+      /* EdgeCoordinates edge_coords_at_knot = this->edge_coordinate_at_knot(ipt); */
 
       // unscaled stuff. These are stored in an array so that they can be
       // looped over when implementing analytic jacobian
@@ -3065,17 +3242,12 @@ namespace oomph
       Vector<double> p_sing_unscaled(sing_el_pt->nsingular_fct());
       
       // the sum of all scaled singular functions
-      Vector<double> u_sing_total(Dim+1, 0.0);
-
-      // get the total contribution from the singular line element
-      u_sing_total = sing_el_pt->total_singular_contribution(edge_coords_at_knot,
-							     s_singular_el);
+      Vector<double> u_sing_total =
+	sing_el_pt->total_singular_contribution(edge_coords_at_knot,
+                                        	s_singular_el);
 
       // the total contribution of the singular velocity gradients
-      DenseMatrix<double> dudx_sing_total(Dim, Dim, 0.0);
-
-      // get 'em from the line element
-      dudx_sing_total = sing_el_pt->
+      DenseMatrix<double> dudx_sing_total = sing_el_pt->
 	total_singular_gradient_contribution(edge_coords_at_knot,
 					     s_singular_el);
       
@@ -3106,7 +3278,7 @@ namespace oomph
 
       // Compute outer unit normal at the specified local coordinate
       // to compute scaled and unscaled flux of singular solution
-      Vector<double> unit_normal(Dim);
+      Vector<double> unit_normal(Dim, 0.0);
       this->outer_unit_normal(s, unit_normal);
 
       // total singular contribution to the strain-rate

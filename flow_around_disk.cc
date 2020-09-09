@@ -1,3 +1,4 @@
+
 //LIC// ====================================================================
 //LIC// This file forms part of oomph-lib, the object-oriented, 
 //LIC// multi-physics finite-element library, available 
@@ -137,6 +138,10 @@ namespace Global_Parameters
   unsigned Nvertex_torus = 8; //10;
 
   unsigned Nplot_for_bulk = 5;
+
+  // how much to shift the edge radius for outputting "infinite" pressure
+  // (this will be updated based on the average element size in the torus)
+  double Drho_for_infinity = 1e-5;
   
   // size of the radially aligned disks used for outputting the solution at points
   // around the disk edge
@@ -172,6 +177,65 @@ namespace Global_Parameters
 
   MeshAsGeomObject* mesh_as_geom_object_pt;
 
+  bool Only_subtract_first_singular_term = false;
+
+  Vector<double> compute_singular_amplitudes_from_disk_velocity(const double& zeta)
+  {
+  
+    // broadside speed is the z-velocity component
+    double u_broadside =  u_disk_rigid_body[2];
+    
+    // in-plane speed is the magnitude of the x-y velocity
+    double u_in_plane = sqrt( pow(u_disk_rigid_body[0], 2) +
+			      pow(u_disk_rigid_body[1], 2) );
+
+    // azimuthal angle of the in-plane translation vector
+    double zeta_translation = atan2pi(u_disk_rigid_body[1],
+				      u_disk_rigid_body[0]);
+  
+    // azimuthal angle of the out-of-plane rotation vector
+    double zeta_rotation = atan2pi(omega_disk[1],
+				   omega_disk[0]);
+
+    // magnitude of the out-of-plane rotation vector
+    double omega_out_of_plane = sqrt(pow(omega_disk[0], 2) +
+				     pow(omega_disk[1], 2));
+
+
+    // broadside amplitude is the broadside translation plus the
+    // modulated contribution from out-of-plane rotations (with the factor of 2
+    // which appears for the out-of-plane solution to be locally equivalent
+    // to broadside motion)
+    double c_broadside = u_broadside + 2 * omega_out_of_plane * sin(zeta - zeta_rotation);
+
+    // in-plane amplitude is the in-plane speed modulated by
+    // a in-phase function of the angle of this point relative to the
+    // translation vector
+    double c_in_plane = u_in_plane * cos(zeta - zeta_rotation);
+  
+    // in-plane rotation amplitude is the in-plane speed modulated by
+    // a function pi/2 out of phase with the angle of this point relative to the
+    // translation vector
+    double c_in_plane_rotation = u_in_plane * sin(zeta - zeta_translation);
+
+    // now package them up for return
+    Vector<double> amplitudes(3, 0.0);
+
+    // if we're doing the exact solution, then we don't want any modulation
+    if(CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution"))
+    {
+      c_broadside = u_broadside > 0.0 ? 1 : 0;
+      c_in_plane = u_in_plane > 0.0 ? 1 : 0;
+      c_in_plane_rotation = 0; // QUEHACERES not doing this for the time being
+    }
+
+    amplitudes[0] = c_broadside;
+    amplitudes[1] = c_in_plane;
+    amplitudes[2] = c_in_plane_rotation;
+  
+    return amplitudes;
+  }
+  
   // hacky - the asymptotic singular functions to subtract
 #include "singular_functions.h"
 }
@@ -706,11 +770,18 @@ private:
       Face_mesh_for_stress_jump_pt->flush_element_and_node_storage();
 
       // delete the singular line elements
+      for(unsigned e=0; e<Singular_fct_element_mesh_pt->nelement(); e++)
+      {
+	// the destructor of the line element deletes the newly created nodes
+	delete Singular_fct_element_mesh_pt->element_pt(e);
+      }
+      Singular_fct_element_mesh_pt->flush_element_and_node_storage();
+      
       for(unsigned e=0; e<Singular_fct_element_mesh_lower_pt->nelement(); e++)
       {
 	// the destructor of the line element deletes the newly created nodes
 	delete Singular_fct_element_mesh_lower_pt->element_pt(e);
-      }
+      }      
       Singular_fct_element_mesh_lower_pt->flush_element_and_node_storage();
       
       for(unsigned e=0; e<Singular_fct_element_mesh_upper_pt->nelement(); e++)
@@ -797,6 +868,10 @@ private:
   /// singular functions
   Mesh* Singular_fct_element_mesh_upper_pt;
   Mesh* Singular_fct_element_mesh_lower_pt;
+
+  /// Mesh which combines the upper and lower halves, so we don't have to repeat code
+  Mesh* Singular_fct_element_mesh_pt;
+
   
   /// Mesh of face elements which impose Dirichlet boundary conditions
   Mesh* Face_mesh_for_bc_pt;
@@ -1205,7 +1280,10 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   add_sub_mesh(Bulk_mesh_pt);
 
   // set the number of singular functions to subtract (for output purposes)
-  Nsingular_function = 3;
+  if(CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution"))
+    Nsingular_function = 2;
+  else
+    Nsingular_function = 3;
 
   // Create face elements that compute contribution to amplitude residual
   //---------------------------------------------------------------------
@@ -1227,7 +1305,9 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   // initialise
   Singular_fct_element_mesh_upper_pt = new Mesh;
   Singular_fct_element_mesh_lower_pt = new Mesh;
-    
+
+  Singular_fct_element_mesh_pt = new Mesh;
+  
   // make the line mesh of elements that sit around the outer edge of the disk
   // and provide the singular functions as functions of the edge coordinates
   create_one_d_singular_element_mesh();
@@ -3543,15 +3623,33 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
     line_element_and_local_coordinate);      
   }
 
-  // ------------------------------------------------
-  // and now loop over the elements in the singular line meshes and tell them
-  // about the singular functions
-    
+  // add the two halves of the singular line mesh together
   for(unsigned e=0; e<Singular_fct_element_mesh_upper_pt->nelement(); e++)
   {
     ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
       dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
 	Singular_fct_element_mesh_upper_pt->element_pt(e));
+
+    Singular_fct_element_mesh_pt->add_element_pt(sing_el_pt);
+  }
+  for(unsigned e=0; e<Singular_fct_element_mesh_lower_pt->nelement(); e++)
+  {
+    ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
+      dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
+	Singular_fct_element_mesh_lower_pt->element_pt(e));
+
+    Singular_fct_element_mesh_pt->add_element_pt(sing_el_pt);
+  }
+  
+  // ------------------------------------------------
+  // and now loop over the elements in the singular line meshes and tell them
+  // about the singular functions
+    
+  for(unsigned e=0; e<Singular_fct_element_mesh_pt->nelement(); e++)
+  {
+    ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
+      dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
+	Singular_fct_element_mesh_pt->element_pt(e));
 
     // QUEHACERES exact solution for debug
     if(CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution"))
@@ -3576,8 +3674,8 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
 
       // QUEHACERES using the asymptotically expanded exact solution for now 11/08      
       sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-      	&Global_Parameters::SingularFunctions::singular_fct_exact_asyptotic_broadside,
-      	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asyptotic_broadside,
+      	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_broadside,
+      	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_broadside,
       	Sing_fct_id_broadside);
       
       // QUEHACERES taking out moffatt versions for the time being 11/08
@@ -3620,76 +3718,6 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
     sing_el_pt->dzeta_dx_fct_pt() = &Global_Parameters::SingularFunctions::compute_dzeta_dx;
   }
 
-  for(unsigned e=0; e<Singular_fct_element_mesh_lower_pt->nelement(); e++)
-  {
-    ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
-      dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
-	Singular_fct_element_mesh_lower_pt->element_pt(e));
-    
-    // QUEHACERES exact solution for debug
-    if(CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution"))
-    {
-      // Broadside singular function ------------------------------------------
-      sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-	&Global_Parameters::SingularFunctions::wrapper_to_exact_solution_broadside,
-	&Global_Parameters::SingularFunctions::wrapper_to_exact_velocity_gradient_broadside,
-	Sing_fct_id_broadside);
-
-      // In-plane singular function -------------------------------------------
-      sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-	&Global_Parameters::SingularFunctions::wrapper_to_exact_solution_in_plane,
-	&Global_Parameters::SingularFunctions::wrapper_to_exact_velocity_gradient_in_plane,
-	Sing_fct_id_in_plane);      
-    }
-    else
-    {
-      // Broadside singular function ------------------------------------------
-
-      // QUEHACERES using the asymptotically expanded exact solution for now 11/08      
-      sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-      	&Global_Parameters::SingularFunctions::singular_fct_exact_asyptotic_broadside,
-      	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asyptotic_broadside,
-      	Sing_fct_id_broadside);
-
-      // QUEHACERES taking out moffatt versions for the time being 11/08
-      // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-      // 	&Global_Parameters::SingularFunctions::singular_fct_broadside,
-      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_broadside,
-      // 	Sing_fct_id_broadside);
-
-      // In-plane singular function -------------------------------------------
-
-      // QUEHACERES using the asymptotically expanded exact solution for now 12/08
-      sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-      	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_in_plane,
-      	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_in_plane,
-      	Sing_fct_id_in_plane);
-
-      // // QUEHACERES taking out moffatt versions for the time being 12/08
-      // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-      // 	&Global_Parameters::SingularFunctions::singular_fct_in_plane,
-      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_in_plane,
-      // 	Sing_fct_id_in_plane);
-      
-      // u_zeta velocity component for in-plane singular function ----------------
-      // QUEHACERES if this works, change the enum name for the ID
-      sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-      	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_in_plane_zeta,
-      	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_in_plane_zeta,
-      	Sing_fct_id_in_plane_rotation);
-
-      // QUEHACERES taking out the proper rotational bit for the time being
-      // // In-plane rotation singular function ----------------------------------
-      // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-      // 	&Global_Parameters::SingularFunctions::singular_fct_in_plane_rotation,
-      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_in_plane_rotation,
-      // 	Sing_fct_id_in_plane_rotation);
-    }
-
-    // set the function pointer to the function which computes dzeta/dx
-    sing_el_pt->dzeta_dx_fct_pt() = &Global_Parameters::SingularFunctions::compute_dzeta_dx;
-  }
-  
   // add the elements in the torus region to the torus region mesh, so that it
   // can be used to compute the Z2 error
   unsigned nel = Bulk_mesh_pt->nregion_element(Torus_region_id);
@@ -3699,6 +3727,19 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
     Bulk_mesh_pt->region_element_pt(Torus_region_id, e));
     
     Torus_region_mesh_pt->add_element_pt(el_pt);
+
+    // tell the augmented elements about the function which computes the
+    // body force which arises from the 2D asymptotic solutions not satisfying the
+    // 3D Stokes equations
+    if(!CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution") &&
+       CommandLineArgs::command_line_flag_has_been_set("--subtract_source_and_body_force"))
+    {
+      el_pt->body_force_fct_pt() =
+	&Global_Parameters::SingularFunctions::asymptotic_total_body_force;
+
+      el_pt->source_fct_pt() =
+	&Global_Parameters::SingularFunctions::asymptotic_total_source_term;
+    }
   }
 
   // tell the elements on the lower side of the disk that they're on the lower disk
@@ -3889,7 +3930,7 @@ void FlowAroundDiskProblem<ELEMENT>::create_face_elements()
     // clean up
     delete surface_element_pt;
     
-    // // check if we've got the right face, i.e. with n = (1,0,0)
+    // // check if we've got the top face, i.e. with n = (0,0,1)
     double tol = 1e-6;
     // QUEHACERES change to top for debug
     if(abs(outer_unit_normal[0])   > tol ||
@@ -3985,10 +4026,9 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
   			  OOMPH_EXCEPTION_LOCATION);
     }
 
-    // if we're doing a traction problem and this is the right boundary, then
+    // if we're doing a traction problem and this is the traction boundary, then
     // we don't want to pin it with Dirchlet conditions
     
-    // // QUEHACERES taking this out for debug @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
     if(ibound == Outer_traction_boundary_id)
       continue;
 
@@ -4039,16 +4079,16 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
     }
   }
 
-  // unpin the traction boundary
-  unsigned nnode = Bulk_mesh_pt->nboundary_node(Outer_traction_boundary_id);
-  for (unsigned inod=0; inod<nnode; inod++)
-  {
-    // grab a pointer to this boundary node
-    Node* node_pt = Bulk_mesh_pt->boundary_node_pt(Outer_traction_boundary_id, inod);
+  // // unpin the traction boundary
+  // unsigned nnode = Bulk_mesh_pt->nboundary_node(Outer_traction_boundary_id);
+  // for (unsigned inod=0; inod<nnode; inod++)
+  // {
+  //   // grab a pointer to this boundary node
+  //   Node* node_pt = Bulk_mesh_pt->boundary_node_pt(Outer_traction_boundary_id, inod);
 
-    for(unsigned i=0; i<node_pt->nvalue(); i++)
-      node_pt->unpin(i);
-  }
+  //   for(unsigned i=0; i<node_pt->nvalue(); i++)
+  //     node_pt->unpin(i);
+  // }
 
   // QUEHACERES for debug: output the pin status of all the nodes
   for(unsigned j=0; j<Bulk_mesh_pt->nnode(); j++)
@@ -4682,6 +4722,7 @@ void FlowAroundDiskProblem<ELEMENT>::validate_singular_stress(const bool& broads
   
 }
 
+
 //==start_of_impose_fake_singular_amplitude===============================
 /// Set the singular amplitude to a prescribed value and bypass the proper calculation
 //========================================================================
@@ -4690,48 +4731,64 @@ void FlowAroundDiskProblem<ELEMENT>::impose_fake_singular_amplitude()
 {
   // tell all the elements in the singular element mesh about the fake
   // amplitude to impose
-  for(unsigned e=0; e<Singular_fct_element_mesh_upper_pt->nelement(); e++)
+  for(unsigned e=0; e<Singular_fct_element_mesh_pt->nelement(); e++)
   {    
     // get a pointer to this singular line element in the upper mesh
     ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
       dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
-	Singular_fct_element_mesh_upper_pt->element_pt(e));
+	Singular_fct_element_mesh_pt->element_pt(e));
 
+    // defaults here are so if we're subtracting the exact solution
+    // we get the right amplitudes (the exact in-plane already has the azimuthal/rotational
+    // bit built in, so the default amplitude for this should be zero)
+    
     // amplitude of each singular function at each node
-    Vector<double> amplitude_broadside(sing_el_pt->nnode(),
-				       Global_Parameters::Imposed_singular_amplitude_broadside);
-    Vector<double> amplitude_in_plane(sing_el_pt->nnode(),
-				      Global_Parameters::Imposed_singular_amplitude_in_plane);
+    Vector<double> amplitude_broadside(sing_el_pt->nnode(), 1.0);
+    // Global_Parameters::Imposed_singular_amplitude_broadside);
+    Vector<double> amplitude_in_plane(sing_el_pt->nnode(), 1.0);
+    // Global_Parameters::Imposed_singular_amplitude_in_plane);
 
     // same amplitude as for the in-plane, but will be modulated pi/2 out of phase
-    Vector<double> amplitude_in_plane_rotation(sing_el_pt->nnode(),  
-					       Global_Parameters::Imposed_singular_amplitude_in_plane);
+    Vector<double> amplitude_in_plane_rotation(sing_el_pt->nnode(), 0.0);
+    // Global_Parameters::Imposed_singular_amplitude_in_plane);
     
     // if we're subtracting the exact solution for debug, the modulation is already
     // taken care of
     // // QUEHACERES taking this out for the zeta=0 rotated exact solution
+    // if(!CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution"))
+    // {
+    // now loop over the nodes and modulate the in-plane amplitude
+    // by the azimuthal angle of each
+    for(unsigned j=0; j<sing_el_pt->nnode(); j++)
+    {
+      // get the zeta for this node
+      double zeta = sing_el_pt->zeta_nodal(j,0,0);
+
+      // compute the amplitudes
+      Vector<double> amplitudes =
+	Global_Parameters::compute_singular_amplitudes_from_disk_velocity(zeta);
+
+      // interpret the vector
+      amplitude_broadside[j]         = amplitudes[0];
+      amplitude_in_plane[j]          = amplitudes[1];
+      amplitude_in_plane_rotation[j] = amplitudes[2];
+
+      // QUEHACERES delete
+      // // // modulate the broadside amplitude to account for rotations about a diameter
+      // // amplitude_broadside[j] *= -cos(zeta) * Global_Parameters::omega_disk[1];
+	
+      // // modulate the in-plane amplitude
+      // amplitude_in_plane[j] *= cos(zeta);
+
+      // // modulate the in-plane rotation amplitude so it's pi/2 out from the
+      // // in-plane translation amplitude
+      // amplitude_in_plane_rotation[j] *= sin(zeta);
+    }
+
     if(!CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution"))
     {
-      // now loop over the nodes and modulate the in-plane amplitude
-      // by the azimuthal angle of each
-      for(unsigned j=0; j<sing_el_pt->nnode(); j++)
-      {
-	// get the zeta for this node
-	double zeta = sing_el_pt->zeta_nodal(j,0,0);
-
-	// // modulate the broadside amplitude to account for rotations about a diameter
-	// amplitude_broadside[j] *= -cos(zeta) * Global_Parameters::omega_disk[1];
-	
-	// modulate the in-plane amplitude
-	amplitude_in_plane[j] *= cos(zeta);
-
-	// modulate the in-plane rotation amplitude so it's pi/2 out from the
-	// in-plane translation amplitude
-	amplitude_in_plane_rotation[j] *= sin(zeta);
-      }
-
       sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane_rotation,
-      						amplitude_in_plane_rotation);
+						amplitude_in_plane_rotation);
     }
 
     // pin the broadside singular function dof and set its amplitude to the
@@ -4744,66 +4801,77 @@ void FlowAroundDiskProblem<ELEMENT>::impose_fake_singular_amplitude()
     sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane,
     					      amplitude_in_plane);
   }
-  
-  // and again for the lower half
-  for(unsigned e=0; e<Singular_fct_element_mesh_lower_pt->nelement(); e++)
-  {
-    // get a pointer to this singular line element in the lower mesh
-    ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
-      dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
-	Singular_fct_element_mesh_lower_pt->element_pt(e));
 
-    // amplitude of each singular function at each node
-    Vector<double> amplitude_broadside(sing_el_pt->nnode(),
-				       Global_Parameters::Imposed_singular_amplitude_broadside);
-    Vector<double> amplitude_in_plane(sing_el_pt->nnode(),
-				      Global_Parameters::Imposed_singular_amplitude_in_plane);
+  // QUEHACERES delete
+  // // and again for the lower half
+  // for(unsigned e=0; e<Singular_fct_element_mesh_lower_pt->nelement(); e++)
+  // {
+  //   // get a pointer to this singular line element in the upper mesh
+  //   ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
+  //     dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
+  // 	Singular_fct_element_mesh_lower_pt->element_pt(e));
 
-    // same amplitude as for the in-plane, but will be modulated pi/2 out of phase
-    Vector<double> amplitude_in_plane_rotation(sing_el_pt->nnode(), 
-					       Global_Parameters::Imposed_singular_amplitude_in_plane);
+  //   // defaults here are so if we're subtracting the exact solution
+  //   // we get the right amplitudes (the exact in-plane already has the azimuthal/rotational
+  //   // bit built in, so the default amplitude for this should be zero)
     
-    // pin the nth singular function dof and set its amplitude to the
-    // imposed amplitude
+  //   // amplitude of each singular function at each node
+  //   Vector<double> amplitude_broadside(sing_el_pt->nnode(), 1.0);
+  //   // Global_Parameters::Imposed_singular_amplitude_broadside);
+  //   Vector<double> amplitude_in_plane(sing_el_pt->nnode(), 1.0);
+  //   // Global_Parameters::Imposed_singular_amplitude_in_plane);
 
+  //   // same amplitude as for the in-plane, but will be modulated pi/2 out of phase
+  //   Vector<double> amplitude_in_plane_rotation(sing_el_pt->nnode(), 0.0);
+  //   // Global_Parameters::Imposed_singular_amplitude_in_plane);
+    
+  //   // if we're subtracting the exact solution for debug, the modulation is already
+  //   // taken care of
+  //   // // QUEHACERES taking this out for the zeta=0 rotated exact solution
+  //   if(!CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution"))
+  //   {
+  //     // now loop over the nodes and modulate the in-plane amplitude
+  //     // by the azimuthal angle of each
+  //     for(unsigned j=0; j<sing_el_pt->nnode(); j++)
+  //     {
+  // 	// get the zeta for this node
+  // 	double zeta = sing_el_pt->zeta_nodal(j,0,0);
 
-    // if we're subtracting the exact solution for debug, the modulation is already
-    // taken care of
-    // // QUEHACERES taking this out for the zeta=0 rotated exact solution
-    if(!CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution"))
-    {
-      // now loop over the nodes and modulate the in-plane amplitude
-      // by the azimuthal angle of each
-      for(unsigned j=0; j<sing_el_pt->nnode(); j++)
-      {
-	// get the zeta for this node
-	double zeta = sing_el_pt->zeta_nodal(j,0,0);
+  // 	// compute the amplitudes
+  // 	Vector<double> amplitudes = compute_singular_amplitudes_from_disk_velocity(zeta);
 
-	// // modulate the broadside amplitude to account for rotations about a diameter
-	// amplitude_broadside[j] *= -cos(zeta) * Global_Parameters::omega_disk[1];
-	 
-	// modulate the in-plane amplitude
-	amplitude_in_plane[j] *= cos(zeta);
+  // 	// interpret the vector
+  // 	amplitude_broadside[j]         = amplitudes[0];
+  // 	amplitude_in_plane[j]          = amplitudes[1];
+  // 	amplitude_in_plane_rotation[j] = amplitudes[2];
 
-	// modulate the in-plane rotation amplitude so it's pi/2 out from the
-	// in-plane translation amplitude
-	amplitude_in_plane_rotation[j] *= sin(zeta);
-      }
-
-      sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane_rotation,
-      						amplitude_in_plane_rotation);
-    }
-
-    // pin the broadside singular function dof and set its amplitude to the
-    // imposed amplitude    
-    sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_broadside,
-					      amplitude_broadside);
+  // 	// QUEHACERES delete
+  // 	// // // modulate the broadside amplitude to account for rotations about a diameter
+  // 	// // amplitude_broadside[j] *= -cos(zeta) * Global_Parameters::omega_disk[1];
 	
-    // pin the in-plane translation and rotation singular function dofs
-    // and set their amplitude to the imposed amplitude
-    sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane,
-    					      amplitude_in_plane);
-  }  
+  // 	// // modulate the in-plane amplitude
+  // 	// amplitude_in_plane[j] *= cos(zeta);
+
+  // 	// // modulate the in-plane rotation amplitude so it's pi/2 out from the
+  // 	// // in-plane translation amplitude
+  // 	// amplitude_in_plane_rotation[j] *= sin(zeta);
+  //     }
+
+  //     sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane_rotation,
+  //     						amplitude_in_plane_rotation);
+  //   }
+
+  //   // pin the broadside singular function dof and set its amplitude to the
+  //   // imposed amplitude
+  //   sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_broadside,
+  // 					      amplitude_broadside);
+    
+  //   // pin the in-plane translation and rotation singular function dofs
+  //   // and set their amplitude to the imposed amplitude
+  //   sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane,
+  //   					      amplitude_in_plane);
+  // }
+  
 }
 
 
@@ -4864,7 +4932,12 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 
   oomph_info << "Average element volume in torus region: "
 	     << volume_in_torus_region / n_el << std::endl;
-  
+
+  // set the small but finite edge radius to use for outputting "infinite" pressures
+  // at the edge of the disk
+  if(Doc_info.number() == 0)
+    Global_Parameters::Drho_for_infinity = pow(volume_in_torus_region / n_el, 1./3.)/50.;
+    
   // --------------------------------------------------------------------------
   // Plot disks around the perimeter of the disk...
   // --------------------------------------------------------------------------
@@ -5003,14 +5076,51 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
      
       // Output
       surface_element_pt->output(some_file, nplot);
-     
+
       // ...and we're done!
       delete surface_element_pt;
     }
   }
+  
   some_file.close();
+
   oomph_info << "Torus surface area: " <<  torus_surface_area << std::endl;
- 
+
+  if(Doc_info.number() > 0)
+  {
+    // integral of the squared bulk pressure and squared pressure jump
+    // across the boundary of the torus
+    double rms_pressure_jump = 0;
+    double rms_bulk_pressure = 0;
+    
+    unsigned n_element = Face_mesh_for_stress_jump_pt->nelement();
+    for(unsigned e=0; e<n_element; e++)
+    {
+      // Upcast from GeneralisedElement to the present element
+      NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>* stress_jump_el_pt =
+	dynamic_cast<NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>*>(
+	  Face_mesh_for_stress_jump_pt->element_pt(e));
+
+      // calculate the contribution of this face element to the mean-squared
+      // pressure jump across the torus boundary
+      Vector<double> mean_squares = stress_jump_el_pt->mean_squared_pressure_jump();
+      rms_pressure_jump += mean_squares[0];
+      rms_bulk_pressure += mean_squares[1];
+    }
+  
+    // now compute the root of the mean-squared pressure and pressure jump and output
+    rms_pressure_jump = sqrt(rms_pressure_jump);
+    rms_bulk_pressure = sqrt(rms_bulk_pressure);
+    
+    oomph_info << "---------------------------------------------------\n";
+    oomph_info << "RMS pressure jump across boundary of torus (r_torus = "
+	       << Global_Parameters::R_torus << "): "
+	       << rms_pressure_jump << " "
+	       << rms_pressure_jump / (torus_surface_area * rms_bulk_pressure) << "\n"
+	       << "---------------------------------------------------\n"
+	       << std::endl;
+  }
+  
   // Attach face elements to part of disk inside torus
   //--------------------------------------------------
   sprintf(filename,"%s/face_elements_on_disk_in_torus%i.dat",
@@ -5481,19 +5591,25 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   }
 
   some_file.close();    
- 
 
-  sprintf(filename, "%s/singular_line_mesh_upper%i.dat",
+  sprintf(filename, "%s/singular_line_mesh%i.dat",
 	  Doc_info.directory().c_str(), Doc_info.number());
   some_file.open(filename);
-  Singular_fct_element_mesh_upper_pt->output(filename, nplot);
+  Singular_fct_element_mesh_pt->output(filename, nplot);
   some_file.close();
 
-  sprintf(filename, "%s/singular_line_mesh_lower%i.dat",
-	  Doc_info.directory().c_str(), Doc_info.number());
-  some_file.open(filename);
-  Singular_fct_element_mesh_lower_pt->output(filename, nplot);
-  some_file.close();
+  // QUEHACERES delete
+  // sprintf(filename, "%s/singular_line_mesh_upper%i.dat",
+  // 	  Doc_info.directory().c_str(), Doc_info.number());
+  // some_file.open(filename);
+  // Singular_fct_element_mesh_upper_pt->output(filename, nplot);
+  // some_file.close();
+
+  // sprintf(filename, "%s/singular_line_mesh_lower%i.dat",
+  // 	  Doc_info.directory().c_str(), Doc_info.number());
+  // some_file.open(filename);
+  // Singular_fct_element_mesh_lower_pt->output(filename, nplot);
+  // some_file.close();
   
   //Increment counter for solutions 
   Doc_info.number()++;
@@ -5580,7 +5696,7 @@ int main(int argc, char* argv[])
 #else
   oomph_info << "====== Using analytic jacobian ======\n\n";
 #endif
-  
+
   // set up the multi-processor interface
   MPI_Helpers::init(argc,argv);
 
@@ -5608,7 +5724,12 @@ int main(int argc, char* argv[])
 
   // subtract the exact solution instead of the Moffatt solution
   CommandLineArgs::specify_command_line_flag("--subtract_exact_solution");
-    
+
+  // subtract the source and body force terms which arise from the
+  // (2 term) asymptotic expansion of the exact solution not exactly satisfying the
+  // Stokes equations
+  CommandLineArgs::specify_command_line_flag("--subtract_source_and_body_force");
+  
   // Value of the fake singular amplitude of the broadside mode
   // to impose on the solution for debug
   CommandLineArgs::specify_command_line_flag(
@@ -5651,6 +5772,8 @@ int main(int argc, char* argv[])
 					     &Global_Parameters::omega_disk[1]);
   CommandLineArgs::specify_command_line_flag("--angular_velocity_z",
 					     &Global_Parameters::omega_disk[2]);
+
+  CommandLineArgs::specify_command_line_flag("--only_subtract_first_asymptotic_term");
 
   CommandLineArgs::specify_command_line_flag("--p0",
 					     &Global_Parameters::p0);
@@ -5766,13 +5889,21 @@ int main(int argc, char* argv[])
 
   FlowAroundDiskProblem <ProjectableTaylorHoodElement<
     TNavierStokesElementWithSingularity<3,3> > > problem; // TTaylorHoodElement<3>::NNODE_1D>
-  
-  // are we imposing the amplitude directly and bypassing the calculation?
-  if (Global_Parameters::Imposed_singular_amplitude_broadside != 0 ||
-      Global_Parameters::Imposed_singular_amplitude_in_plane != 0)
+
+  // QUEHACERES of course we are, until the c equation works!
+  // // are we imposing the amplitude directly and bypassing the calculation?
+  // if (Global_Parameters::Imposed_singular_amplitude_broadside != 0 ||
+  //     Global_Parameters::Imposed_singular_amplitude_in_plane != 0)
+
+  if(!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
   {
     problem.impose_fake_singular_amplitude();
   }   
+
+  if(CommandLineArgs::command_line_flag_has_been_set("--only_subtract_first_asymptotic_term"))
+  {
+    Global_Parameters::Only_subtract_first_singular_term = true;
+  }
 
   // for debug
   if (CommandLineArgs::command_line_flag_has_been_set(
