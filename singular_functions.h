@@ -94,7 +94,7 @@ namespace SingularFunctions
     
     // unit vector in the rho direction    
     for(unsigned i=0; i<3; i++)
-      rho_hat[i] = -normal[i] * cos(edge_coords.phi) + binormal[i] * sin(edge_coords.phi);
+      rho_hat[i] = normal[i] * cos(edge_coords.phi) + binormal[i] * sin(edge_coords.phi);
 
     // the GeomObj::boundary_triad() gives back unit vectors, so \hat\zeta is
     // just the tangent vector
@@ -214,22 +214,64 @@ namespace SingularFunctions
     residuals.resize(1);
     residuals[0] = d;
   }
+
+  void eulerian_to_lagrangian_coord_residual(const Vector<double>& x,
+					     const Vector<double>& unknowns,
+					     Vector<double>& residuals)
+  {
+    residuals.resize(3, 0.0);
+
+    Vector<double> r_disk_edge(3);
+    Vector<double> tangent(3);
+    Vector<double> binormal(3);
+    Vector<double> normal(3);
+
+    double rho  = unknowns[0];
+    double zeta = unknowns[1];
+    double phi  = unknowns[2];
+  
+    // get the unit normal from the disk-like geometric object at this zeta
+    Global_Parameters::Warped_disk_with_boundary_pt->
+      boundary_triad(0, zeta, r_disk_edge, tangent, normal, binormal);
+
+    for(unsigned i=0; i<3; i++)
+    {    
+      residuals[i] = r_disk_edge[i] +
+	rho * (cos(phi) * normal[i] + sin(phi)*binormal[i]) - x[i];
+    }
+  }
   
   void eulerian_to_lagrangian_coordinates(const Vector<double>& x,
 					  EdgeCoordinates& edge_coords)
   {
-    // starting guess for boundary zeta is the zeta for a flat disk
-    double zeta_0 = atan2pi(x[1], x[0]);
+    
+    double r0 = sqrt(x[0]*x[0] + x[1]*x[1]) - 1.0;
+  
+    Vector<double> unknowns(3, 0.0);
+  
+    // starting guesses are the Lagrangian coordinates for a flat disk
+    unknowns[0] = sqrt(pow(r0, 2) + pow(x[2], 2)); // rho
+    unknowns[1] = atan2pi(x[1], x[0]);             // zeta
+    unknowns[2] = atan2(x[2], r0);                 // phi
 
-    Vector<double> unknowns(1);
-    unknowns[0] = zeta_0;
-
-    // do the solve to get the boundary zeta
     try
     {
       BlackBoxFDNewtonSolver::black_box_fd_newton_solve(
-	&distance_from_point_to_sn_plane, x, unknowns);
+      &eulerian_to_lagrangian_coord_residual, x, unknowns);
     }
+    // QUEHACERES delete
+    /* // starting guess for boundary zeta is the zeta for a flat disk */
+    /* double zeta_0 = atan2pi(x[1], x[0]); */
+
+    /* Vector<double> unknowns(1); */
+    /* unknowns[0] = zeta_0; */
+
+    /* // do the solve to get the boundary zeta */
+    /* try */
+    /* { */
+    /*   BlackBoxFDNewtonSolver::black_box_fd_newton_solve( */
+    /* 	&distance_from_point_to_sn_plane, x, unknowns); */
+    /* } */
     catch(const std::exception e)
     {
       std::ostringstream error_message;
@@ -240,36 +282,42 @@ namespace SingularFunctions
 			  OOMPH_CURRENT_FUNCTION,
 			  OOMPH_EXCEPTION_LOCATION);
     }
-    
-    // interpret the solve
-    double zeta = unknowns[0];
+
+    // QUEHACERES delete
+    /* // interpret the solve */
+    /* double zeta = unknowns[0]; */
           
-    double b_dummy = 0;
-    mVector x_disk_edge(3);
-    mVector tangent(3);
-    mVector binormal(3);
-    mVector normal(3);
+    /* double b_dummy = 0; */
+    /* mVector x_disk_edge(3); */
+    /* mVector tangent(3); */
+    /* mVector binormal(3); */
+    /* mVector normal(3); */
     
-    // get the unit normal from the disk-like geometric object at this zeta
-    Global_Parameters::Warped_disk_with_boundary_pt->
-      boundary_triad(b_dummy, zeta, x_disk_edge, tangent,
-		     normal, binormal);
+    /* // get the unit normal from the disk-like geometric object at this zeta */
+    /* Global_Parameters::Warped_disk_with_boundary_pt-> */
+    /*   boundary_triad(b_dummy, zeta, x_disk_edge, tangent, */
+    /* 		     normal, binormal); */
     
-    // compute the rho vector, the vector from the edge of the disk at this
-    // zeta to the point in question
-    mVector rho_vector = -(x_disk_edge - x);
+    /* // compute the rho vector, the vector from the edge of the disk at this */
+    /* // zeta to the point in question */
+    /* mVector rho_vector = -(x_disk_edge - x); */
 
-    // shorthands
-    double rho  = rho_vector.magnitude();
+    /* // shorthands */
+    /* double rho  = rho_vector.magnitude(); */
     
-    // Moffat angle (minus sign accounts for the reflection of the moffat solution, which assumes
-    // the semi-infinite plate is at x>0 not x<0 as we have with this coordinate system
-    double phi = atan2pi(rho_vector*binormal, -rho_vector*normal);
+    /* // Moffat angle (minus sign accounts for the reflection of the moffat solution, which assumes */
+    /* // the semi-infinite plate is at x>0 not x<0 as we have with this coordinate system */
+    /* double phi = atan2pi(rho_vector*binormal, -rho_vector*normal); */
 
-    // assign the Lagrangian coordinates
-    edge_coords.rho  = rho;
-    edge_coords.zeta = zeta;
-    edge_coords.phi  = phi;
+    /* // assign the Lagrangian coordinates */
+    /* edge_coords.rho  = rho; */
+    /* edge_coords.zeta = zeta; */
+    /* edge_coords.phi  = phi; */
+
+    // interpret the solve
+    edge_coords.rho  = unknowns[0];
+    edge_coords.zeta = unknowns[1];
+    edge_coords.phi  = unknowns[2];
   }
   
   /// Function which computes dzeta/dx
@@ -318,6 +366,10 @@ namespace SingularFunctions
     return dzeta_dx;
   }
 
+  // **************************************************************************
+  // QUEHACERES don't think this is used at the moment, but need to check
+  // the old phi angle convention isn't still in the maths here ***************
+  
   /// \short Function to convert derivatives of Lagrangian velocity components
   /// w.r.t. Lagrangian coordinates to Cartesian (Eulerian) velocity gradient tensor
   void lagrangian_to_eulerian_velocity_gradient(const EdgeCoordinates& edge_coords,
@@ -575,6 +627,11 @@ namespace SingularFunctions
   
   
   // //////////////////////////////////////////////////////////////////////////
+
+  // **************************************************************************
+  // QUEHACERES this still uses old phi convention!! but not used atm
+  // **************************************************************************
+  
   // Main function to compute the singular function and gradient, independent
   // of broadside or in-plane modes - simply takes two constants A and B and
   // computes the Moffatt solution and it's Cartesian velocity gradients.
@@ -595,7 +652,7 @@ namespace SingularFunctions
     // shorthands
     double rho  = edge_coords.rho;
     double zeta = edge_coords.zeta;
-    double phi  = edge_coords.phi;
+    double phi  = edge_coords.phi; 
 
     // catch the case where we're sat exactly at the singularity
     if(rho < tol/10.0)
@@ -652,13 +709,13 @@ namespace SingularFunctions
     DenseMatrix<double> u_lagrangian_derivs(3,3, 0.0);
 
     u_lagrangian_derivs(0,0) = u_moffatt_derivatives(0,0);  // du_rho/drho
-    u_lagrangian_derivs(0,1) = 0.0;                       // du_rho/dzeta
+    u_lagrangian_derivs(0,1) = 0.0;                         // du_rho/dzeta
     u_lagrangian_derivs(0,2) = u_moffatt_derivatives(0,1);  // du_rho/dphi
 
     // u_zeta = 0 so no du_zeta derivatives
       
     u_lagrangian_derivs(2,0) = u_moffatt_derivatives(1,0);  // du_phi/drho
-    u_lagrangian_derivs(2,1) = 0.0;                       // du_phi/dzeta
+    u_lagrangian_derivs(2,1) = 0.0;                         // du_phi/dzeta
     u_lagrangian_derivs(2,2) = u_moffatt_derivatives(1,1);  // du_phi/dphi
 	
     lagrangian_to_eulerian_velocity_gradient(edge_coords,
@@ -669,7 +726,10 @@ namespace SingularFunctions
 
   // //////////////////////////////////////////////////////////////////////////
   // //////////////////////////////////////////////////////////////////////////
-  
+
+  // **************************************************************************
+  // QUEHACERES not used atm, but probably still uses old phi angle convention
+  // **************************************************************************
   void gradient_of_singular_fct_moffatt_finite_diff(const EdgeCoordinates& edge_coords,
 						    const double& A, const double& B,
 						    DenseMatrix<double>& du_dx)
@@ -827,8 +887,11 @@ namespace SingularFunctions
     if(rho < tol)
       rho = dr;
 
-    // convert from moffatt angle and ensure phi \in [0,2pi]
-    double phi = Analytic_Functions::map_angle_to_range_0_to_2pi(PI - edge_coords.phi);
+    double phi = edge_coords.phi;
+
+    // QUEHACERES delete, using sensible angle convention now!
+    /* // convert from moffatt angle and ensure phi \in [0,2pi] */
+    /* double phi = Analytic_Functions::map_angle_to_range_0_to_2pi(PI - edge_coords.phi); */
  
     // cylindrical coordinates (r, zeta, z)
     Vector<double> u_cyl(3, 0.0);
@@ -856,14 +919,14 @@ namespace SingularFunctions
     }
     else // we're doing 2 terms
     {
-      // limit values as phi->pi
+      // limit values as phi->+/-pi
       u_cyl[0] = 1.0;
       u_cyl[1] = 0;
       u_cyl[2] = 0.0;
 
       p = 0.0;
       
-      if(abs(phi - PI) > tol)
+      if(abs(abs(phi) - PI) > tol)
       {
 	// u_r / cos(zeta)
 	u_cyl[0] = 1 + (2*sqrt(rho)*(-3 + cos(phi))*sqrt(1 + cos(phi)))/(3.*PI) - 
@@ -956,8 +1019,11 @@ namespace SingularFunctions
     if(rho < tol)
       rho = dr;
 
-    // convert from moffatt angle
-    double phi = Analytic_Functions::map_angle_to_range_0_to_2pi(PI - edge_coords.phi);
+    double phi = edge_coords.phi;
+
+    // QUEHACERES delete, using sensible angle convention now!
+    /* // convert from moffatt angle */
+    /* double phi = Analytic_Functions::map_angle_to_range_0_to_2pi(PI - edge_coords.phi); */
 
     // cylindrical coordinates (r,zeta,z)
     Vector<double> u_cyl(3, 0.0);
@@ -976,7 +1042,7 @@ namespace SingularFunctions
       // lim(u_zeta) as phi->pi = -1
       u_cyl[1] = -1;
     
-      if(abs(phi - PI) > tol)
+      if(abs(abs(phi) - PI) > tol)
       {
 	u_cyl[1] = -1 + (8*sqrt(rho)*sqrt(1 + cos(phi)))/(3.*PI) -
 	  (8*pow(rho,1.5)*pow(cos(phi/2.),4)*(1 + 2*cos(phi)))/(3.*PI*pow(1 + cos(phi),1.5));
@@ -1045,7 +1111,7 @@ namespace SingularFunctions
   {
     // how far to shift the radius to compute "infinity" when the actual
     // radius is zero
-    const double dr = Global_Parameters::Drho_for_infinity;;
+    const double dr = Global_Parameters::Drho_for_infinity;
     
     // tolerance for some floating-point comparisons
     const double tol = 1e-7;
@@ -1056,16 +1122,19 @@ namespace SingularFunctions
     // catch the case where we're sat exactly at the singularity
     if(rho < tol)
       rho = dr;
-    
-    // convert from moffatt angle
-    double phi = PI - edge_coords.phi;
 
-    // store the signed version of phi, since the +/- jump at pi is useful
-    // for getting the jump across the plate correct
-    double phi_signed = phi;
+    double phi = edge_coords.phi;
+
+    // QUEHACERES delete, using sensible angle convention now!
+    /* // convert from moffatt angle */
+    /* double phi = PI - edge_coords.phi; */
+
+    /* // store the signed version of phi, since the +/- jump at pi is useful */
+    /* // for getting the jump across the plate correct */
+    /* double phi_signed = phi; */
     
-    // and prevent multiple angle shenanigans
-    phi = Analytic_Functions::map_angle_to_range_0_to_2pi(phi);
+    /* // and prevent multiple angle shenanigans */
+    /* phi = Analytic_Functions::map_angle_to_range_0_to_2pi(phi); */
     
     // cylindrical coordinates (r,zeta,z)
     Vector<double> u_cyl(3, 0.0);
@@ -1092,7 +1161,7 @@ namespace SingularFunctions
 
     if(!Only_subtract_first_singular_term)
     {
-      if(abs(phi - PI) > tol)
+      if(abs(abs(phi) - PI) > tol)
       {
 	// QUEHACERES O(rho^3/2)
 	u_cyl[2] += (2*pow(rho,1.5)*pow(cos(phi/2.),6)*(-1 + 6*cos(phi)))/
@@ -1110,13 +1179,13 @@ namespace SingularFunctions
     double sin_phi_over_sqrt_1_plus_cos_phi = 0;
     double sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = 0;
     
-    if(abs(phi_signed - PI) < tol)
+    if(abs(phi - PI) < tol)
     {
       sin_phi_over_sqrt_1_plus_cos_phi = sqrt(2);
       sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = sqrt(2);
       u_cyl[2] = 1;
     }
-    else if(abs(phi_signed + PI) < tol)
+    else if(abs(phi + PI) < tol)
     {
       sin_phi_over_sqrt_1_plus_cos_phi = -sqrt(2);
       sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = -sqrt(2);
@@ -1253,8 +1322,11 @@ namespace SingularFunctions
   {
     Vector<double> u_lagr(4, 0.0);
 
-    // convert from Moffatt angle (where phi=0 is on the disk)
-    double phi = PI - edge_coords.phi;
+    double phi = edge_coords.phi;
+
+    // QUEHACERES delete, using sensible angle convention now!
+    /* // convert from Moffatt angle (where phi=0 is on the disk) */
+    /* double phi = PI - edge_coords.phi; */
 
     // this solution has u_rho = u_z = p = 0
 
@@ -1482,7 +1554,9 @@ namespace SingularFunctions
   {
     // coordinates with phi having the sensible (non-Moffatt!) definition
     double rho = edge_coords.rho;
-    double phi = Analytic_Functions::map_angle_to_range_0_to_2pi(PI - edge_coords.phi);
+    double phi = edge_coords.phi;
+    // QUEHACERES delete, using sensible angle convention now!
+    /* double phi = Analytic_Functions::map_angle_to_range_0_to_2pi(PI - edge_coords.phi); */
     double zeta = edge_coords.zeta;
     
     // zero out the residuals
@@ -1512,7 +1586,9 @@ namespace SingularFunctions
 				    Vector<double>& stokes_residual_cyl)
   {    
     double rho = edge_coords.rho;
-    double phi = Analytic_Functions::map_angle_to_range_0_to_2pi(PI - edge_coords.phi);
+    double phi = edge_coords.phi;
+    // QUEHACERES delete, using sensible angle convention now!
+    /* double phi = Analytic_Functions::map_angle_to_range_0_to_2pi(PI - edge_coords.phi); */
     double zeta = edge_coords.zeta;
 
     double tol = 1e-6;
@@ -1610,7 +1686,9 @@ namespace SingularFunctions
   {
     double rho = edge_coords.rho;
     double zeta = edge_coords.zeta;
-    double phi = Analytic_Functions::map_angle_to_range_0_to_2pi(PI - edge_coords.phi);
+    double phi = edge_coords.phi;
+    // QUEHACERES delete, using sensible angle convention now!
+    /* double phi = Analytic_Functions::map_angle_to_range_0_to_2pi(PI - edge_coords.phi); */
     
     // residual of the continuity equation, i.e. source term on the RHS
     double in_plane_source = 0;
