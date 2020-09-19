@@ -89,6 +89,10 @@ const double lower_plate_z_shift = -0.987e-8;
 // of a flat disk
 #include "exact_solutions_finite_disk.h"
 
+// functions to convert coordinates, velocities and gradients between
+// the Lagrangian edge coordinates and the global Cartesian system
+#include "coordinate_conversions.h"
+
 using namespace oomph;
 
 double TetMeshBase::Tolerance_for_boundary_finding = 1.0e-8;
@@ -244,38 +248,6 @@ namespace Global_Parameters
 ///////////////////////////////////////////////////////////////////////////
 namespace Analytic_Functions
 {
-  // function which takes the Cartesian coordinates of a point in the fluid bulk
-  // and a boundary zeta value for the disk and computes the normal distance from
-  // this point to the n-t plane at this value of zeta
-  void distance_from_point_to_sn_plane(const Vector<double>& parameters,
-				       const Vector<double>& unknowns,
-				       Vector<double>& residuals)
-  {
-    // interpret the parameters
-    mVector x(3,0);
-    x[0] = parameters[0];
-    x[1] = parameters[1];
-    x[2] = parameters[2];
-
-    double zeta = unknowns[0];
-
-    mVector r_disk_edge(3);
-    mVector tangent(3);
-    mVector surface_normal(3);
-    mVector normal(3);
-    
-    // get the unit normal from the disk-like geometric object at this zeta
-    Global_Parameters::Warped_disk_with_boundary_pt->
-      boundary_triad(0, zeta, r_disk_edge, tangent, normal, surface_normal);
-
-    // normal distance from the bulk point x to the plane defined by the
-    // outer-unit normal t
-    double d = (x - r_disk_edge) * tangent;
-
-    residuals.resize(1);
-    residuals[0] = d;
-  }
-
   // exact solution for the flat disk, handling linear combinations of
   // in-plane and broadside motion
   void exact_solution_flat_disk(const Vector<double>& x,
@@ -584,71 +556,8 @@ public:
 
       return normal_stress_integral;
     }
-    
-  void interpolated_triad_derivatives(const Vector<double>& s,
-				      DenseMatrix<double>& interpolated_dtangent_dx,
-				      DenseMatrix<double>& interpolated_dnormal_dx,
-				      DenseMatrix<double>& interpolated_dbinormal_dx)
-    {
-      // Get pointer to assocated bulk element
-      ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(bulk_element_pt());
-
-      unsigned nnode_bulk = bulk_el_pt->nnode();
-	
-      // local coordinates in bulk element
-      Vector<double> s_bulk(Dim+1);
-
-      // get 'em
-      this->get_local_coordinate_in_bulk(s, s_bulk);
-	
-      // make space for the derivatives of the shape functions from the bulk element
-      Shape psi(nnode_bulk);
-      DShape dpsi_dx(nnode_bulk, Dim+1);
-
-      // get 'em
-      bulk_el_pt->dshape_eulerian(s_bulk, psi, dpsi_dx);
-	  
-      // create storage for the tangent and normal vectors
-      Vector<double> tangent(Dim+1);
-      Vector<double> normal(Dim+1);
-      Vector<double> binormal(Dim+1);
-	
-      for(unsigned l=0; l<nnode_bulk; l++)
-      {
-	// get the local coordinates of this bulk node
-	Vector<double> s_node(Dim);
-	local_coordinate_of_node(l, s_node);
-
-	Vector<double> r(3);
-	r[0] = bulk_el_pt->node_pt(l)->x(0);
-	r[1] = bulk_el_pt->node_pt(l)->x(1);
-	r[2] = bulk_el_pt->node_pt(l)->x(2);
-	  
-	// get aziumthal angle
-	double zeta = atan2pi(r[1], r[0]);
-
-	// get the triad vectors at this node
-	Global_Parameters::Warped_disk_with_boundary_pt->
-	  surface_vectors_at_boundary(0, zeta, r, tangent,
-				      normal, binormal);
-
-	for(unsigned i=0; i<Dim+1; i++)
-	{
-	  for(unsigned j=0; j<Dim+1; j++)
-	  {
-	    // compute derivatives of the tangent vector dt_i/dx_j
-	    interpolated_dtangent_dx(i,j) += tangent[i] * dpsi_dx(l,j);
-
-	    // compute derivatives of the normal vector ds_i/dx_j
-	    interpolated_dnormal_dx(i,j) += normal[i] * dpsi_dx(l,j);
-	      
-	    // compute derivatives of the binormal dn_i/dx_j
-	    interpolated_dbinormal_dx(i,j) += binormal[i] * dpsi_dx(l,j);	      
-	  }
-	}
-      }
-    }
-    
+   
+      
 private:
   unsigned Dim;
 };
@@ -1107,7 +1016,10 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
     new WarpedCircularDiskWithAnnularInternalBoundary(h_annulus,
 						      Global_Parameters::Epsilon,
 						      Global_Parameters::n);
-  
+
+  // set the pointer for coordinate conversions
+  CoordinateConversions::disk_geom_obj_pt = Global_Parameters::Warped_disk_with_boundary_pt;
+    
   // Enumerate the boundaries making up the disk starting with this
   // one-based ID
   unsigned first_one_based_disk_with_torus_boundary_id = 9001;
@@ -3050,32 +2962,6 @@ void FlowAroundDiskProblem<ELEMENT>::duplicate_plate_nodes_and_add_boundaries()
   
 }
 
-void eulerian_to_lagrangian_coords(const Vector<double>& x,
-				   const Vector<double>& unknowns,
-				   Vector<double>& residuals)
-{
-  residuals.resize(3, 0.0);
-
-  Vector<double> r_disk_edge(3);
-  Vector<double> tangent(3);
-  Vector<double> binormal(3);
-  Vector<double> normal(3);
-
-  double rho  = unknowns[0];
-  double zeta = unknowns[1];
-  double phi  = unknowns[2];
-  
-  // get the unit normal from the disk-like geometric object at this zeta
-  Global_Parameters::Warped_disk_with_boundary_pt->
-    boundary_triad(0, zeta, r_disk_edge, tangent, normal, binormal);
-
-  for(unsigned i=0; i<3; i++)
-  {    
-    residuals[i] = r_disk_edge[i] +
-      rho * (cos(phi) * normal[i] + sin(phi)*binormal[i]) - x[i];
-  }
-}
-
 //========================================================================
 /// \short function to compute the edge coordinates and corresponding
 /// element and local coordinates in the singular line mesh
@@ -3097,89 +2983,13 @@ void FlowAroundDiskProblem<ELEMENT>::get_edge_coordinates_and_singular_element(
 
   double r0 = sqrt(x[0]*x[0] + x[1]*x[1]) - 1.0;
   
-  Vector<double> edge_coords(3, 0.0);
+  CoordinateConversions::eulerian_to_lagrangian_coordinates(x, edge_coordinates_at_point);
   
-  // starting guesses are the Lagrangian coordinates for a flat disk
-  edge_coords[0] = sqrt(pow(r0, 2) + pow(x[2], 2));
-  edge_coords[1] = atan2pi(x[1], x[0]);
-  edge_coords[2] = atan2(x[2], r0);
-
-  // hit it with Newton's method
-  try
-  {
-    BlackBoxFDNewtonSolver::black_box_fd_newton_solve(
-      &eulerian_to_lagrangian_coords, x, edge_coords);
-  }
-  catch(const std::exception e)
-  {
-    std::ostringstream error_message;
-    error_message << "Couldn't find (rho,zeta,phi) coordinates for the bulk point ("
-  		  << x[0] << ", " << x[1] << ", " << x[2] << ")\n\n";
-
-    throw OomphLibError(error_message.str(),
-  			OOMPH_CURRENT_FUNCTION,
-  			OOMPH_EXCEPTION_LOCATION);
-  }
-
-  // interpret the unknowns
-  double rho  = edge_coords[0];
-  double zeta = edge_coords[1];
-  double phi  = edge_coords[2];
-  
-  // QUEHACERES delete
-  // // starting guess for boundary zeta is the zeta for a flat disk
-  // double zeta_0 = atan2pi(x[1], x[0]);
-
-  // Vector<double> unknowns(1);
-  // unknowns[0] = zeta_0;
-
-  // // do the solve to get the boundary zeta
-  // try
-  // {
-  //   BlackBoxFDNewtonSolver::black_box_fd_newton_solve(
-  //     &Analytic_Functions::distance_from_point_to_sn_plane, x, unknowns);
-  // }
-  // catch(const std::exception e)
-  // {
-  //   std::ostringstream error_message;
-  //   error_message << "Couldn't find zeta for the bulk point ("
-  // 		  << x[0] << ", " << x[1] << ", " << x[2] << ")\n\n";
-
-  //   throw OomphLibError(error_message.str(),
-  // 			OOMPH_CURRENT_FUNCTION,
-  // 			OOMPH_EXCEPTION_LOCATION);
-  // }
-    
-  // // interpret the solve
-  // double zeta = unknowns[0];
-          
-  // double b_dummy = 0;
-  // mVector x_disk_edge(3);
-  // mVector tangent(3);
-  // mVector binormal(3);
-  // mVector normal(3);
-    
-  // // get the unit normal from the disk-like geometric object at this zeta
-  // Global_Parameters::Warped_disk_with_boundary_pt->
-  //   boundary_triad(b_dummy, zeta, x_disk_edge, tangent,
-  // 		   normal, binormal);
-    
-  // // compute the rho vector, the vector from the edge of the disk at this
-  // // zeta to the point in question
-  // mVector rho_vector = -(x_disk_edge - x);
-
-  // // shorthands
-  // double rho  = rho_vector.magnitude();
-    
-  // // Moffat angle (minus sign accounts for the reflection of the moffat solution, which assumes
-  // // the semi-infinite plate is at x>0 not x<0 as we have with this coordinate system
-  // double phi = atan2pi(rho_vector*binormal, -rho_vector*normal);
-
   // if this point as an angle of pi but is on the lower side of the disk
   // rather than the upper, set it's angle to -pi to get the pressure jump right.
   // N.B. this will only matter for plot points where the output is done at the
   // nodes; integration points are always within the element
-  if(abs(phi - MathematicalConstants::Pi) < tol)
+  if(abs(edge_coordinates_at_point.phi - MathematicalConstants::Pi) < tol)
   {
     // try and cast this element just to make sure we don't have a face element
     const ELEMENT* bulk_el_pt = dynamic_cast<const ELEMENT*>(elem_pt);
@@ -3190,7 +3000,7 @@ void FlowAroundDiskProblem<ELEMENT>::get_edge_coordinates_and_singular_element(
       if(Elements_on_lower_disk_surface_pt.find(const_cast<ELEMENT*>(bulk_el_pt)) !=
 	 Elements_on_lower_disk_surface_pt.end())
       {	  
-	phi = -MathematicalConstants::Pi;
+	edge_coordinates_at_point.phi = -MathematicalConstants::Pi;
       }
     }
   }
@@ -3203,7 +3013,7 @@ void FlowAroundDiskProblem<ELEMENT>::get_edge_coordinates_and_singular_element(
 
   Vector<double> s_line(1, 0.0);
   Vector<double> zeta_vec(1, 0.0);
-  zeta_vec[0] = zeta;
+  zeta_vec[0] = edge_coordinates_at_point.zeta;
 
   GeomObject* geom_obj_pt = 0;
     
@@ -3225,7 +3035,8 @@ void FlowAroundDiskProblem<ELEMENT>::get_edge_coordinates_and_singular_element(
   {
     ostringstream error_message;
 
-    error_message << "Zeta: " << zeta << " not found in the singular line meshes";
+    error_message << "Zeta: " << edge_coordinates_at_point.zeta
+		  << " not found in the singular line meshes";
     throw OomphLibError(error_message.str(),
 			OOMPH_CURRENT_FUNCTION,
 			OOMPH_EXCEPTION_LOCATION);
@@ -3234,14 +3045,11 @@ void FlowAroundDiskProblem<ELEMENT>::get_edge_coordinates_and_singular_element(
   // combine the geometric object representation of the line element pointer
   // and its local coordinate which represent this zeta
   line_element_and_local_coordinate = std::make_pair(geom_obj_pt, s_line);
-    
-  edge_coordinates_at_point.rho  = rho;
-  edge_coordinates_at_point.zeta = zeta;
-  edge_coordinates_at_point.phi  = phi;
 
   // QUEHACERES experiental @@@@@@@@@@@@@@@
   double zeta_plus_pi_4 = Analytic_Functions::map_angle_to_range_0_to_2pi(
-    zeta + MathematicalConstants::Pi/4.0);
+    edge_coordinates_at_point.zeta + MathematicalConstants::Pi/4.0);
+  
   //  double exact_p0 = 
   edge_coordinates_at_point.p0 = Global_Parameters::p0; //  + exact_p0;
 }
@@ -3852,7 +3660,8 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
     }
 
     // set the function pointer to the function which computes dzeta/dx
-    sing_el_pt->dzeta_dx_fct_pt() = &Global_Parameters::SingularFunctions::compute_dzeta_dx;
+    sing_el_pt->dzeta_dx_fct_pt() = &CoordinateConversions::dzeta_dx;
+      // &Global_Parameters::SingularFunctions::compute_dzeta_dx;
   }
 
   // add the elements in the torus region to the torus region mesh, so that it
@@ -3872,7 +3681,7 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
        CommandLineArgs::command_line_flag_has_been_set("--subtract_source_and_body_force"))
     {
       el_pt->body_force_fct_pt() =
-	&Global_Parameters::SingularFunctions::asymptotic_total_body_force;
+      	&Global_Parameters::SingularFunctions::asymptotic_total_body_force;
 
       el_pt->source_fct_pt() =
 	&Global_Parameters::SingularFunctions::asymptotic_total_source_term;
@@ -4519,9 +4328,9 @@ void FlowAroundDiskProblem<ELEMENT>::set_values_to_singular_solution(
 
       // now get the (unscaled) singular solutions
       Vector<double> u_broadside =
-	Global_Parameters::SingularFunctions::singular_fct_broadside(edge_coords);
+	Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_broadside(edge_coords);
       Vector<double> u_in_plane  =
-	Global_Parameters::SingularFunctions::singular_fct_in_plane(edge_coords);
+	Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_in_plane(edge_coords);
 
       // and set the nodal values
       for(unsigned i=0; i<3; i++)
