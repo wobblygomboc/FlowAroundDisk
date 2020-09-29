@@ -476,8 +476,8 @@ namespace Analytic_Functions
 			     const double& p)
   {
     const unsigned dim = 3;
-    
-    // \tau_{ij}
+      
+    // stress tensor
     DenseMatrix<double> stress(dim,dim);
     
     for(unsigned i=0; i<dim; i++)

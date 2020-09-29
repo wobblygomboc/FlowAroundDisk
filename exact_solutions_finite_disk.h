@@ -574,8 +574,8 @@ namespace FlatDiskExactSolutions
   // sum the total contributions of the linear combination of exact solutions
   void total_exact_solution(const Vector<double>& x,
 			    // ### QUEHACERES delete   /* const RigidBodyMotion& rigid_body_motion, */
-			    const Vector<double> u_disk,
-			    const Vector<double> omega_disk,
+			    const Vector<double>& u_disk,
+			    const Vector<double>& omega_disk,
 			    Vector<double>& u)
   {
     // make sure we've got enough space
@@ -844,8 +844,8 @@ namespace FlatDiskExactSolutions
   
   // sum the total contributions of all singular functions
   void total_exact_velocity_gradient(const Vector<double>& x,				     
-				     const Vector<double> u_disk,
-				     const Vector<double> omega_disk,
+				     const Vector<double>& u_disk,
+				     const Vector<double>& omega_disk,
 				     DenseMatrix<double>& du_dx)
   {
     // coordinate increment for finite-difference gradient

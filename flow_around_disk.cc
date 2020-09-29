@@ -804,7 +804,10 @@ private:
    
   /// \short Enumeration for IDs of FaceElements (used to figure out
   /// who's added what additional nodal data...)
-  enum{ bla_hierher, Stress_jump_el_id, BC_el_id };
+  // QUEHACERES take out this ID at some point, but for now just set the
+  // two IDs to the same value since we only have one continuous
+  // Lagrange multiplier field not two distinct fields
+  enum{ bla_hierher, Stress_jump_el_id=2, BC_el_id=2 };
 
   // IDs to identify each singular function
   enum {Sing_fct_id_broadside=100, Sing_fct_id_in_plane, Sing_fct_id_in_plane_rotation};
@@ -1428,6 +1431,9 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   oomph_info << "--------------------------\n";
   oomph_info << "Number of equations: " << assign_eqn_numbers() << std::endl; 
   oomph_info << "--------------------------\n" << std::endl;
+
+  // QUEHACERES debug
+  
 }
 
 // ////////////////////////////////////////////////////////////////////////////
@@ -4167,26 +4173,52 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
     {
       Node* node_pt = el_pt->node_pt(j);
 
+      // set of the boundary IDs this node is on
+      std::set<unsigned>* boundaries_pt;
+      node_pt->get_boundaries_pt(boundaries_pt);
+
+      // loop over this nodes boundaries and see if any of them are
+      // torus boundaries
+      for(std::set<unsigned>::iterator it = boundaries_pt->begin();
+	  it != boundaries_pt->end(); it++)
+      {
+	unsigned boundary_id = *it;
+
+	// if this node is on a torus boundary, tell the element about the	
+	// nodal index
+	if( boundary_id >= First_torus_boundary_id && boundary_id <= Last_torus_boundary_id)
+	{
+	  el_pt->add_nodal_index_on_torus(j);
+
+	  // QUEHACERES debug
+	  unsigned nval = node_pt->nvalue();
+	  unsigned breakpoint = 1;
+	}
+      }
+      
       Vector<double> x(Dim);
       
       for(unsigned i=0; i<Dim; i++)
       {	
 	el_pt->unpin_u_fe_at_specified_local_node(j, i);
+
+	// QUEHACERES this is wrong, the Lagrange multiplier field should be continuous,
+	// so we don't want to have two fields and pin one where they intersect. Delete:
 	
-	// Now deal with the subtle case - if there are two sets of Lagrange
-	// multipliers at this node, they come from those that enforce the boundary
-	// conditions, and those that enforce the jump in stress across the
-	// boundary of the augmented region. They enforce the same constraints,
-	// so one set needs pinning. 
-	// This test should catch the double lagrange multiplier case -
-	// whether or not we have pressure at this node, there should be
-	// 6 or 7 values if we have 3 velocity components and 3 LMs and maybe 1 pressure,
-	// if there are two sets of LMs there will be 9 or 10 values here
-	if(node_pt->nvalue() > 7)
-	{	  
-	  // el_pt->pin_lagrange_multiplier_at_specified_local_node(j, i, BC_el_id); 
-	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, i, Stress_jump_el_id);
-	}
+	// // Now deal with the subtle case - if there are two sets of Lagrange
+	// // multipliers at this node, they come from those that enforce the boundary
+	// // conditions, and those that enforce the jump in stress across the
+	// // boundary of the augmented region. They enforce the same constraints,
+	// // so one set needs pinning. 
+	// // This test should catch the double lagrange multiplier case -
+	// // whether or not we have pressure at this node, there should be
+	// // 6 or 7 values if we have 3 velocity components and 3 LMs and maybe 1 pressure,
+	// // if there are two sets of LMs there will be 9 or 10 values here
+	// if(node_pt->nvalue() > 7)
+	// {	  
+	//   // el_pt->pin_lagrange_multiplier_at_specified_local_node(j, i, BC_el_id); 
+	//   el_pt->pin_lagrange_multiplier_at_specified_local_node(j, i, Stress_jump_el_id);
+	// }
 
 	// QUEHACERES debug
 	x[i] = node_pt->x(i);
@@ -5136,10 +5168,15 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
     double rms_bulk_pressure = 0;
     double rms_pressure_jump = 0;
 
-    sprintf(filename, "%s/augmented_boundary_traction_and_lms%i.dat",
+    sprintf(filename, "%s/augmented_boundary_traction_and_lms%i.csv",
 	    Doc_info.directory().c_str(), Doc_info.number());
 
     some_file.open(filename);
+
+    // write the header
+    some_file << "x,y,z,t_aug_x,t_aug_y,t_aug_z,t_bulk_x,t_bulk_y,t_bulk_z,"
+	      << "lambda_x,lambda_y,lambda_z" << std::endl;
+    
     unsigned n_element = Face_mesh_for_stress_jump_pt->nelement();
     for(unsigned e=0; e<n_element; e++)
     {
