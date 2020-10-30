@@ -1166,7 +1166,7 @@ namespace oomph
       else
       {
 	// otherwise, get the nodal index for the specified boundary ID
-	lambda_index = map_l[id] + i;
+	lambda_index = map_l.at(id) + i;
       }
 
       // pin and set to zero
@@ -1245,12 +1245,13 @@ namespace oomph
       return bulk_el_pt->strain_rate(s_bulk, _strain_rate);
     }
 
-    // function to return the pointer to the bulk element in the bulk region
-    // (not the bulk element in the augmented region to which this element is attached)
-    ELEMENT*& non_augmented_region_bulk_element_pt()
-    {
-      return Non_augmented_region_bulk_element_pt;
-    }
+    // QUEHACERES delete, moved to stressjumpelement
+    /* // function to return the pointer to the bulk element in the bulk region */
+    /* // (not the bulk element in the augmented region to which this element is attached) */
+    /* ELEMENT*& non_augmented_bulk_element_pt() */
+    /* { */
+    /*   return Non_augmented_bulk_element_pt; */
+    /* } */
 
     ExactTractionFctPt& exact_traction_fct_pt()
     {
@@ -1356,9 +1357,10 @@ namespace oomph
     Vector<std::pair<GeomObject*, Vector<double> > >
       Line_element_and_local_coordinate_at_node;
 
-    /// \short Pointer to the element in the bulk region which also shares this face
-    /// (since this->bulk_element_pt() will return an element in the augmented region)
-    ELEMENT* Non_augmented_region_bulk_element_pt;
+    // QUEHACERES delete
+    /* /// \short Pointer to the element in the bulk region which also shares this face */
+    /* /// (since this->bulk_element_pt() will return an element in the augmented region) */
+    /* ELEMENT* Non_augmented_bulk_element_pt; */
   };
 
 
@@ -1968,9 +1970,8 @@ namespace oomph
 	fill_in_generic_residual_contribution_navier_stokes_bc(
 	  residuals, GeneralisedElement::Dummy_matrix, 0);
       }
-
-      // QUEHACERES       
-/* #ifndef USE_FD_JACOBIAN */
+      
+#ifndef USE_FD_JACOBIAN
       /// \short Add the element's contribution to its residual vector and its
       /// Jacobian matrix
       inline void fill_in_contribution_to_jacobian(Vector<double> &residuals,
@@ -1979,7 +1980,7 @@ namespace oomph
       	//Call the generic routine with the flag set to 1
       	fill_in_generic_residual_contribution_navier_stokes_bc(residuals, jacobian, 1);
       }
-/* #endif */
+#endif
 
       /// Output function
       void output(std::ostream &outfile)
@@ -2670,23 +2671,19 @@ namespace oomph
 	  // that u_fe + C u_sing = u_bc
 	  if(local_eqn_lagr >= 0)
 	  {
-	    // QUEHACERES write-up Eq. 4.27
+	    // QUEHACERES write-up Eq. 1.7
 	    residuals[local_eqn_lagr] += (u_fe[d] + u_sing[d] - u_bc[d]) * psi[l]*W;
 	    
 	    // Jacobian?
 	    if (flag == 1)
 	    {
-	      // QUEHACERES 
-	      /* oomph_info << "Never get here" << std::endl; */
-	      /* abort(); */
-	      
 	      for(unsigned l2=0; l2<n_node; l2++)
 	      {
 		// QUEHACERES again, get this index more systematically
 		int local_unknown_u_fe = this->nodal_local_eqn(l2, d);
 		if (local_unknown_u_fe >= 0)
 		{
-		  // QUEHACERES 21/10 - change this comment when tested
+		  // write-up Eqn. 1.16
 		  jacobian(local_eqn_lagr, local_unknown_u_fe) += psi[l2] * psi[l]*W;
 		}
 	      }
@@ -2715,16 +2712,17 @@ namespace oomph
 	    // get the bulk node number corresponding to this face element vertex node
 	    const unsigned node_number_in_bulk = this->bulk_node_number(l);
 
-	    for(unsigned j=0; j<Dim; j++)
-	    {	      
-	      // boundary contribution from momentum-enforcing LMs
-	      // QUEHACERES write-up Eq. 4.24 term 4
-	      residuals[local_eqn_u_fe] +=
-		(lambda_momentum[d] * unit_normal[j] +
-		 lambda_momentum[j] * unit_normal[d]) * dpsidx(node_number_in_bulk, j)*W;
-	    }
+	    // QUEHACERES delete, this term should be for u_omega
+	    /* for(unsigned j=0; j<Dim; j++) */
+	    /* {	       */
+	    /*   // boundary contribution from momentum-enforcing LMs */
+	    /*   // QUEHACERES write-up Eq. 4.24 term 4 */
+	    /*   residuals[local_eqn_u_fe] += */
+	    /* 	(lambda_momentum[d] * unit_normal[j] + */
+	    /* 	 lambda_momentum[j] * unit_normal[d]) * dpsidx(node_number_in_bulk, j)*W; */
+	    /* } */
 	    	      
-	    // QUEHACERES write-up Eq. 4.24 term 5
+	    // QUEHACERES write-up Eq. 1.3 term 4
 	    residuals[local_eqn_u_fe] += lambda_bc[d] * psi[l] * W;
 
 	    if (flag == 1)
@@ -2747,7 +2745,7 @@ namespace oomph
 		      
 		if (local_unknown_lambda_bc >= 0)
 		{
-		  // QUEHACERES 21/10 - change this comment when tested
+		  // QUEHACERES write-up transpose of Eqn. 1.16
 		  jacobian(local_eqn_u_fe, local_unknown_lambda_bc) += psi[l2] * psi[l] * W;
 		}
 		    
@@ -2765,8 +2763,10 @@ namespace oomph
 	  {	    	    
 	    for(unsigned j=0; j<Dim; j++)
 	    {
-	      // QUEHACERES write-up Eq. 4.22 term 2
-	      residuals[local_eqn_lagr_bulk] += traction_fe[d] * psi[l] * W;
+	      // QUEHACERES version 3, taking out...although should be zero anyway
+	      // as the bulk mom LMs should be pinned to zero here
+	      /* // QUEHACERES write-up Eq. 1.1 term 2 */
+	      /* residuals[local_eqn_lagr_bulk] += traction_fe[d] * psi[l] * W; */
 	      /* // QUEHACERES */
 	      /* residuals[local_eqn_lagr_bulk] -= stress_sing_total(d,j) * unit_normal[j] * psi[l] * W; */
 	    }
@@ -2893,8 +2893,9 @@ namespace oomph
     /// existing_duplicate_node_pt[orig_node_pt]=new_node_pt.
     /// Optional final arg is the identifier for the lagrange multiplier
     NavierStokesWithSingularityStressJumpFaceElement(
-      FiniteElement* const& bulk_el_pt, 
-      const int& face_index,   
+      FiniteElement* const& augmented_bulk_el_pt, 
+      const int& face_index,
+      ELEMENT* non_augmented_bulk_el_pt,
       std::map<Node*,Node*>& existing_duplicate_node_pt,
       const unsigned& id = 0); 
 
@@ -3154,13 +3155,13 @@ namespace oomph
 	Vector<double> s_bulk_region(Dim, 0.0);
 	
 	GeomObject* geom_object_pt = 0x0;
-	ELEMENT* bulk_region_bulk_elem_pt = this->non_augmented_region_bulk_element_pt();
+	ELEMENT* non_augmented_bulk_elem_pt = this->non_augmented_bulk_element_pt();
 	
-	bulk_region_bulk_elem_pt->locate_zeta(x, geom_object_pt, s_bulk_region);
+	non_augmented_bulk_elem_pt->locate_zeta(x, geom_object_pt, s_bulk_region);
 
 	// now get the traction (passing in the same unit normal as before,
 	// so will need to flip the sign of the traction)
-	this->non_augmented_region_bulk_element_pt()->get_traction(s_bulk_region,
+	this->non_augmented_bulk_element_pt()->get_traction(s_bulk_region,
 							  unit_normal,
 							  traction_bulk);
 	
@@ -3347,7 +3348,14 @@ namespace oomph
 	
       return mean_squares;
     }
-      
+
+    // function to return the pointer to the non-augmented bulk element
+    // (not the bulk element in the augmented region to which this element is attached)
+    ELEMENT*& non_augmented_bulk_element_pt()
+    {
+      return Non_augmented_bulk_element_pt;
+    }
+    
   private:   
 
     /// \short Add the element's contribution to its residual vector.
@@ -3365,6 +3373,10 @@ namespace oomph
     /// Vector of pointers to orig nodes
     Vector<Node*> Orig_node_pt;
 
+    /// \short Pointer to the non-augmented element which also shares this face
+    /// on the augmented region boundary
+    ELEMENT* Non_augmented_bulk_element_pt;
+    
     /// \short Index of external Data that stores the value of the amplitude of
     /// the singular function
     Vector<unsigned> C_external_data_index;
@@ -3389,12 +3401,14 @@ namespace oomph
   template <class ELEMENT>
     NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>::
     NavierStokesWithSingularityStressJumpFaceElement(
-      FiniteElement* const& bulk_el_pt, 
-      const int& face_index, 
+      FiniteElement* const& augmented_bulk_el_pt, 
+      const int& face_index,
+      ELEMENT* non_augmented_bulk_el_pt,
       std::map<Node*,Node*>& existing_duplicate_node_pt,
       const unsigned& boundary_id) : 
-  NavierStokesWithSingularityFaceElement<ELEMENT>(bulk_el_pt, face_index, boundary_id),
-    C_external_data_index(0), C_external_data_value_index(0)
+  NavierStokesWithSingularityFaceElement<ELEMENT>(augmented_bulk_el_pt, face_index, boundary_id),
+    C_external_data_index(0), C_external_data_value_index(0),
+    Non_augmented_bulk_element_pt(non_augmented_bulk_el_pt)
   {   
     // Back up original nodes and make new ones
     unsigned nnod = this->nnode();
@@ -3527,7 +3541,7 @@ namespace oomph
 	  // Switch over node for bulk element that we attached ourselves
 	  // to
 	  unsigned j_in_bulk = this->bulk_node_number(j);
-	  bulk_el_pt->node_pt(j_in_bulk) = this->node_pt(j);
+	  augmented_bulk_el_pt->node_pt(j_in_bulk) = this->node_pt(j);
          
         } // end existing node is already replacement vs make new one
       } 
@@ -3537,6 +3551,21 @@ namespace oomph
       External_data_index_for_non_aug_node[j] = this->add_external_data(Orig_node_pt[j]);
     }
 
+    // we'll probably get warnings since we've already added the boundary nodes
+    // of the non-augmented element in the above loop, so suppress them since
+    // it's just easier to loop over all the non-augmented nodes and add them rather
+    // than trying to figure out which ones we've already added
+    /* GeneralisedElement::Suppress_warning_about_repeated_external_data = true; */
+    
+    // Now loop over the nodes in the corresponding non-augmented bulk element
+    // and add its nodes as external data, since they all contribute to the
+    // non-augmented traction which this elements residuals depends on
+    for(unsigned j=0; j<Non_augmented_bulk_element_pt->nnode(); j++)
+    {
+      // QUEHACERES should we catch the return index for this for analytic jacobian?
+      this->add_external_data(Non_augmented_bulk_element_pt->node_pt(j));
+    }
+    
     // Make space for Dim Lagrange multipliers
     Vector<unsigned> n_additional_values(nnod, this->Dim);
     this->add_additional_values(n_additional_values, boundary_id);
@@ -3665,7 +3694,7 @@ namespace oomph
 	  /* lambda_cont[i]  += this->nodal_value(l, lambda_cont_index) * psi[l]; */
 	  
 	  u_augmented[i] += this->nodal_value(l,i) * psi[l];
-	  u_non_aug[i]      += Orig_node_pt[l]->value(i) * psi[l];
+	  u_non_aug[i]   += Orig_node_pt[l]->value(i) * psi[l];
 	  
 	  // interpolate the Eulerian coordinates
 	  x[i] += node_pt->x(i) * psi[l];
@@ -3822,25 +3851,68 @@ namespace oomph
       Vector<double> s_bulk_non_aug(Dim, 0.0);
 	
       GeomObject* geom_object_pt = 0x0;
-      ELEMENT* non_augmented_region_bulk_elem_pt = this->non_augmented_region_bulk_element_pt();
+      ELEMENT* non_augmented_bulk_elem_pt = this->non_augmented_bulk_element_pt();
 	
-      non_augmented_region_bulk_elem_pt->locate_zeta(x, geom_object_pt, s_bulk_non_aug);
+      non_augmented_bulk_elem_pt->locate_zeta(x, geom_object_pt, s_bulk_non_aug);
 
-      // now get the traction (passing in the same unit normal as before,
-      // so will need to flip the sign of the traction)
+      // QUEHACERES debug @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+      
+      DenseMatrix<double> strain_rate_fe(Dim, Dim, 0.0);
+      DenseMatrix<double> strain_rate_non_aug(Dim, Dim, 0.0);
+      
+      bulk_el_pt->strain_rate(s_bulk, strain_rate_fe);
+      non_augmented_bulk_elem_pt->strain_rate(s_bulk_non_aug, strain_rate_non_aug);
+
+      double strain_rate_fe_xx = strain_rate_fe(0,0);
+      double strain_rate_fe_xy = strain_rate_fe(0,1);
+      double strain_rate_fe_xz = strain_rate_fe(0,2);
+      double strain_rate_fe_yx = strain_rate_fe(1,0);
+      double strain_rate_fe_yy = strain_rate_fe(1,1);
+      double strain_rate_fe_yz = strain_rate_fe(1,2);
+      double strain_rate_fe_zx = strain_rate_fe(2,0);
+      double strain_rate_fe_zy = strain_rate_fe(2,1);
+      double strain_rate_fe_zz = strain_rate_fe(2,2);
+
+      double strain_rate_non_aug_xx = strain_rate_non_aug(0,0);
+      double strain_rate_non_aug_xy = strain_rate_non_aug(0,1);
+      double strain_rate_non_aug_xz = strain_rate_non_aug(0,2);
+      double strain_rate_non_aug_yx = strain_rate_non_aug(1,0);
+      double strain_rate_non_aug_yy = strain_rate_non_aug(1,1);
+      double strain_rate_non_aug_yz = strain_rate_non_aug(1,2);
+      double strain_rate_non_aug_zx = strain_rate_non_aug(2,0);
+      double strain_rate_non_aug_zy = strain_rate_non_aug(2,1);
+      double strain_rate_non_aug_zz = strain_rate_non_aug(2,2);
+
+      // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+      
+      // now get the traction
+
+      // QUEHACERES no, the maths already accounts for this, the outer unit normal is n^\Gamma
+      /* // (passing in the same unit normal as before, */
+      /* // so will need to flip the sign of the traction) */
       Vector<double> traction_non_aug(Dim, 0.0);
-      non_augmented_region_bulk_elem_pt->get_traction(s_bulk_non_aug,
+      non_augmented_bulk_elem_pt->get_traction(s_bulk_non_aug,
 						      unit_normal,
 						      traction_non_aug);
 
-      // flip the sign
-      for(Vector<double>::iterator traction_it = traction_non_aug.begin();
-	  traction_it != traction_non_aug.end(); traction_it++)
-	(*traction_it) = -(*traction_it);
+      /* // flip the sign */
+      /* for(Vector<double>::iterator traction_it = traction_non_aug.begin(); */
+      /* 	  traction_it != traction_non_aug.end(); traction_it++) */
+      /* 	(*traction_it) = -(*traction_it); */
 
       // and get the augmented pressure
       double interpolated_p_fe = this->interpolated_p_nst(s);
 
+      Vector<double> traction_sing_total(Dim, 0.0);
+
+      for(unsigned i=0; i<Dim; i++)
+      {
+	for(unsigned j=0; j<Dim; j++)
+	{
+	  traction_sing_total[i] = stress_sing_total(i,j)*unit_normal[j];
+	}
+      }
+      
       // ===================================================
       // Now add to the appropriate equations
       // ===================================================
@@ -3856,11 +3928,6 @@ namespace oomph
 	  dynamic_cast<BoundaryNodeBase*>(node_pt)->
 	  index_of_first_value_assigned_by_face_element_pt() );
 
-	// QUEHACERES for debug - get exact traction on torus boundary
-	double t = 0;
-	Vector<double> exact_traction(Dim, 0.0);
-	(this->exact_traction_fct_pt())(t, x, unit_normal, exact_traction);
-	
 	for(unsigned d=0; d<Dim; d++)
 	{
 	  // Contributions to the bulk Lagrange multiplier equations which
@@ -3875,26 +3942,24 @@ namespace oomph
 	  
 	  if(local_eqn_lagr_mom >= 0)
 	  {
-	    // *** QUEHACERES for debug, just use the FE interpretation
-	    residuals[local_eqn_lagr_mom] += traction_fe[d] * psi[l] * W;
-
-	    // *** QUEHACERES bring this back in and delete above
-	    /* for(unsigned j=0; j<Dim; j++) */
-	    /* { */
-	    /*   // contribution is the normal stress difference between the non-augmented region */
-	    /*   // and the singular fuction at the interface - this is where the */
-	    /*   // subtraction of the singularity actually enters the momentum equations */
-	    /*   // QUEHACERES write-up Eq. 4.22 term 2 */
-	    /*   residuals[local_eqn_lagr_mom] += */
-	    /* 	(traction_non_aug[d] - stress_sing_total(d,j)*unit_normal[j]) * psi[l] * W; */
-	    /* } */
+	    /* // QUEHACERES version 2, where we actually want this one */
+	    /* residuals[local_eqn_lagr_mom] += traction_fe[d] * psi[l] * W; */
+	    	    
+	    // QUEHACERES write-up Eqn. 1.1 term 2
 	    
+	    // contribution is the normal stress difference between the non-augmented region
+	    // and the singular fuction at the interface - this is where the
+	    // subtraction of the singularity actually enters the momentum equations
+	    // QUEHACERES write-up Eq. 1.1 term 2
+ 
+	    residuals[local_eqn_lagr_mom] += traction_non_aug[d] * psi[l] * W;
+	    residuals[local_eqn_lagr_mom] -= traction_sing_total[d] * psi[l] * W;
+
 	    if (flag == 1)
 	    {
 	      // QUEHACERES
 	      oomph_info << "Analytic Jacobian for boundary contributions to "
 			 << "lambda-bulk not implemented yet" << std::endl;
-
 	      abort();
 	    }
 	  }
@@ -3925,7 +3990,7 @@ namespace oomph
 	  
 	  if (local_eqn_lagr >= 0)
 	  {
-	    // QUEHACERES write-up Eq. 4.28
+	    // QUEHACERES write-up Eq. 1.8
 	    residuals[local_eqn_lagr] += ((u_augmented[d] + u_sing_total[d]) - u_non_aug[d]) * psi[l]*W;
 
 	    // compute Jacobian
@@ -3940,13 +4005,14 @@ namespace oomph
 		  jacobian(local_eqn_lagr,local_unknown_augmented) += psi[l2]*test[l]*W;
 		}
 
-		int local_unknown_bulk = this->external_local_eqn(
+		int local_unknown_non_aug = this->external_local_eqn(
 		  External_data_index_for_non_aug_node[l2], d);
 		
-		if (local_unknown_bulk >= 0)
+		if (local_unknown_non_aug >= 0)
 		{
-		  jacobian(local_eqn_lagr, local_unknown_bulk) -=
-		    psi[l2]*test[l]*W;
+		  // QUEHACERES write-up Eqn. 1.18
+		  jacobian(local_eqn_lagr, local_unknown_non_aug) -=
+		    psi[l2] * psi[l]*W;
 		}
 	      }
 
@@ -3975,16 +4041,19 @@ namespace oomph
 	  int local_eqn_augmented = this->nodal_local_eqn(l, d);
 	  if (local_eqn_augmented >= 0)
 	  {
-	    // QUEHACERES write-up Eq. 4.24 term 6
+	    // QUEHACERES write-up Eq. 1.3 term 5
 	    residuals[local_eqn_augmented] += lambda_cont[d] * psi[l]*W;
 
+	    // QUEHACERES version 3, taking out...
+	    // QUEHACERES version 2, bringing this term back in again...
+	    /* // QUEHACERES move, this term should be for u_omega */
 	    for(unsigned j=0; j<Dim; j++)
-	    {	      
+	    {
 	      // boundary contribution from momentum-enforcing LMs
 	      // QUEHACERES write-up Eq. 4.24 term 4
 	      residuals[local_eqn_augmented] +=
-		(lambda_momentum[d] * unit_normal[j] +
-		 lambda_momentum[j] * unit_normal[d]) * dpsidx(node_number_in_bulk, j)*W;
+	      	(lambda_momentum[d] * unit_normal[j] +
+	      	 lambda_momentum[j] * unit_normal[d]) * dpsidx(node_number_in_bulk, j)*W;
 	    }
 
 	    // compute Jacobian
@@ -4007,10 +4076,13 @@ namespace oomph
 		int local_unknown_lambda_cont = this->nodal_local_eqn(l2, lambda_cont_index);
 		if (local_unknown_lambda_cont >= 0)
 		{
+		  // QUEHACERES write-up Eqn. 1.17
 		  jacobian(local_eqn_augmented,local_unknown_lambda_cont) +=
-		    psi[l2]*test[l]*W;
+		    psi[l2] * psi[l]*W;
 		}
 	      }
+
+	      // QUEHACERES add here Eqn. 1.11
 
 	      // QUEHACERES come back to this when we have a c equation
 	      /* for(unsigned ising=0; ising<sing_el_pt->nsingular_fct(); ising++) */
@@ -4043,7 +4115,7 @@ namespace oomph
 
 	  // QUEHACERES debug
 	  
-	  Node* nonaug_node_pt = non_augmented_region_bulk_elem_pt->
+	  Node* nonaug_node_pt = non_augmented_bulk_elem_pt->
 	    node_pt(External_data_index_for_non_aug_node[l]);
 	    
 	  bool nonaug_node_is_pinned = nonaug_node_pt->is_pinned(d);
@@ -4052,18 +4124,24 @@ namespace oomph
 	  nonaug_x[0] = nonaug_node_pt->x(0);
 	  nonaug_x[1] = nonaug_node_pt->x(1);
 	  nonaug_x[2] = nonaug_node_pt->x(2);
-	  
-	  
+	  	  
 	  if (local_eqn_non_aug >= 0)
 	  {
-	    /* // *** QUEHACERES for debug */
-	    /* residuals[local_eqn_non_aug] -= exact_traction[d] * psi[l] * W; */
-	    
-	    // ************************
+	    /* /\* // QUEHACERES version 3, taking this out	     *\/ */
+	    /* for(unsigned j=0; j<Dim; j++) */
+	    /* { */
+	    /*   // boundary contribution from momentum-enforcing LMs */
+	    /*   // QUEHACERES write-up Eqn. 1.4 term 1 */
+	    /*   residuals[local_eqn_non_aug] += */
+	    /* 	(lambda_momentum[d] * unit_normal[j] + */
+	    /* 	 lambda_momentum[j] * unit_normal[d]) * dpsidx(node_number_in_bulk, j)*W; */
+	    /* } */
 
-	    // QUEHACERES bring this back in and delete above
-	    /* // QUEHACERES write-up Eq. 4.25 */
-	    /* residuals[local_eqn_non_aug] -= lambda_cont[d] * psi[l] * W; */
+	    /* /\* // QUEHACERES experimental *\/ */
+	    /* residuals[local_eqn_non_aug] -= (traction_fe[d]) * psi[l] * W; */
+	    
+	    // QUEHACERES write-up Eq. 1.4 term 2
+	    residuals[local_eqn_non_aug] -= lambda_cont[d] * psi[l] * W;
 
 	    // compute Jacobian
 	    if (flag == 1)
@@ -4083,12 +4161,15 @@ namespace oomph
 		unsigned lambda_cont_index = first_index2.at(this->Boundary_id) + d;
 		  
 		int local_unknown_lambda_cont = this->nodal_local_eqn(l2, lambda_cont_index);
-		if (local_unknown_lambda_cont>=0)
+		if (local_unknown_lambda_cont >= 0)
 		{
+		  // QUEHACERES write-up transpose of Eqn 1.18
 		  jacobian(local_eqn_non_aug, local_unknown_lambda_cont) -=
-		    psi[l2]*test[l]*W;
+		    psi[l2] * psi[l]*W;
 		}
 	      }
+
+	      // QUEHACERES add here transpose of Eqn. 1.11
 	    }
 	  }
 
@@ -4097,7 +4178,7 @@ namespace oomph
 	} // end loop over dimensions
       } // end loop over test functions
 
-      // Boundary contributions of momentum LMs to the pressure residual
+      // Boundary contributions of momentum LMs to the non-augmented pressure residual
       // --------------------------------------------------------------------
 
       // shape functions from bulk
@@ -4120,21 +4201,32 @@ namespace oomph
 	// get the pressure basis functions from the bulk element
 	bulk_el_pt->pshape_nst(s_bulk, psip);
 
-	// get the local equation number for the pressure at this vertex node
-	int local_eqn_p = this->nodal_local_eqn(k, bulk_el_pt->p_index_nst());
+	// get the local equation number for the non-augmented pressure at this vertex node
+	
+	/* int local_eqn_p_non_aug = */
+	/*   this->external_local_eqn(External_data_index_for_non_aug_node[k], */
+	/*   			   bulk_el_pt->p_index_nst()); */
 
-	if(local_eqn_p >= 0)
+	/* // QUEHACERES version 3, no pressure contribution! */
+	// QUEHACERES version 2, going back to this being an augmented pressure contribution
+	int local_eqn_p_aug =  this->nodal_local_eqn(k, bulk_el_pt->p_index_nst());
+
+	/* if(local_eqn_p_non_aug >= 0) */
+	// QUEHACERES version 2
+	if(local_eqn_p_aug >= 0)
 	{
 	  for(unsigned j=0; j<Dim; j++)
 	  {
-	    // QUEHACERES write-up Eq. 4.26, \partial\Gamma_C part of term 2
-	    residuals[local_eqn_p] -=
+	    /* // QUEHACERES write-up Eq. 1.6 */
+	    /* residuals[local_eqn_p_non_aug] -= */
+
+	    residuals[local_eqn_p_aug] -=
 	      lambda_momentum[j] * unit_normal[j] * psip[node_number_in_bulk] * W;
 	  }
 	  
 	  // QUEHACERES come back to Jacobian
 	  if(flag == 1)
-	  {	    
+	  {
 	    oomph_info << "Never get here" << std::endl;
 	    abort();
 	  }
@@ -5705,7 +5797,7 @@ namespace oomph
       this->pshape(s, psip);
 
       double lambda_p_interp = 0.0;
-      
+       
       for(unsigned n=0; n<npressure_basis_fn; n++)
       {
 	// get the index of the LM which enforces the continuity eqn
@@ -5766,11 +5858,11 @@ namespace oomph
 	abort();
 #endif
 
-	// QUEHACERES do it properly!
-	fill_in_generic_residual_contribution_pde_constrained_min(residuals,
-    								  jacobian,
-    								  1);
-	/* FiniteElement::fill_in_contribution_to_jacobian(residuals, jacobian); */
+	/* // QUEHACERES do it properly! */
+	/* fill_in_generic_residual_contribution_pde_constrained_min(residuals, */
+    	/* 							  jacobian, */
+    	/* 							  1); */
+	FiniteElement::fill_in_contribution_to_jacobian(residuals, jacobian);
       }
       else
       {
@@ -6007,18 +6099,12 @@ namespace oomph
 	      {
 		// the Stokes momentum equations div\tau = 0 are the eqns
 		// for the momentum-enforcing LMs
-		// QUEHACERES write-up Eqn. 4.22 term 1
+		// QUEHACERES write-up Eqn. 1.1 term 1
 		residuals[local_eqn] -= stress(i,j) * dpsifdx(k,i) * W;
 	      }
 
 	      if(flag)
 	      {
-		// QUEHACERES 
-		/* oomph_info << "Never get here" << std::endl; */
-		/* abort(); */
-
-		// QUEHACERES \/ added 21/10, change this comment when tested
-		
 		//Loop over the velocity shape functions again
 		for(unsigned l2=0; l2<n_node; l2++)
 		{ 
@@ -6030,6 +6116,7 @@ namespace oomph
 		    // If at a non-zero degree of freedom add in the entry
 		    if(local_unknown >= 0)
 		    {
+		      // QUEHACERES Eqn. 1.10
 		      //Add contribution to Elemental Matrix
 		      jacobian(local_eqn, local_unknown) 
 			-= dpsifdx(l2,j) * dpsifdx(k,i2) * W;
@@ -6059,6 +6146,7 @@ namespace oomph
 		  /* If we are at a non-zero degree of freedom in the entry */
 		  if(local_unknown >= 0)
 		  {
+		    // Eqn. 1.12
 		    jacobian(local_eqn, local_unknown)
 		      += psip[l2] * dpsifdx(k,j) * W;
 		  }
@@ -6091,18 +6179,12 @@ namespace oomph
 	  
 	    for(unsigned j=0; j<DIM; j++)
 	    {
-	      // QUEHACERES write-up Eq. 4.23
+	      // QUEHACERES write-up Eq. 1.2
 	      residuals[local_eqn] += interpolated_dudx(j,j) * psip[k] * W;
 	    }
 
 	    if(flag)
-	    {
-	      // QUEHACERES
-	      /* oomph_info << "Never get here" << std::endl; */
-	      /* abort(); */
-
-	      // QUEHACERES \/ added 21/10, change this comment when tested
-	      
+	    {	      
 	      /*Loop over the velocity shape functions*/
 	      for(unsigned l2=0; l2<n_node; l2++)
 	      { 
@@ -6114,6 +6196,7 @@ namespace oomph
 		  // If at a non-zero degree of freedom add in the entry
 		  if(local_unknown >= 0)
 		  {
+		    // QUEHACERES Eqn. 1.14
 		    jacobian(local_eqn, local_unknown)
 		      += dpsifdx(l2,i2)* psip[k]*W;
 		  }
@@ -6140,31 +6223,24 @@ namespace oomph
 	    if(local_eqn >= 0)
 	    {
 	      //Add the functional minimisation term
-	      // QUEHACERES write-up Eqn. 4.24 term 1
+	      // QUEHACERES write-up Eqn. 1.3 term 1
 	      residuals[local_eqn] += dfunctional_du[i] * psif[k]*W;
 
 	      //Add the contribution from the momentum-enforcing LM
 	      for(unsigned j=0; j<DIM; j++)
 	      {
-		// QUEHACERES write-up Eqn. 4.24 term 2
+		// QUEHACERES write-up Eqn. 1.3 term 2
 		residuals[local_eqn] -=
 		  (interpolated_dlambda_dx(i,j) + interpolated_dlambda_dx(j,i)) * dpsifdx(k,j)*W;
 	      }
 
 	      // contribution from \lambda_p
-	      // QUEHACERES write-up Eqn. 4.24 term 3
+	      // QUEHACERES write-up Eqn. 1.3 term 3
 	      residuals[local_eqn] += interpolated_lambda_p * dpsifdx(k,i)*W;
 	      	      
 	      //CALCULATE THE JACOBIAN
 	      if(flag)
 	      {
-		// QUEHACERES 
-		/* // make sure we're doing finite diff for now!! */
-		/* oomph_info << "Never get here" << std::endl; */
-		/* abort(); */
-
-		// QUEHACERES \/ added 21/10, change this comment when tested
-		
 		//Loop over the velocity shape functions again
 		for(unsigned l2=0; l2<n_node; l2++)
 		{ 
@@ -6177,7 +6253,8 @@ namespace oomph
 		    // If at a non-zero degree of freedom add in the entry
 		    if(local_unknown >= 0)
 		    {
-		      //Add contribution to Elemental Matrix
+		      // QUEHACERES transpose of Eqn. 1.10
+		      // Add contribution to Elemental Matrix
 		      jacobian(local_eqn, local_unknown) 
 			-= dpsifdx(l2,i) * dpsifdx(k,i2) * W;
                  
@@ -6207,6 +6284,7 @@ namespace oomph
 		  /* If we are at a non-zero degree of freedom in the entry */
 		  if(local_unknown >= 0)
 		  {
+		    // QUEHACERES transpose of Eqn. 1.14
 		    jacobian(local_eqn, local_unknown)
 		      += psip[l2] * dpsifdx(k,i) * W;
 		  }
@@ -6235,20 +6313,13 @@ namespace oomph
 	    for(unsigned j=0; j<DIM; j++)
 	    {
 	      // contribution from momentum-enforcing LM
-	      // QUEHACERES write-up Eqn. 4.26 term 1
+	      // QUEHACERES write-up Eqn. 1.5
 	      residuals[local_eqn] += interpolated_dlambda_dx(j,j) * psip[k] * W;
 	    }
 	    
 	    /*CALCULATE THE JACOBIAN*/
 	    if(flag)
-	    {
-	      // QUEHACERES
-	      /* // QUEHACERES make sure we're doing finite diff for now!! */
-	      /* oomph_info << "Never get here" << std::endl; */
-	      /* abort(); */
-
-	      // QUEHACERES \/ added 21/10, change this comment when tested
-	      
+	    {	      
 	      /*Loop over the velocity shape functions*/
 	      for(unsigned l2=0; l2<n_node; l2++)
 	      { 
@@ -6261,6 +6332,7 @@ namespace oomph
 		  // If at a non-zero degree of freedom add in the entry
 		  if(local_unknown >= 0)
 		  {
+		    // QUEHACERES transpose of Eqn. 1.12
 		    jacobian(local_eqn, local_unknown)
 		      += dpsifdx(l2,i2)* psip[k]*W;
 		  }
