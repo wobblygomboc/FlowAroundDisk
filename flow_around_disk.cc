@@ -1,4 +1,3 @@
-
 //LIC// ====================================================================
 //LIC// This file forms part of oomph-lib, the object-oriented, 
 //LIC// multi-physics finite-element library, available 
@@ -41,18 +40,25 @@
 // custom defines
 // ============================================================================
 
+// NNODE_1D for the singular line elements - may affect stability of the scheme
+#define SINGULAR_ELEMENT_NNODE_1D 2
+
 #define USE_FD_JACOBIAN
 
 #define PRINT_SINGULAR_JACOBIAN
+
+#define xSINGLE_SINGULAR_AMPLITUDE_DOF
+
+//#define COMPUTE_INITIAL_JACOBIAN_EIGENFUNCTIONS
 
 // do we want to duplicate the edge nodes (for better output)?
 #define xDUPLICATE_EDGE_NODES
 
 // Tetgen or Gmsh
 #define DO_TETGEN
-
+ 
 // wraps the problem.newton_solve() in a try/catch block and prints jacobian
-// (but cocks up output of other exceptions)
+// (but cocks up output of other exceptions) 
 #define xPRINT_SINGULAR_JACOBIAN
 
 // QUEHACERES for debug - shift the lower plate nodes down by a small amount
@@ -63,6 +69,12 @@
 const double lower_plate_z_shift = -0.987e-8;
 #endif
 
+#define xALL_ELEMENTS_ARE_PDE_CONSTRAINED
+
+// QUEHACERES hacky, do this properly at some point
+double L2_VELOCITY_PENALTY = 1.0;
+double L2_PRESSURE_PENALTY = 0.0;
+double AMPLITUDE_GRADIENT_PENALTY = 0.0;
 // ============================================================================
 // singular elements
 #include "navier_stokes_sing_face_element.h"
@@ -129,7 +141,7 @@ namespace Global_Parameters
   // amplitude and wavenumber of the warped disk
   double Epsilon = 0; //0.1;
   unsigned n = 5;
-
+    
   // QUEHACERES pressure zero-level for debug (this is constant for broadside, will
   // need to vary (probably?) for in-plane)
   double p0 = 0;
@@ -145,6 +157,11 @@ namespace Global_Parameters
   // number of vertices on the cross-sectional circles of the torus
   unsigned Nvertex_torus = 8; //10;
 
+  // QUEHACERES delete, doing this in the constructor now
+  // // number of elements in the singular line mesh which holds the
+  // // singular amplitudes
+  // unsigned Nsingular_line_element = Half_nsegment_disk * 4 - 1;
+  
   unsigned Nplot_for_bulk = 5;
 
   // how much to shift the edge radius for outputting "infinite" pressure
@@ -187,6 +204,9 @@ namespace Global_Parameters
 
   bool Only_subtract_first_singular_term = false;
 
+  // brutal global finite-diff solver
+  bool Use_fd_lu_solver = false;
+  
   Vector<double> compute_singular_amplitudes_from_disk_velocity(const double& zeta)
   {
   
@@ -257,11 +277,11 @@ namespace Analytic_Functions
   {
     Vector<double> dpi_du(u.size(), 0.0);
 
-    // QUEHACERES just use zero for now
-    // // functional \Pi = sum_j 1/2|u_j|^2,
-    // // so d\Pi/d u_i = |u_i|
-    // for(unsigned i=0; i<u.size(); i++)
-    //   dpi_du[i] = abs(u[i]);
+    // // QUEHACERES just use zero for now
+    // functional \Pi = sum_j 1/2|u_j|^2,
+    // so d\Pi/d u_i = |u_i|
+    for(unsigned i=0; i<u.size(); i++)
+      dpi_du[i] = (u[i]); // abs(u[i]); 
 
     return dpi_du;
   }
@@ -649,7 +669,14 @@ public:
 
   // for debug
   void validate_exact_solution_divergence() const;
-    
+
+  /// Helper to output the pin status of eaech nodal dof in each submesh
+  void output_submesh_dof_pin_status() const;
+
+  /// \short Helper to pin the dofs in the singular line mesh corresponding to
+  /// a particular singular function
+  void pin_singular_function(const unsigned& sing_fct_id);
+  
 private:
  
   /// Apply BCs and make elements functional
@@ -658,9 +685,6 @@ private:
   /// Helper function to apply boundary conditions
   void apply_boundary_conditions();
 
-  /// Helper to output the pin status of eaech nodal dof in each submesh
-  void output_submesh_dof_pin_status() const;
-  
   void delete_face_elements()
     {
       // Loop over the flux elements
@@ -778,7 +802,7 @@ private:
   /// \short Helper to generate the 1D line mesh which runs around the outside of the
   /// disk and provides the amplitude of the singularity as a function of the
   /// boundary coordinate, i.e. c(zeta_bound).
-  void create_one_d_singular_element_mesh();
+  void create_one_d_singular_element_mesh(const unsigned& nsingular_el);
   
   /// Setup disk on disk plots
   void setup_disk_on_disk_plots();
@@ -817,31 +841,31 @@ private:
   /// Mesh which combines the upper and lower halves, so we don't have to repeat code
   Mesh* Singular_fct_element_mesh_pt;
 
-  /// Mesh of face elements which impose Dirichlet boundary conditions
+  /// Mesh of face elements which impose Dirichlet boundary conditions in augmented region
   Mesh* Face_mesh_for_bc_pt;
-
+  
   /// Mesh of elements within the torus region for the computation of Z2
   RefineableTetgenMesh<ELEMENT>* Torus_region_mesh_pt;
    
   /// \short Enumeration for IDs of FaceElements (used to figure out
   /// who's added what additional nodal data...)
-  // QUEHACERES take out this ID at some point, but for now just set the
-  // two IDs to the same value since we only have one continuous
-  // Lagrange multiplier field not two distinct fields
-  enum{ bla_hierher, Stress_jump_el_id, BC_el_id };
+  enum{ bla_hierher, Stress_jump_el_id=1, BC_el_id=1 };
 
   // IDs to identify each singular function
   enum {Sing_fct_id_broadside=100, Sing_fct_id_in_plane, Sing_fct_id_in_plane_rotation};
-  // --------------------------------------------------------------------------
 
+  // --------------------------------------------------------------------------
+  
   /// Mesh as geom object representation of mesh  
   MeshAsGeomObject* Mesh_as_geom_object_pt;
   
   // Create the mesh as Geom Object
   MeshAsGeomObject* Face_mesh_as_geom_object_pt;
 
-  MeshAsGeomObject* Singular_line_mesh_upper_as_geom_object_pt;
-  MeshAsGeomObject* Singular_line_mesh_lower_as_geom_object_pt;
+  // ### QUEHACERES delete
+  // MeshAsGeomObject* Singular_line_mesh_upper_as_geom_object_pt;
+  // MeshAsGeomObject* Singular_line_mesh_lower_as_geom_object_pt;
+  MeshAsGeomObject* Singular_line_mesh_as_geom_object_pt;
   
   /// Storage for the outer boundary object
   TetMeshFacetedClosedSurface* Outer_boundary_pt;
@@ -1236,9 +1260,6 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   // Duplicate plate nodes and add upper boundaries
   duplicate_plate_nodes_and_add_boundaries();
 
-  // Add sub-meshes
-  add_sub_mesh(Bulk_mesh_pt);
-
   // set the number of singular functions to subtract (for output purposes)
   if(CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution"))
     Nsingular_function = 2;
@@ -1270,24 +1291,31 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   
   // make the line mesh of elements that sit around the outer edge of the disk
   // and provide the singular functions as functions of the edge coordinates
-  create_one_d_singular_element_mesh();
+  unsigned nsingular_line_element = Global_Parameters::Half_nsegment_disk * 4;
+  create_one_d_singular_element_mesh(nsingular_line_element);
 
   oomph_info << "Singular mesh, upper elements: "
 	     << Singular_fct_element_mesh_upper_pt->nelement() << "\n"
 	     << "               lower elements: "
     	     << Singular_fct_element_mesh_lower_pt->nelement() << "\n\n";
   
-  // now build the GeomObject representation of these guys
-  Singular_line_mesh_lower_as_geom_object_pt = 0x0;
-  Singular_line_mesh_upper_as_geom_object_pt = 0x0;
+  Singular_line_mesh_as_geom_object_pt =
+    new MeshAsGeomObject(Singular_fct_element_mesh_pt);
   
-  Singular_line_mesh_upper_as_geom_object_pt =
-    new MeshAsGeomObject(Singular_fct_element_mesh_upper_pt);
+  // ### QUEHACERES 
+  // // now build the GeomObject representation of these guys
+  // Singular_line_mesh_lower_as_geom_object_pt = 0x0;
+  // Singular_line_mesh_upper_as_geom_object_pt = 0x0;
+  
+  // Singular_line_mesh_upper_as_geom_object_pt =
+  //   new MeshAsGeomObject(Singular_fct_element_mesh_upper_pt);
 
-  Singular_line_mesh_lower_as_geom_object_pt =
-    new MeshAsGeomObject(Singular_fct_element_mesh_lower_pt);
+  // Singular_line_mesh_lower_as_geom_object_pt =
+  //   new MeshAsGeomObject(Singular_fct_element_mesh_lower_pt);
   
   // Add 'em to mesh
+  add_sub_mesh(Bulk_mesh_pt);
+  add_sub_mesh(Singular_fct_element_mesh_pt);
   add_sub_mesh(Traction_boundary_condition_mesh_pt);
   add_sub_mesh(Face_mesh_for_bc_pt);
   add_sub_mesh(Face_mesh_for_stress_jump_pt);
@@ -1447,14 +1475,15 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   // linear_solver_pt() = mumps_linear_solver_pt;
 
 #endif
-  
-  // Setup equation numbering scheme
-  oomph_info << "--------------------------\n";
-  oomph_info << "Number of equations: " << assign_eqn_numbers() << std::endl; 
-  oomph_info << "--------------------------\n" << std::endl;
 
-  // for debug - output the pin-status of each dof in each submesh
-  output_submesh_dof_pin_status();
+  // buckle up
+  if(Global_Parameters::Use_fd_lu_solver)
+  {
+    linear_solver_pt() = new FD_LU;
+  }
+  
+  // moved assign eqns to main body since we may still be pinning tingz
+  // after the constructor
 }
 
 // ////////////////////////////////////////////////////////////////////////////
@@ -3043,18 +3072,22 @@ void FlowAroundDiskProblem<ELEMENT>::get_edge_coordinates_and_singular_element(
   zeta_vec[0] = edge_coordinates_at_point.zeta;
 
   GeomObject* geom_obj_pt = 0x0;
+
+  Singular_line_mesh_as_geom_object_pt->locate_zeta(zeta_vec,
+						    geom_obj_pt,
+						    s_line);
+  // ### QUEHACERES delete
+  // Singular_line_mesh_lower_as_geom_object_pt->
     
-  Singular_line_mesh_lower_as_geom_object_pt->locate_zeta(zeta_vec,
-							  geom_obj_pt,
-							  s_line);
-  // did we find it in the lower half?
-  if(geom_obj_pt == 0)
-  {
-    // if not, it's presumably in the upper half
-    Singular_line_mesh_upper_as_geom_object_pt->locate_zeta(zeta_vec,
-							    geom_obj_pt,
-							    s_line);
-  }
+  // ### QUEHACERES delete
+  // // did we find it in the lower half?
+  // if(geom_obj_pt == 0)
+  // {
+  //   // if not, it's presumably in the upper half
+  //   Singular_line_mesh_upper_as_geom_object_pt->locate_zeta(zeta_vec,
+  // 							    geom_obj_pt,
+  // 							    s_line);
+  // }
 
   // if we still didn't find it then shout and die, because we seem to have a zeta
   // which doesn't exist in our line meshes
@@ -3153,206 +3186,384 @@ void FlowAroundDiskProblem<ELEMENT>::setup_edge_coordinates_and_singular_element
 /// on the outer edge of the disk and provide the amplitude of the sinuglar
 /// function as a function of the outer boundary coordinate, i.e. c(\zeta).
 template <class ELEMENT>
-void FlowAroundDiskProblem<ELEMENT>::create_one_d_singular_element_mesh()
+void FlowAroundDiskProblem<ELEMENT>::
+create_one_d_singular_element_mesh(const unsigned& nsingular_el)
 {
-  // maps to keep track of nodes we've already duplicated;
-  // map are original node -> new node
-  std::map<Node*,Node*> existing_duplicate_node_upper_pt;
-  std::map<Node*,Node*> existing_duplicate_node_lower_pt;
-  
-  // sets of nodes which will be added to the upper and lower meshes
-  std::set<Node*> upper_mesh_nodes_pt;
-  std::set<Node*> lower_mesh_nodes_pt;
-  
-  for(Vector<unsigned>::iterator zero_based_id =
-	Boundary_id_for_upper_disk_within_torus.begin();
-      zero_based_id != Boundary_id_for_upper_disk_within_torus.end(); zero_based_id++)
+  // build the bastard! QUEHACERES sort out NNODE_1D 
+  Singular_fct_element_mesh_pt =
+    new CircularLineMesh<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D> >(
+      nsingular_el);
+
+  // now set the nodal zeta coordinates for all but the last element
+  for(unsigned e=0; e < (nsingular_el - 1); e++)
   {
-    // get the oomph-lib zero based boundary ID for the disk boundary
-    unsigned ibound = *zero_based_id;
-    
-    unsigned nel = Bulk_mesh_pt->nboundary_element(ibound);
-    for(unsigned e=0; e<nel; e++)
+    dynamic_cast<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>*>(
+      Singular_fct_element_mesh_pt->element_pt(e))->setup_zeta_nodal();
+  }
+
+  // and now do the last element, passing the flag which sets the zeta of the
+  // last node in the last element equal to 2pi not 0 so that we don't get
+  // interpolation errors in the last element
+  bool use_zeta_2pi_instead_of_0 = true;
+  dynamic_cast<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>*>(
+    Singular_fct_element_mesh_pt->element_pt(nsingular_el - 1))->
+    setup_zeta_nodal(use_zeta_2pi_instead_of_0);
+
+  // QUEHACERES debug - delete
+  {
+    typedef ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>* SING_EL;
+      
+    // these should be the same
+    Node* first_node_pt =
+      dynamic_cast<SING_EL>(Singular_fct_element_mesh_pt->element_pt(0))->node_pt(0);
+    Node* last_node_pt =
+      dynamic_cast<SING_EL>(Singular_fct_element_mesh_pt->element_pt(nsingular_el-1))->
+      node_pt(SINGULAR_ELEMENT_NNODE_1D-1);
+
+    for(unsigned j=0; j<dynamic_cast<SING_EL>(Singular_fct_element_mesh_pt->element_pt(0))->nnode(); j++)
     {
-    
-      // get the boundary element
-      ELEMENT* tet_el_pt = dynamic_cast<ELEMENT*>(
-	Bulk_mesh_pt->boundary_element_pt(ibound, e));
-
-      // get the index of the tet face which sits on the disk
-      int face_index = Bulk_mesh_pt->face_index_at_boundary(ibound, e);
-
-      // build a 2D face element for this face
-      NavierStokesFaceElement<ELEMENT>* triangle_el_pt =
-      	new NavierStokesFaceElement<ELEMENT>(tet_el_pt, face_index);
-      
-      // now we need to find the "face" (i.e. 1D edge) of this disk element which is
-      // on the outer edge of the disk - we'll have to do this by exhaustively trying
-      // each edge and looking at the radial position of the nodes
-
-      // the face id of the edge of this 2D element which is on the outer edge of the disk
-      unsigned face_index_of_outer_edge = 0;
-
-      // did we find it?
-      bool found_outer_edge_face = false;
-
-      // is it in the lower half-plane (y<0)? 
-      bool is_in_lower_half_plane = false;
-    
-      for(face_index_of_outer_edge = 0; face_index_of_outer_edge<3; face_index_of_outer_edge++)
-      {
-	NavierStokesFaceElement<TTaylorHoodElement<2> >* line_el_pt =
-	   new NavierStokesFaceElement<TTaylorHoodElement<2> >
-	   (triangle_el_pt, face_index_of_outer_edge);
-
-	// tolerance on the nodal radius
-	double r_tol = 1e-8;
-      
-	// now test the nodes
-	unsigned nnode_on_outer_edge = 0;
-
-	unsigned nnode = line_el_pt->nnode();
-	for(unsigned j=0; j<nnode; j++)
-	{
-	  Node* node_pt = line_el_pt->node_pt(j);
-
-	  // compute the x-y radius of this node
-	  double r = sqrt(pow(node_pt->x(0), 2) + pow(node_pt->x(1), 2));
-
-	  // if the radius is within the tolerance, this node is on the outer edge
-	  if(abs(r - 1.0) < r_tol)
-	    nnode_on_outer_edge++;
-	  else break;
-	}
-
-	if(nnode_on_outer_edge == nnode)
-	{
-	  found_outer_edge_face = true;
-
-	  // now check if all the nodes are in the lower plane (i.e. we may need to
-	  // exchange zeta=0 for zeta=2pi). If the nodes are all in the lower half-plane
-	  // but none of them are on the x-axis then their zeta will be unaffected so
-	  // it is enough to simply check the sign of the y-coordinate.
-	  unsigned nnegative = 0;
-	  unsigned npositive = 0;
-	  
-	  double tol = 1e-12;
-	  for(unsigned j=0; j<nnode; j++)
-	  {
-	    if(line_el_pt->node_pt(j)->x(1) < tol)
-	      nnegative++;
-	    if(line_el_pt->node_pt(j)->x(1) > -tol)
-	      npositive++;
-	  }
-
-	  // check if all the nodes are negative
-	  if(nnegative == nnode)
-	  {
-	    is_in_lower_half_plane = true;
-	  }
-	  else if((nnegative > 0 && nnegative < nnode) && (npositive < nnode))
-	  {
-	    ostringstream error_message;
-
-	    error_message << "Something has gone wrong, there seems to be an element at "
-			  << "the edge of the disk which crosses the x-axis \n"
-			  << "(and so crosses the discontinuity in the azimuthal angle)\n"
-			  << "Coordinates of this line element are: \n";
-
-	    for(unsigned j=0; j<line_el_pt->nnode(); j++)
-	    {
-	      error_message << "Node " << j << ": ("
-			    << line_el_pt->node_pt(j)->x(0) << ", "
-			    << line_el_pt->node_pt(j)->x(1) << ", "
-			    << line_el_pt->node_pt(j)->x(2) << ")\n";
-	    }
-	
-	    throw OomphLibError(error_message.str(),
-				OOMPH_CURRENT_FUNCTION,
-				OOMPH_EXCEPTION_LOCATION);
-	  }
-	  // element shouldn't have multiple edges on the outer disk (unless we're
-	  // super under-resolved!) so don't need to check the other sides
-	  break;
-	}
-
-	// clean up the temporary face element
-	delete line_el_pt;
-      }
-      
-      // if we didn't find an edge on the disk boundary for this element, move on
-      if(!found_outer_edge_face)
-	continue;
-
-      // build a permanent copy of the new line element
-      ScalableSingularityForNavierStokesLineElement<ELEMENT::_NNODE_1D_>*
-	singularity_line_el_pt;
-      
-      if(is_in_lower_half_plane)
-      {
-	singularity_line_el_pt = 
-	  new ScalableSingularityForNavierStokesLineElement<ELEMENT::_NNODE_1D_>(triangle_el_pt,
-								      face_index_of_outer_edge,
-								      existing_duplicate_node_lower_pt,
-								      is_in_lower_half_plane);
-	
-	Singular_fct_element_mesh_lower_pt->add_element_pt(singularity_line_el_pt);
-	
-	// stick this elements nodes in the lower set
-	for(unsigned j=0; j<singularity_line_el_pt->nnode(); j++)
-	  lower_mesh_nodes_pt.insert(singularity_line_el_pt->node_pt(j));
-      }
-      else
-      {
-	singularity_line_el_pt = 
-	  new ScalableSingularityForNavierStokesLineElement<ELEMENT::_NNODE_1D_>(triangle_el_pt,
-								      face_index_of_outer_edge,
-								      existing_duplicate_node_upper_pt,
-								      is_in_lower_half_plane);
-	
-	Singular_fct_element_mesh_upper_pt->add_element_pt(singularity_line_el_pt);
-
-	// stick this elements nodes in the upper set
-	for(unsigned j=0; j<singularity_line_el_pt->nnode(); j++)
-	  upper_mesh_nodes_pt.insert(singularity_line_el_pt->node_pt(j));	
-      }
-
-      // QUEHACERES the code as-is will now leak memory as we don't clean up here -
-      // but when we have actual plate elements we won't be creating the triangle_el_pt
-      // by "new", so we then won't want to delete the plate element anyway. Now we
-      // can't delete this as the singularity_line_el_pt's bulk_element_pt points to this
-      // // clean up
-      // delete triangle_el_pt;
-      
-    } // end loop over elements on each boundary
-  } // end loop over upper disk boundaries
-
-  // now add the nodes to the relevant meshes
-  for(std::set<Node*>::iterator it = upper_mesh_nodes_pt.begin();
-      it != upper_mesh_nodes_pt.end(); it++)
-  {
-    Singular_fct_element_mesh_upper_pt->add_node_pt(*it);
+      double zeta_nodal_first_el =
+	dynamic_cast<SING_EL>(Singular_fct_element_mesh_pt->element_pt(0))->zeta_nodal(j);
+      double zeta_nodal_last_el =
+	dynamic_cast<SING_EL>(Singular_fct_element_mesh_pt->element_pt(nsingular_el-1))->zeta_nodal(j);
+      unsigned breakpoint = 1;
+    }
   }
-  for(std::set<Node*>::iterator it = lower_mesh_nodes_pt.begin();
-      it != lower_mesh_nodes_pt.end(); it++)
-  {
-    Singular_fct_element_mesh_lower_pt->add_node_pt(*it);
-  }
+  // ### QUEHACERES delete
   
+  // // maps to keep track of nodes we've already duplicated;
+  // // map are original node -> new node
+  // std::map<Node*,Node*> existing_duplicate_node_upper_pt;
+  // std::map<Node*,Node*> existing_duplicate_node_lower_pt;
+  
+  // // sets of nodes which will be added to the upper and lower meshes
+  // std::set<Node*> upper_mesh_nodes_pt;
+  // std::set<Node*> lower_mesh_nodes_pt;
+  
+  // for(Vector<unsigned>::iterator zero_based_id =
+  // 	Boundary_id_for_upper_disk_within_torus.begin();
+  //     zero_based_id != Boundary_id_for_upper_disk_within_torus.end(); zero_based_id++)
+  // {
+  //   // get the oomph-lib zero based boundary ID for the disk boundary
+  //   unsigned ibound = *zero_based_id;
+    
+  //   unsigned nel = Bulk_mesh_pt->nboundary_element(ibound);
+  //   for(unsigned e=0; e<nel; e++)
+  //   {
+    
+  //     // get the boundary element
+  //     ELEMENT* tet_el_pt = dynamic_cast<ELEMENT*>(
+  // 	Bulk_mesh_pt->boundary_element_pt(ibound, e));
+
+  //     // get the index of the tet face which sits on the disk
+  //     int face_index = Bulk_mesh_pt->face_index_at_boundary(ibound, e);
+
+  //     // build a 2D face element for this face
+  //     NavierStokesFaceElement<ELEMENT>* triangle_el_pt =
+  //     	new NavierStokesFaceElement<ELEMENT>(tet_el_pt, face_index);
+      
+  //     // now we need to find the "face" (i.e. 1D edge) of this disk element which is
+  //     // on the outer edge of the disk - we'll have to do this by exhaustively trying
+  //     // each edge and looking at the radial position of the nodes
+
+  //     // the face id of the edge of this 2D element which is on the outer edge of the disk
+  //     unsigned face_index_of_outer_edge = 0;
+
+  //     // did we find it?
+  //     bool found_outer_edge_face = false;
+
+  //     // is it in the lower half-plane (y<0)? 
+  //     bool is_in_lower_half_plane = false;
+    
+  //     for(face_index_of_outer_edge = 0; face_index_of_outer_edge<3; face_index_of_outer_edge++)
+  //     {
+  // 	NavierStokesFaceElement<TTaylorHoodElement<2> >* line_el_pt =
+  // 	   new NavierStokesFaceElement<TTaylorHoodElement<2> >
+  // 	   (triangle_el_pt, face_index_of_outer_edge);
+
+  // 	// tolerance on the nodal radius
+  // 	double r_tol = 1e-8;
+      
+  // 	// now test the nodes
+  // 	unsigned nnode_on_outer_edge = 0;
+
+  // 	unsigned nnode = line_el_pt->nnode();
+  // 	for(unsigned j=0; j<nnode; j++)
+  // 	{
+  // 	  Node* node_pt = line_el_pt->node_pt(j);
+
+  // 	  // compute the x-y radius of this node
+  // 	  double r = sqrt(pow(node_pt->x(0), 2) + pow(node_pt->x(1), 2));
+
+  // 	  // if the radius is within the tolerance, this node is on the outer edge
+  // 	  if(abs(r - 1.0) < r_tol)
+  // 	    nnode_on_outer_edge++;
+  // 	  else break;
+  // 	}
+
+  // 	if(nnode_on_outer_edge == nnode)
+  // 	{
+  // 	  found_outer_edge_face = true;
+
+  // 	  // now check if all the nodes are in the lower plane (i.e. we may need to
+  // 	  // exchange zeta=0 for zeta=2pi). If the nodes are all in the lower half-plane
+  // 	  // but none of them are on the x-axis then their zeta will be unaffected so
+  // 	  // it is enough to simply check the sign of the y-coordinate.
+  // 	  unsigned nnegative = 0;
+  // 	  unsigned npositive = 0;
+	  
+  // 	  double tol = 1e-12;
+  // 	  for(unsigned j=0; j<nnode; j++)
+  // 	  {
+  // 	    if(line_el_pt->node_pt(j)->x(1) < tol)
+  // 	      nnegative++;
+  // 	    if(line_el_pt->node_pt(j)->x(1) > -tol)
+  // 	      npositive++;
+  // 	  }
+
+  // 	  // check if all the nodes are negative
+  // 	  if(nnegative == nnode)
+  // 	  {
+  // 	    is_in_lower_half_plane = true;
+  // 	  }
+  // 	  else if((nnegative > 0 && nnegative < nnode) && (npositive < nnode))
+  // 	  {
+  // 	    ostringstream error_message;
+
+  // 	    error_message << "Something has gone wrong, there seems to be an element at "
+  // 			  << "the edge of the disk which crosses the x-axis \n"
+  // 			  << "(and so crosses the discontinuity in the azimuthal angle)\n"
+  // 			  << "Coordinates of this line element are: \n";
+
+  // 	    for(unsigned j=0; j<line_el_pt->nnode(); j++)
+  // 	    {
+  // 	      error_message << "Node " << j << ": ("
+  // 			    << line_el_pt->node_pt(j)->x(0) << ", "
+  // 			    << line_el_pt->node_pt(j)->x(1) << ", "
+  // 			    << line_el_pt->node_pt(j)->x(2) << ")\n";
+  // 	    }
+	
+  // 	    throw OomphLibError(error_message.str(),
+  // 				OOMPH_CURRENT_FUNCTION,
+  // 				OOMPH_EXCEPTION_LOCATION);
+  // 	  }
+  // 	  // element shouldn't have multiple edges on the outer disk (unless we're
+  // 	  // super under-resolved!) so don't need to check the other sides
+  // 	  break;
+  // 	}
+
+  // 	// clean up the temporary face element
+  // 	delete line_el_pt;
+  //     }
+      
+  //     // if we didn't find an edge on the disk boundary for this element, move on
+  //     if(!found_outer_edge_face)
+  // 	continue;
+
+  //     // build a permanent copy of the new line element
+  //     ScalableSingularityForNavierStokesLineElement<ELEMENT::_NNODE_1D_>*
+  // 	singularity_line_el_pt;
+      
+  //     if(is_in_lower_half_plane)
+  //     {
+  // 	singularity_line_el_pt = 
+  // 	  new ScalableSingularityForNavierStokesLineElement<ELEMENT::_NNODE_1D_>(triangle_el_pt,
+  // 								      face_index_of_outer_edge,
+  // 								      existing_duplicate_node_lower_pt,
+  // 								      is_in_lower_half_plane);
+	
+  // 	Singular_fct_element_mesh_lower_pt->add_element_pt(singularity_line_el_pt);
+	
+  // 	// stick this elements nodes in the lower set
+  // 	for(unsigned j=0; j<singularity_line_el_pt->nnode(); j++)
+  // 	  lower_mesh_nodes_pt.insert(singularity_line_el_pt->node_pt(j));
+  //     }
+  //     else
+  //     {
+  // 	singularity_line_el_pt = 
+  // 	  new ScalableSingularityForNavierStokesLineElement<ELEMENT::_NNODE_1D_>(triangle_el_pt,
+  // 								      face_index_of_outer_edge,
+  // 								      existing_duplicate_node_upper_pt,
+  // 								      is_in_lower_half_plane);
+	
+  // 	Singular_fct_element_mesh_upper_pt->add_element_pt(singularity_line_el_pt);
+
+  // 	// stick this elements nodes in the upper set
+  // 	for(unsigned j=0; j<singularity_line_el_pt->nnode(); j++)
+  // 	  upper_mesh_nodes_pt.insert(singularity_line_el_pt->node_pt(j));	
+  //     }
+
+  //     // QUEHACERES the code as-is will now leak memory as we don't clean up here -
+  //     // but when we have actual plate elements we won't be creating the triangle_el_pt
+  //     // by "new", so we then won't want to delete the plate element anyway. Now we
+  //     // can't delete this as the singularity_line_el_pt's bulk_element_pt points to this
+  //     // // clean up
+  //     // delete triangle_el_pt;
+      
+  //   } // end loop over elements on each boundary
+  // } // end loop over upper disk boundaries
+
+  // // now add the nodes to the relevant meshes
+  // for(std::set<Node*>::iterator it = upper_mesh_nodes_pt.begin();
+  //     it != upper_mesh_nodes_pt.end(); it++)
+  // {
+  //   Singular_fct_element_mesh_upper_pt->add_node_pt(*it);
+  // }
+  // for(std::set<Node*>::iterator it = lower_mesh_nodes_pt.begin();
+  //     it != lower_mesh_nodes_pt.end(); it++)
+  // {
+  //   Singular_fct_element_mesh_lower_pt->add_node_pt(*it);
+  // }
+
+  // // ==========================================================================
+  // // Now add the two halves of the singular line mesh together
+  
+  // std::set<Node*> singular_line_mesh_nodes_set;
+  // for(unsigned e=0; e<Singular_fct_element_mesh_upper_pt->nelement(); e++)
+  // {
+  //   ScalableSingularityForNavierStokesLineElement<ELEMENT::_NNODE_1D_>* sing_el_pt =
+  //     dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
+  // 	Singular_fct_element_mesh_upper_pt->element_pt(e));
+
+  //   Singular_fct_element_mesh_pt->add_element_pt(sing_el_pt);
+
+  //   // // and grab the nodes from the upper half
+  //   // for(unsigned j=0; j<sing_el_pt->nnode(); j++)
+  //   //   singular_line_mesh_nodes_set.insert(sing_el_pt->node_pt(j));
+  // }
+  // for(unsigned e=0; e<Singular_fct_element_mesh_lower_pt->nelement(); e++)
+  // {
+  //   ScalableSingularityForNavierStokesLineElement<ELEMENT::_NNODE_1D_>* sing_el_pt =
+  //     dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
+  // 	Singular_fct_element_mesh_lower_pt->element_pt(e));
+
+  //   Singular_fct_element_mesh_pt->add_element_pt(sing_el_pt);
+
+  //   // // and grab the nodes from the lower half
+  //   // for(unsigned j=0; j<sing_el_pt->nnode(); j++)
+  //   //   singular_line_mesh_nodes_set.insert(sing_el_pt->node_pt(j));
+  // } 
+
+  // // Now find the 2 pairs of overlapping nodes (where the upper and lower meshes meet)
+  // // and merge them
+  // // ---------------------------------------------------------  
+  // std::map<FiniteElement*, std::pair<unsigned, Node*> > element_and_node_to_update;
+  
+  // for(unsigned e=0; e<Singular_fct_element_mesh_pt->nelement(); e++)
+  // {
+  //   FiniteElement* sing_el_pt =	dynamic_cast<FiniteElement*>(
+  //     Singular_fct_element_mesh_pt->element_pt(e));
+    
+  //   // grab the nodes and insert them into a set to avoid duplicates
+  //   for(unsigned j=0; j<sing_el_pt->nnode(); j++)
+  //   {
+  //     Node* node_pt = sing_el_pt->node_pt(j);
+
+  //     // check we haven't already accounted fo this node
+  //     bool have_already_replaced_this_node = false;
+  //     for(std::map<FiniteElement*, std::pair<unsigned, Node*> >::iterator it =
+  // 	    element_and_node_to_update.begin(); it != element_and_node_to_update.end(); it++)
+  //     {
+  // 	if ( it->first == sing_el_pt)
+  // 	{
+  // 	  have_already_replaced_this_node = true;
+  // 	  break;
+  // 	}
+  //     }
+
+  //     if(have_already_replaced_this_node)
+  // 	continue;
+      
+  //     // get the spatial location of this node
+  //     Vector<double> x(Dim, 0.0);
+  //     for(unsigned i=0; i<Dim; i++)
+  // 	x[i] = node_pt->x(i);
+      
+  //     // now loop over the elements and nodes again to find if this node
+  //     // needs merging (should apply to two nodes where the upper and lower
+  //     // meshes meet)
+  //     for(unsigned e2=0; e2<Singular_fct_element_mesh_pt->nelement(); e2++)
+  //     {
+  // 	FiniteElement* sing_el2_pt = dynamic_cast<FiniteElement*>(
+  // 	  Singular_fct_element_mesh_pt->element_pt(e2));
+
+  // 	// don't want to check the same element
+  // 	if (sing_el_pt == sing_el2_pt)
+  // 	  continue;
+
+  // 	// loop over the nodes and check if any of them are the same as this one
+  // 	for(unsigned j2=0; j2<sing_el2_pt->nnode(); j2++)
+  // 	{
+  // 	  Node* node2_pt = sing_el2_pt->node_pt(j2);
+
+  // 	  // don't want to count the same node approached from neighbouring elements
+  // 	  if((node2_pt == node_pt))
+  // 	    continue;
+	  
+  // 	  // get the location of this node
+  // 	  Vector<double> x2(Dim, 0.0);
+  // 	  for(unsigned i=0; i<Dim; i++)
+  // 	    x2[i] = node2_pt->x(i);
+
+  // 	  const double tol = 1e-8;
+  // 	  if( ( abs(x[0] - x2[0]) < tol) &&
+  // 	      ( abs(x[1] - x2[1]) < tol) &&
+  // 	      ( abs(x[2] - x2[2]) < tol) )
+  // 	  {
+  // 	    // add the info to our map
+  // 	    element_and_node_to_update[sing_el2_pt] = std::make_pair(j2, node_pt);
+
+  // 	    // QUEHACERES debug
+  // 	    oomph_info << "merging two nodes at: ";
+
+  // 	    for(unsigned i=0; i<Dim; i++)
+  // 	      oomph_info << x2[i] << ", ";
+  // 	    oomph_info << std::endl;
+  // 	  }	  
+  // 	}
+  //     }
+      
+  //     singular_line_mesh_nodes_set.insert(node_pt);
+  //   }
+  // }
+
+  // // now actually do the node updates
+  // unsigned nmerged_nodes = 0;
+  // for(std::map<FiniteElement*, std::pair<unsigned, Node*> >::iterator it =
+  // 	element_and_node_to_update.begin(); it != element_and_node_to_update.end(); it++)
+  // {
+  //   FiniteElement* el_pt = it->first;
+  //   std::pair<unsigned, Node*> node_num_and_new_node_pt = it->second;
+
+  //   // do the update
+  //   el_pt->node_pt(node_num_and_new_node_pt.first) = node_num_and_new_node_pt.second;
+
+  //   // update the counter to make sure we've found the right number
+  //   nmerged_nodes++;
+  // }
+  
+  // // finally, add the unique nodes to the combined mesh
+  // for(std::set<Node*>::iterator it = singular_line_mesh_nodes_set.begin();
+  //     it != singular_line_mesh_nodes_set.end(); it++)
+  //   Singular_fct_element_mesh_pt->add_node_pt(*it);
+
 #ifdef PARANOID
 
   // sanity check - is the number of nodes in the two meshes the same as the
   // number of vertices requested for the meshing of the disk? (minus two,
   // because the two halves of the mesh overlap at 2 nodes
-  oomph_info << "Number of nodes in singular mesh (upper): "
-	     << Singular_fct_element_mesh_upper_pt->nnode() << "\n"
-	     << "Number of nodes in singular mesh (lower): "
-	     << Singular_fct_element_mesh_lower_pt->nnode() << "\n"
+  oomph_info // << "Number of nodes in singular mesh (upper): "
+	     // << Singular_fct_element_mesh_upper_pt->nnode() << "\n"
+	     // << "Number of nodes in singular mesh (lower): "
+	     // << Singular_fct_element_mesh_lower_pt->nnode() << "\n"
+	     << "Number of nodes in singular line mesh:    "
+	     << Singular_fct_element_mesh_pt->nnode() << "\n"
+	     // << "Number of merged nodes:                   "
+	     // << nmerged_nodes << "\n"
 	     << "Number of nodes on disk edge:             "
 	     << Global_Parameters::Half_nsegment_disk * 4 << "\n" << std::endl;
     
 #endif
-  
 }
 
 
@@ -3452,6 +3663,10 @@ void FlowAroundDiskProblem<ELEMENT>::setup_disk_on_disk_plots()
 template <class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
 {
+  // map which keeps track of the first index of each node associated with
+  // the PDE-constraint Lagrange multipliers
+  std::map<Node*, unsigned> node_to_first_lm_index_map;
+  
   // loop over all the elements and tell them how many singular functions
   // there are (for output purposes only)
   for(unsigned e=0; e<Bulk_mesh_pt->nelement(); e++)
@@ -3459,12 +3674,47 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
     ELEMENT* elem_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->element_pt(e));
 
     elem_pt->set_nsingular_fct(Nsingular_function);
+
+#ifdef ALL_ELEMENTS_ARE_PDE_CONSTRAINED
+    // add the Lagrange multipliers which weakly enforce the momentum and
+    // continuity equations    
+    elem_pt->add_lagrange_multiplier_dofs(node_to_first_lm_index_map);
+
+    elem_pt->stress_fct_pt() = &Analytic_Functions::stress;
+#endif
   }
 
-  // map which keeps track of the first index of each node associated with
-  // the PDE-constraint Lagrange multipliers
-  std::map<Node*, unsigned> node_to_first_lm_index_map;
+#ifdef SINGLE_SINGULAR_AMPLITUDE_DOF
+  // QUEHACERES for debug - now make all the nodes point to the value of the first
+  {
+    unsigned nsingular_node = Singular_fct_element_mesh_pt->nnode();
+    Vector<Node*> periodic_nodes_pt;
 
+    for(unsigned n=1; n<nsingular_node; n++)          
+      periodic_nodes_pt.push_back(Singular_fct_element_mesh_pt->node_pt(n));
+
+    dynamic_cast<BoundaryNode<Node>*>(Singular_fct_element_mesh_pt->node_pt(0))->
+      make_periodic_nodes(periodic_nodes_pt);
+
+    // QUEHACERES delete
+    // for(unsigned e=0; e<Singular_fct_element_mesh_pt->nelement(); e++)
+    // {
+    //   for(unsigned e2=0; e2<Singular_fct_element_mesh_pt->nelement(); e2++)
+    //   {
+    // 	if(e == e2)
+    // 	  continue;
+	
+    // 	for(unsigned n=1; n<SINGULAR_ELEMENT_NNODE_1D; n++)
+    // 	  Singular_fct_element_mesh_pt->element_pt(e)->add_external_data(
+    // 	    dynamic_cast<FiniteElement*>(Singular_fct_element_mesh_pt->element_pt(e2))->node_pt(n));
+    //   }
+    // }
+       
+    // // QUEHACERES temporarily pin the first node now
+    // Singular_fct_element_mesh_pt->node_pt(0)->pin(0);
+  }
+#endif
+  
   // Loop over the elements to set up element-specific
   // things that cannot be handled by constructor
 
@@ -3492,11 +3742,13 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
     // tell the element it's augmented, so that it uses the PDE-constrained min
     // residuals rather than standard Stokes
     torus_region_el_pt->set_augmented_element();
-    
+
+#ifndef ALL_ELEMENTS_ARE_PDE_CONSTRAINED
     // add the Lagrange multipliers which weakly enforce the momentum and
     // continuity equations    
     torus_region_el_pt->add_lagrange_multiplier_dofs(node_to_first_lm_index_map);
-
+#endif
+    
     // QUEHACERES debug
     for(unsigned n=0; n<torus_region_el_pt->nnode(); n++)
     {
@@ -3558,6 +3810,9 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
 
   // QUEHACERES debug
   some_file.close();
+
+  
+  // ==========================================================================
   
   if (!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
   {
@@ -3596,6 +3851,15 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
 
       // QUEHACERES for debug
       stress_jump_el_pt->exact_traction_fct_pt() = &Analytic_Functions::prescribed_traction;
+
+      // set the external data pointers since this face element contributes to
+      // the residuals for the singular amplitudes
+      // ### QUEHACERES take this argument out after debug
+      stress_jump_el_pt->set_singular_amplitudes_as_external_data(
+#ifdef SINGLE_SINGULAR_AMPLITUDE_DOF
+	Singular_fct_element_mesh_pt->node_pt(0)
+#endif
+	);
     }
   }
   
@@ -3631,35 +3895,26 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
     bc_el_pt->set_edge_coordinates_at_knot(edge_coordinates_at_knot_point);
       
     bc_el_pt->set_line_element_and_local_coordinate_at_knot(
-    line_element_and_local_coordinate);      
+    line_element_and_local_coordinate);
+
+    // set the external data pointers since this face element contributes to
+    // the residuals for the singular amplitudes
+    // ### QUEHACERES take this argument out after debug
+    bc_el_pt->set_singular_amplitudes_as_external_data(
+#ifdef SINGLE_SINGULAR_AMPLITUDE_DOF
+      Singular_fct_element_mesh_pt->node_pt(0)
+#endif
+      );
   }
 
-  // add the two halves of the singular line mesh together
-  for(unsigned e=0; e<Singular_fct_element_mesh_upper_pt->nelement(); e++)
-  {
-    ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
-      dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
-	Singular_fct_element_mesh_upper_pt->element_pt(e));
-
-    Singular_fct_element_mesh_pt->add_element_pt(sing_el_pt);
-  }
-  for(unsigned e=0; e<Singular_fct_element_mesh_lower_pt->nelement(); e++)
-  {
-    ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
-      dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
-	Singular_fct_element_mesh_lower_pt->element_pt(e));
-
-    Singular_fct_element_mesh_pt->add_element_pt(sing_el_pt);
-  }
-  
   // ------------------------------------------------
   // and now loop over the elements in the singular line meshes and tell them
   // about the singular functions
     
   for(unsigned e=0; e<Singular_fct_element_mesh_pt->nelement(); e++)
   {
-    ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
-      dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
+    ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>* sing_el_pt =
+      dynamic_cast<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>*>(
 	Singular_fct_element_mesh_pt->element_pt(e));
 
     // QUEHACERES exact solution for debug
@@ -4006,7 +4261,7 @@ void FlowAroundDiskProblem<ELEMENT>::create_face_elements()
   } // end if(! --dont_subtract_singularity)
    
   // ========================================================================
-  // Now find the right outer boundary and stick traction elements on it
+  // Now find the upper outer boundary and stick traction elements on it
   
   for(unsigned ibound = First_boundary_id_for_outer_boundary;
       ibound<First_boundary_id_for_outer_boundary+6; ibound++)
@@ -4034,7 +4289,7 @@ void FlowAroundDiskProblem<ELEMENT>::create_face_elements()
     if(abs(outer_unit_normal[0])   > tol ||
        abs(outer_unit_normal[1])   > tol ||
        abs(outer_unit_normal[2]-1) > tol )
-    {
+    {     
       continue;
     }
 
@@ -4052,9 +4307,15 @@ void FlowAroundDiskProblem<ELEMENT>::create_face_elements()
       int face_index = Bulk_mesh_pt->face_index_at_boundary(ibound,e);
          
       //Create corresponding face element
+#ifdef ALL_ELEMENTS_ARE_PDE_CONSTRAINED
+      NavierStokesPdeConstrainedOptimisationTractionElement<ELEMENT>*
+	traction_element_pt =
+	new NavierStokesPdeConstrainedOptimisationTractionElement<ELEMENT>
+	(bulk_elem_pt, face_index);
+#else
       NavierStokesTractionElement<ELEMENT>* traction_element_pt =
 	new NavierStokesTractionElement<ELEMENT>(bulk_elem_pt, face_index);
-       
+#endif       
       // Set the pointer to the prescribed traction function
       traction_element_pt->traction_fct_pt() =
 	&Analytic_Functions::prescribed_traction;
@@ -4152,12 +4413,11 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
     
     if(ibound == Outer_traction_boundary_id)
       continue;
-
     
     for (unsigned inod=0; inod<num_nod; inod++)
     {
       // grab a pointer to this boundary node
-      Node* node_pt = Bulk_mesh_pt->boundary_node_pt(ibound,inod);
+      Node* node_pt = Bulk_mesh_pt->boundary_node_pt(ibound, inod);
 
       Vector<double> x(3);
       x[0] = node_pt->x(0);
@@ -4168,13 +4428,48 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
       Vector<double> u(4,0.0);
       Analytic_Functions::exact_solution_flat_disk(x, u);
 
+      
       // set and pin 'em
       for(unsigned i=0; i<3; i++)
       {
 	node_pt->pin(i);
 	node_pt->set_value(i, u[i]);
-      }	
+      }
     }
+    
+#ifdef ALL_ELEMENTS_ARE_PDE_CONSTRAINED
+    // Now pin the momentum-enforcing Lagrange multipliers on the outer
+    // Dirichlet boundaries
+
+    // loop over the bulk elements on this boundary
+    unsigned nel = Bulk_mesh_pt->nboundary_element(bnd);
+    for(unsigned e=0; e<nel; e++)
+    {
+      // get the boundary bulk element
+      ELEMENT* bulk_elem_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->boundary_element_pt(bnd, e));
+
+      //Get Face index of boundary in the bulk element
+      int face_index = Bulk_mesh_pt->face_index_at_boundary(ibound, e);
+
+      // attach a face element to it (any face element will do)
+      NavierStokesTractionElement<ELEMENT>* face_elem_pt =
+	new NavierStokesTractionElement<ELEMENT>(bulk_elem_pt, face_index);
+
+      // now loop over the boundary nodes to get their bulk node numbers,
+      // so we can tell the bulk element to pin the LMs at those nodes
+      for(unsigned j=0; j<face_elem_pt->nnode(); j++)
+      {
+	// get the number of this node in the bulk elements numbering scheme
+	unsigned node_number_in_bulk = face_elem_pt->bulk_node_number(j);
+	
+	// now tell the bulk element to pin the pde-enforcing LMs
+	bulk_elem_pt->pin_momentum_lagrange_multipliers(node_number_in_bulk);
+      }
+      
+      // clean up
+      delete face_elem_pt;
+    }
+#endif
   }
  
   // QUEHACERES @@@@@@@@@@@@@@@@@@@
@@ -4212,29 +4507,6 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
     for (unsigned j=0; j<nnod; j++)
     {
       Node* node_pt = el_pt->node_pt(j);
-
-      // set of the boundary IDs this node is on
-      std::set<unsigned>* boundaries_pt;
-      node_pt->get_boundaries_pt(boundaries_pt);
-
-      // loop over this nodes boundaries and see if any of them are
-      // torus boundaries
-      for(std::set<unsigned>::iterator it = boundaries_pt->begin();
-	  it != boundaries_pt->end(); it++)
-      {
-	unsigned boundary_id = *it;
-
-	// if this node is on a torus boundary, tell the element about the	
-	// nodal index
-	if( boundary_id >= First_torus_boundary_id && boundary_id <= Last_torus_boundary_id)
-	{
-	  el_pt->add_nodal_index_on_torus(j);
-
-	  // QUEHACERES debug
-	  unsigned nval = node_pt->nvalue();
-	  unsigned breakpoint = 1;
-	}
-      }
       
       Vector<double> x(Dim, 0.0);
 
@@ -4274,7 +4546,11 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
 	if( has_two_sets_of_boundary_lagrange_multipliers )
 	{
 	  // if we've got both continuity and BC LMs, pin one set
-	  // el_pt->pin_lagrange_multiplier_at_specified_local_node(j, i, BC_el_id); 
+	  // el_pt->pin_lagrange_multiplier_at_specified_local_node(j, i, BC_el_id);
+
+	  // QUEHACERES might not be a free choice here, pinning the BC LMs means
+	  // the stress jump LMs make rogue contributions to u_non_aug...
+	  // update this comment and remove above commented pin of BCs if correct 
 	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, i, Stress_jump_el_id);
 
 	  nodes_with_3_lms_set.insert(node_pt);	    
@@ -4480,6 +4756,30 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
   // }
   
   oomph_info << "LM pin counter = " << nodes_with_3_lms_set.size() << std::endl;
+
+  
+  // pin different eigenfunctions if requested
+  if(CommandLineArgs::command_line_flag_has_been_set("--pin_broadside_amplitude"))
+  {
+    pin_singular_function(Sing_fct_id_broadside);
+  }
+  if(CommandLineArgs::command_line_flag_has_been_set("--pin_in_plane_amplitude"))
+  {
+    pin_singular_function(Sing_fct_id_in_plane);
+  }
+  if(CommandLineArgs::command_line_flag_has_been_set("--pin_in_plane_rotation_amplitude"))
+  {
+    pin_singular_function(Sing_fct_id_in_plane_rotation);
+  }
+
+  // QUEHACERES set the broadside amplitude to 1 (but don't pin)
+  for(unsigned n=0; n<Singular_fct_element_mesh_pt->nnode(); n++)
+    Singular_fct_element_mesh_pt->node_pt(n)->set_value(0, 1.0);
+
+  // // QUEHACERES experimental - pin every other value
+  // for(unsigned n=0; n<Singular_fct_element_mesh_pt->nnode(); n+=2)
+  //   Singular_fct_element_mesh_pt->node_pt(n)->pin(0);
+    
 } // end apply BCs
 
 //== start of output_submesh_pin_status ==================================
@@ -4497,6 +4797,7 @@ void FlowAroundDiskProblem<ELEMENT>::output_submesh_dof_pin_status() const
   mesh_pt.push_back(Face_mesh_for_bc_pt);
   mesh_pt.push_back(Face_mesh_for_stress_jump_pt);
   mesh_pt.push_back(Bulk_mesh_pt);
+  mesh_pt.push_back(Singular_fct_element_mesh_pt);
   
   // makea vector of names for each sub-mesh
   Vector<std::string> mesh_name;
@@ -4504,6 +4805,7 @@ void FlowAroundDiskProblem<ELEMENT>::output_submesh_dof_pin_status() const
   mesh_name.push_back("bc");
   mesh_name.push_back("stress_jump");
   mesh_name.push_back("bulk_mesh");
+  mesh_name.push_back("singular_line_mesh");
   
   // loop over each submesh 
   for(unsigned k=0; k<mesh_pt.size(); k++)
@@ -4780,8 +5082,8 @@ void FlowAroundDiskProblem<ELEMENT>::set_values_to_exact_non_singular_solution()
 						line_element_and_local_coord);
 
       // cast the GeomObject to a singular line element      
-      ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
-	dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>
+      ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>* sing_el_pt =
+	dynamic_cast<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>*>
 	(line_element_and_local_coord.first);
 
       // local coordinate in the singular element for the zeta of this plot point
@@ -5068,18 +5370,18 @@ impose_fake_singular_amplitude(const bool& impose_zero_amplitude)
   for(unsigned e=0; e<Singular_fct_element_mesh_pt->nelement(); e++)
   {    
     // get a pointer to this singular line element in the upper mesh
-    ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
-      dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
+    ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>* sing_el_pt =
+      dynamic_cast<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>*>(
 	Singular_fct_element_mesh_pt->element_pt(e));
 
     // defaults here are so if we're subtracting the exact solution
     // we get the right amplitudes (the exact in-plane already has the azimuthal/rotational
     // bit built in, so the default amplitude for this should be zero)
-    
-    // amplitude of each singular function at each node
     Vector<double> amplitude_broadside(sing_el_pt->nnode(), 1.0);
+    
     // Global_Parameters::Imposed_singular_amplitude_broadside);
     Vector<double> amplitude_in_plane(sing_el_pt->nnode(), 1.0);
+    
     // Global_Parameters::Imposed_singular_amplitude_in_plane);
 
     // same amplitude as for the in-plane, but will be modulated pi/2 out of phase
@@ -5112,16 +5414,8 @@ impose_fake_singular_amplitude(const bool& impose_zero_amplitude)
       amplitude_in_plane[j]          = amplitudes[1];
       amplitude_in_plane_rotation[j] = amplitudes[2];
 
-      // QUEHACERES delete
-      // // // modulate the broadside amplitude to account for rotations about a diameter
-      // // amplitude_broadside[j] *= -cos(zeta) * Global_Parameters::omega_disk[1];
-	
-      // // modulate the in-plane amplitude
-      // amplitude_in_plane[j] *= cos(zeta);
-
-      // // modulate the in-plane rotation amplitude so it's pi/2 out from the
-      // // in-plane translation amplitude
-      // amplitude_in_plane_rotation[j] *= sin(zeta);
+      if(CommandLineArgs::command_line_flag_has_been_set("--set_sing_amplitude_broadside"))
+	amplitude_broadside[j] = Global_Parameters::Imposed_singular_amplitude_broadside;
     }
 
     if(!CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution"))
@@ -5139,80 +5433,26 @@ impose_fake_singular_amplitude(const bool& impose_zero_amplitude)
     // and set their amplitude to the imposed amplitude
     sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane,
     					      amplitude_in_plane);
-  }
-
-  // QUEHACERES delete
-  // // and again for the lower half
-  // for(unsigned e=0; e<Singular_fct_element_mesh_lower_pt->nelement(); e++)
-  // {
-  //   // get a pointer to this singular line element in the upper mesh
-  //   ScalableSingularityForNavierStokesLineElement<3>* sing_el_pt =
-  //     dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
-  // 	Singular_fct_element_mesh_lower_pt->element_pt(e));
-
-  //   // defaults here are so if we're subtracting the exact solution
-  //   // we get the right amplitudes (the exact in-plane already has the azimuthal/rotational
-  //   // bit built in, so the default amplitude for this should be zero)
-    
-  //   // amplitude of each singular function at each node
-  //   Vector<double> amplitude_broadside(sing_el_pt->nnode(), 1.0);
-  //   // Global_Parameters::Imposed_singular_amplitude_broadside);
-  //   Vector<double> amplitude_in_plane(sing_el_pt->nnode(), 1.0);
-  //   // Global_Parameters::Imposed_singular_amplitude_in_plane);
-
-  //   // same amplitude as for the in-plane, but will be modulated pi/2 out of phase
-  //   Vector<double> amplitude_in_plane_rotation(sing_el_pt->nnode(), 0.0);
-  //   // Global_Parameters::Imposed_singular_amplitude_in_plane);
-    
-  //   // if we're subtracting the exact solution for debug, the modulation is already
-  //   // taken care of
-  //   // // QUEHACERES taking this out for the zeta=0 rotated exact solution
-  //   if(!CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution"))
-  //   {
-  //     // now loop over the nodes and modulate the in-plane amplitude
-  //     // by the azimuthal angle of each
-  //     for(unsigned j=0; j<sing_el_pt->nnode(); j++)
-  //     {
-  // 	// get the zeta for this node
-  // 	double zeta = sing_el_pt->zeta_nodal(j,0,0);
-
-  // 	// compute the amplitudes
-  // 	Vector<double> amplitudes = compute_singular_amplitudes_from_disk_velocity(zeta);
-
-  // 	// interpret the vector
-  // 	amplitude_broadside[j]         = amplitudes[0];
-  // 	amplitude_in_plane[j]          = amplitudes[1];
-  // 	amplitude_in_plane_rotation[j] = amplitudes[2];
-
-  // 	// QUEHACERES delete
-  // 	// // // modulate the broadside amplitude to account for rotations about a diameter
-  // 	// // amplitude_broadside[j] *= -cos(zeta) * Global_Parameters::omega_disk[1];
-	
-  // 	// // modulate the in-plane amplitude
-  // 	// amplitude_in_plane[j] *= cos(zeta);
-
-  // 	// // modulate the in-plane rotation amplitude so it's pi/2 out from the
-  // 	// // in-plane translation amplitude
-  // 	// amplitude_in_plane_rotation[j] *= sin(zeta);
-  //     }
-
-  //     sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane_rotation,
-  //     						amplitude_in_plane_rotation);
-  //   }
-
-  //   // pin the broadside singular function dof and set its amplitude to the
-  //   // imposed amplitude
-  //   sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_broadside,
-  // 					      amplitude_broadside);
-    
-  //   // pin the in-plane translation and rotation singular function dofs
-  //   // and set their amplitude to the imposed amplitude
-  //   sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane,
-  //   					      amplitude_in_plane);
-  // }
-  
+  }  
 }
 
+template <class ELEMENT>
+void FlowAroundDiskProblem<ELEMENT>::pin_singular_function(const unsigned& sing_fct_id)
+{
+  unsigned nel = Singular_fct_element_mesh_pt->nelement();
+
+  for(unsigned e=0; e<nel; e++)
+  {
+    // get a pointer to this singular line element in the upper mesh
+    ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>* sing_el_pt =
+      dynamic_cast<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>*>(
+	Singular_fct_element_mesh_pt->element_pt(e));
+
+    Vector<double> zero_amplitude(sing_el_pt->nnode());
+    
+    sing_el_pt->impose_singular_fct_amplitude(sing_fct_id, zero_amplitude);
+  }
+}
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
@@ -5228,6 +5468,16 @@ impose_fake_singular_amplitude(const bool& impose_zero_amplitude)
 template <class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 {
+  // QUEHACERES debug
+  {
+    Vector<double> residuals(100,0);
+    DenseMatrix<double> jacobian(100,100,0);
+    bool flag = true;
+    
+    dynamic_cast<NavierStokesWithSingularityBCFaceElement<ELEMENT>*>(Face_mesh_for_bc_pt->element_pt(40))
+      ->fill_in_contribution_to_jacobian(residuals,jacobian);
+    }
+  
   bool do_bulk_output = true;
   if (CommandLineArgs::command_line_flag_has_been_set("--suppress_bulk_output"))
   {
@@ -5270,16 +5520,24 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   }
   oomph_info << "Computing torus volume..." << std::endl;
   
+  double functional_integral = 0.0;
+  
   unsigned region_id = Torus_region_id;
   unsigned n_el = Bulk_mesh_pt->nregion_element(region_id);
   for (unsigned e=0; e<n_el; e++)
   {
+    // get a pointer to the torus-region element
+    ELEMENT* el_pt =
+      dynamic_cast<ELEMENT*>(Bulk_mesh_pt->region_element_pt(region_id, e));
+    
     if (output_torus_region_soln) 
     {
-      Bulk_mesh_pt->region_element_pt(region_id, e)->output(some_file, nplot);
+      el_pt->output(some_file, nplot);
     }
-    volume_in_torus_region += Bulk_mesh_pt->
-      region_element_pt(region_id,e)->size();
+    volume_in_torus_region += el_pt->size();
+
+    // Compute the integral of the functional over this element and add to total
+    functional_integral += el_pt->integral_of_functional();
   }
 
   if(output_torus_region_soln)
@@ -5288,6 +5546,9 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   oomph_info << "Average element volume in torus region: "
 	     << volume_in_torus_region / n_el << std::endl;
 
+  oomph_info << "Integral of L2 velocity norm in torus region: "
+	     << functional_integral << std::endl;
+  
   // set the small but finite edge radius to use for outputting "infinite" pressures
   // at the edge of the disk
   if(Doc_info.number() == 0)
@@ -5909,7 +6170,18 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 
     // get 'em
     get_jacobian(r,jac);
-  
+
+    sprintf(filename,"%s/residuals%i.dat", Doc_info.directory().c_str(),
+	    Doc_info.number());
+    some_file.open(filename);
+
+    for(unsigned i=0; i<r.nrow(); i++)
+    {
+      some_file << i << " " << r[i] << std::endl;
+    }
+
+    some_file.close();
+    
     sprintf(filename,"%s/jacobian_sparse%i.dat", Doc_info.directory().c_str(),
 	    Doc_info.number());
     some_file.open(filename);
@@ -6006,21 +6278,15 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   Singular_fct_element_mesh_pt->output(filename, nplot);
   some_file.close();
 
-  // QUEHACERES delete
-  // sprintf(filename, "%s/singular_line_mesh_upper%i.dat",
-  // 	  Doc_info.directory().c_str(), Doc_info.number());
-  // some_file.open(filename);
-  // Singular_fct_element_mesh_upper_pt->output(filename, nplot);
-  // some_file.close();
-
-  // sprintf(filename, "%s/singular_line_mesh_lower%i.dat",
-  // 	  Doc_info.directory().c_str(), Doc_info.number());
-  // some_file.open(filename);
-  // Singular_fct_element_mesh_lower_pt->output(filename, nplot);
-  // some_file.close();
-  
   //Increment counter for solutions 
   Doc_info.number()++;
+
+#ifdef SINGLE_SINGULAR_AMPLITUDE_DOF
+  oomph_info << "\n\n-----------------------------------\n"
+	     << "Singular amplitude: "
+	     << Singular_fct_element_mesh_pt->node_pt(0)->value(0)
+	     << "\n" << std::endl;
+#endif
   
   oomph_info << "Finished documenting solution.\n\n";
 } // end of doc
@@ -6179,7 +6445,15 @@ int main(int argc, char* argv[])
   // use the singular function subtraction machinery, but set the amplitudes
   // to zero (for debug)
   CommandLineArgs::specify_command_line_flag("--impose_zero_singular_amplitude");
-					     
+
+  // not specifying this does the real problem where c is computed
+  CommandLineArgs::specify_command_line_flag("--impose_exact_singular_amplitude");
+
+  // pin different singular functions to zero, for debug
+  CommandLineArgs::specify_command_line_flag("--pin_broadside_amplitude");
+  CommandLineArgs::specify_command_line_flag("--pin_in_plane_amplitude");
+  CommandLineArgs::specify_command_line_flag("--pin_in_plane_rotation_amplitude");
+  
   // subtract the exact solution instead of the Moffatt solution
   CommandLineArgs::specify_command_line_flag("--subtract_exact_solution");
 
@@ -6210,6 +6484,11 @@ int main(int argc, char* argv[])
     
   // Modulate the singular amplitude by cos(zeta)
   CommandLineArgs::specify_command_line_flag("--cosine_amplitude");
+
+  // specify the penalty parameter applied to the pressure term in the
+  // functional which is minimised  
+  CommandLineArgs::specify_command_line_flag("--pressure_penalty", &L2_PRESSURE_PENALTY);
+  CommandLineArgs::specify_command_line_flag("--velocity_penalty", &L2_VELOCITY_PENALTY);
   
   // // Angular speed scaling for rotation about y-axis (diameter)
   // CommandLineArgs::specify_command_line_flag("--omega_minus_y",
@@ -6303,6 +6582,8 @@ int main(int argc, char* argv[])
   CommandLineArgs::specify_command_line_flag("--output_initial_jacobian");
   
   CommandLineArgs::specify_command_line_flag("--validate_exact_solution_divergence");
+
+  CommandLineArgs::specify_command_line_flag("--use_fd_lu_solver");
   
 #ifndef DO_TETGEN
 
@@ -6315,16 +6596,15 @@ int main(int argc, char* argv[])
 
   // Parse command line
   CommandLineArgs::parse_and_assign();
- 
+
+  // // Note that this can make tetgen die!
+  // feenableexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW);
+
+  // Shut up prefix
+  oomph_info.output_modifier_pt() = &default_output_modifier;
+  
   // Doc what has actually been specified on the command line
   CommandLineArgs::doc_specified_flags();
-
-  // ### QUEHACERES delete
-  // // set the global parameters that define the far-field rigid-body motion
-  // Global_Parameters::rigid_body_motion.U_x           = Global_Parameters::U_far_field_in_plane;
-  // Global_Parameters::rigid_body_motion.U_z           = Global_Parameters::U_far_field_broadside;
-  // Global_Parameters::rigid_body_motion.Omega_minus_y = Global_Parameters::Omega_minus_y;
-  // Global_Parameters::rigid_body_motion.Omega_z       = Global_Parameters::Omega_z;
   
 #ifndef DO_TETGEN
 
@@ -6351,13 +6631,13 @@ int main(int argc, char* argv[])
   {
     Global_Parameters::Split_corner_elements = false;
   }
-
-  // // Note that this can make tetgen die!
-  // feenableexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW);
-
-  // Shut up prefix
-  oomph_info.output_modifier_pt() = &default_output_modifier;
-
+    
+  if(CommandLineArgs::command_line_flag_has_been_set("--use_fd_lu_solver"))
+  {
+    Global_Parameters::Use_fd_lu_solver = true;
+    oomph_info << "Get comfy, we're using the FD_LU solver...\n" << std::endl;
+  }
+  
   // FlowAroundDiskProblem <ProjectableTaylorHoodElement<
   //   TNavierStokesElementWithSingularity<3,3> > > problem; // TTaylorHoodElement<3>::NNODE_1D>
   FlowAroundDiskProblem <ProjectableTaylorHoodElement<TNavierStokesElementWithSingularity<3> > > problem;
@@ -6367,14 +6647,18 @@ int main(int argc, char* argv[])
   // if (Global_Parameters::Imposed_singular_amplitude_broadside != 0 ||
   //     Global_Parameters::Imposed_singular_amplitude_in_plane != 0)
 
-  if(!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))
+  if(!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity") &&
+     (CommandLineArgs::command_line_flag_has_been_set("--impose_exact_singular_amplitude") ||
+      CommandLineArgs::command_line_flag_has_been_set("--impose_zero_singular_amplitude") ||
+      CommandLineArgs::command_line_flag_has_been_set("--set_sing_amplitude_broadside") ||
+      CommandLineArgs::command_line_flag_has_been_set("--set_sing_amplitude_in_plane")))
   {
     bool impose_zero_amplitude =
       CommandLineArgs::command_line_flag_has_been_set("--impose_zero_singular_amplitude");
     
     problem.impose_fake_singular_amplitude(impose_zero_amplitude);
-  }   
-
+  }
+      
   if(CommandLineArgs::command_line_flag_has_been_set("--only_subtract_first_asymptotic_term"))
   {
     Global_Parameters::Only_subtract_first_singular_term = true;
@@ -6428,8 +6712,21 @@ int main(int argc, char* argv[])
     problem.validate_exact_solution_divergence();
     exit(0);
   }
+
+  // for debug - output the pin-status of each dof in each submesh
+  problem.output_submesh_dof_pin_status();
+
+  if(L2_PRESSURE_PENALTY != 0)
+    oomph_info << "Pressure regularisation factor: " << L2_PRESSURE_PENALTY << std::endl;
+
+  // ==========================================================================
+  // Setup equation numbering scheme - no more fiddling around / pinning after this!
+  // ==========================================================================
+  oomph_info << "--------------------------\n";
+  oomph_info << "Number of equations: " << problem.assign_eqn_numbers() << std::endl; 
+  oomph_info << "--------------------------\n" << std::endl;
   
-  // // QUEHACERES for debug
+  // QUEHACERES for debug
   problem.newton_solver_tolerance() = 5e-8;
 
   problem.max_residuals() = 100;
@@ -6441,7 +6738,7 @@ int main(int argc, char* argv[])
   {
     //Output initial guess
     problem.doc_solution(nplot);
-  }
+  } 
   else
   {
     problem.doc_info().number()++;
@@ -6450,6 +6747,8 @@ int main(int argc, char* argv[])
   unsigned max_adapt = 0; 
   for (unsigned i=0; i<=max_adapt; i++)
   {
+#ifndef COMPUTE_INITIAL_JACOBIAN_EIGENFUNCTIONS
+    
 #ifdef PRINT_SINGULAR_JACOBIAN
     try
     {
@@ -6479,11 +6778,14 @@ int main(int argc, char* argv[])
       
       // Solve the bastard!
       problem.newton_solve();
-      
+
+#endif
 #ifdef PRINT_SINGULAR_JACOBIAN
+#ifndef COMPUTE_INITIAL_JACOBIAN_EIGENFUNCTIONS
     }
     catch (const std::exception& ex)
     {
+#endif
       // output the jacobian if it's singular
       
       // residual vector and Jacobian matrix
@@ -6508,7 +6810,7 @@ int main(int argc, char* argv[])
 
       // Get eigenvalues/vectors?
       //=========================
-      bool do_eigenvalues = false;
+      bool do_eigenvalues = true;
       unsigned n = r.nrow();
       if (do_eigenvalues)
       {
@@ -6549,7 +6851,7 @@ int main(int argc, char* argv[])
 	    for(unsigned j=0; j<n; j++)
 	    {
 	      singular_vector[j] = real( evec[i][j] );
-	      // std::cout << evec[i][j] << ", ";
+	      std::cout << evec[i][j] << ", ";
 	    }
 	  }
 	  // std::cout << std::endl;
@@ -6565,14 +6867,15 @@ int main(int argc, char* argv[])
 	}
 	some_file.close();
 	problem.assign_eigenvector_to_dofs(singular_vector);
-	//problem.doc_solution(); 
+	problem.doc_solution(nplot); 
       
 	oomph_info << "Done eigenstuff; bailing\n";
 	exit(0);
       }
+#ifndef COMPUTE_INITIAL_JACOBIAN_EIGENFUNCTIONS    
     }
-    
 #endif
+#endif // end PRINT_SINGULAR_JACOBIAN
     
     //Output solution
     problem.doc_solution(nplot);
@@ -6591,3 +6894,4 @@ int main(int argc, char* argv[])
   return 0;
 }
 
+  
