@@ -100,7 +100,6 @@ namespace oomph
       // Find the number of nodes per element (N.B. all elements are identical
       // so we can determine this value once and for all). 
       unsigned n_node = finite_element_pt(0)->nnode();
-      
       //Loop over all the nodes of the first element
       for(unsigned n=0; n<n_node; n++)
       {
@@ -902,7 +901,7 @@ namespace oomph
 
       for(unsigned l=0; l<nnode; l++) 
       {
-	interpolated_dzeta_ds += zeta_nodal(l,0,0) * dpsi_ds(l,0);
+	interpolated_dzeta_ds += zeta_nodal(l) * dpsi_ds(l,0);
       }
       
 #ifdef PARANOID
@@ -919,6 +918,9 @@ namespace oomph
 
       // now compute the Eulerian derivatives via chain rule:
       // dshape/dx = dshape/ds * 1/(dzeta/ds) * dzeta/dx
+      // (this works because we're in 1D so don't have to compute the inverse
+      // of a matrix that would be needed for inverting functions of
+      // multiple variables)
       for(unsigned n=0; n<nnode; n++)
       {
 	// loop over the problem dimensions (not this elements dimensions)
@@ -1546,6 +1548,14 @@ namespace oomph
     {
       No_throw_if_no_singular_elem_pt = false;
     }
+
+    // wrapper to allow the protected FiniteElement::fill_in... to be
+    // called from the outside (for debug)
+    void fill_in_jacobian_by_fd(Vector<double>& residuals,
+				DenseMatrix<double>& jacobian)
+    {
+      FiniteElement::fill_in_contribution_to_jacobian(residuals, jacobian);
+    }
       
   protected:
 
@@ -1737,6 +1747,8 @@ namespace oomph
 /*       // given in local coordinates, i.e. dS = sqrt(det) * s1 * s2 */
 /*       return sqrt(det); */
 /*     } */
+
+  protected:
     
     /// Number of spatial dimensions in the problem
     unsigned Dim;
@@ -2401,7 +2413,7 @@ namespace oomph
 	  residuals, GeneralisedElement::Dummy_matrix, 0);
       }
       
-/* #ifndef USE_FD_JACOBIAN */
+#ifndef USE_FD_JACOBIAN
       /// \short Add the element's contribution to its residual vector and its
       /// Jacobian matrix
       inline void fill_in_contribution_to_jacobian(Vector<double> &residuals,
@@ -2410,7 +2422,7 @@ namespace oomph
       	//Call the generic routine with the flag set to 1
       	fill_in_generic_residual_contribution_navier_stokes_bc(residuals, jacobian, 1);
       }
-/* #endif */
+#endif
 
       /// Output function
       void output(std::ostream &outfile)
@@ -3037,9 +3049,10 @@ namespace oomph
       for(unsigned ising_node=0; ising_node<nnode_sing; ising_node++)
       {	
 	// external data index for this singular node
-	int ext_index = this->C_external_data_index_at_knot[ipt][ising_node];
+	unsigned ext_index = this->C_external_data_index_at_knot[ipt][ising_node];
 
-	if(ext_index >= 0)
+	// QUEHACERES delete, it's an unsigned
+	/* if(ext_index >= 0) */
 	{
 	  // loop over the singular functions
 	  for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
@@ -3079,7 +3092,7 @@ namespace oomph
 	    
 		    // get the nodal index of the Lagrange multiplier for this
 		    // coordinate direction and boundary ID
-		    unsigned lambda_bc_index = first_index[Boundary_id] + i;
+		    unsigned lambda_bc_index = first_index.at(Boundary_id) + i;
 
 		    // get the local Lagrange multiplier equation number 
 		    int local_eqn_lagr = this->nodal_local_eqn(l, lambda_bc_index);
@@ -3178,21 +3191,6 @@ namespace oomph
 		  jacobian(local_eqn_lagr, local_unknown_u_fe) += psi[l2] * psi[l]*W;
 		}
 	      }
-
-	      
-	      // QUEHACERES come back to this when we have a c equation
-	      /* // Deriv. w.r.t. amplitude is simply the unscaled singular fct. */
-	      /* for(unsigned ising=0; ising<sing_el_pt->nsingular_fct(); ising++) */
-	      /* { */
-	      /* 	int local_eqn_c = this->external_local_eqn(C_external_data_index[ising], */
-	      /* 						   C_external_data_value_index[ising]); */
-	      /* 	if (local_eqn_c >= 0) */
-	      /* 	{ */
-		
-	      /* 	  jacobian(local_eqn_lagr, local_eqn_c) += */
-	      /* 	    u_sing_unscaled[ising][d] * test[l]*W; */
-	      /* 	}		 */
-	      /* } */
 	    }
 	  }
 
@@ -3427,14 +3425,8 @@ namespace oomph
       fill_in_generic_residual_contribution_nst_sing_jump(
 	residuals,GeneralisedElement::Dummy_matrix, 0);
     }
-
-    // QUEHACERES analytic jacobian tested and working without r_c, possibly
-    // need to re-enable FD jacobian to test that out.
-    // also re-enable once all these different elements have tested analytic
-    // jacobians so we can legit have USE_FD_JACOBIAN switched on/off
-
-    /* // QUEHACERES 6/10 back in again while debugging PDE constrained shizzle */
-/* #ifndef USE_FD_JACOBIAN */
+    
+#ifndef USE_FD_JACOBIAN
       
     /// \short Add the element's contribution to its residual vector and its
     /// Jacobian matrix
@@ -3445,9 +3437,8 @@ namespace oomph
       fill_in_generic_residual_contribution_nst_sing_jump
 	(residuals, jacobian, 1);
     }
-
-    // QUEHACERES
-/* #endif */
+    
+#endif
       
     /// Output function
     void output(std::ostream &outfile)
@@ -4429,8 +4420,8 @@ namespace oomph
       for(unsigned i=0; i<Dim; i++)
       {
 	for(unsigned j=0; j<Dim; j++)
-	{
-	  traction_sing_total[i] = stress_sing_total(i,j)*unit_normal[j];
+	{	  
+	  traction_sing_total[i] += stress_sing_total(i,j) * unit_normal[j];
 	}
       }
 
@@ -4462,14 +4453,15 @@ namespace oomph
 
       sing_el_pt->shape_and_test(s_singular_el, psi_sing, test_dummy);
       sing_el_pt->dshape_eulerian(edge_coords_at_knot, s_singular_el, dpsi_sing_dx);
-      
+
       // loop over the nodes in the singular element associated with this integration point
       for(unsigned ising_node=0; ising_node<nnode_sing; ising_node++)
       {
 	// external data index for this singular node
-	int ext_index = this->C_external_data_index_at_knot[ipt][ising_node];
+	unsigned ext_index = this->C_external_data_index_at_knot[ipt][ising_node];
 
-	if(ext_index >= 0)
+	// QUEHACERES delete, it's an unsigned
+	/* if(ext_index >= 0) */
 	{
 	  // loop over the singular functions
 	  for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
@@ -4490,8 +4482,6 @@ namespace oomph
 	    // if this singular amplitude isn't pinned
 	    if(external_eqn_c >= 0)	      
 	    {
-	      // QUEHACERES for debug, we'll pin c
-	      abort();
 	      for(unsigned i=0; i<Dim; i++)
 	      {		
 		// contribution of the continuity-enforcing LM to the C equations
@@ -4538,6 +4528,9 @@ namespace oomph
 	  
 		    if (local_eqn_lagr >= 0)
 		    {
+		      // QUEHACERES debug
+		      int global_eqn_lagr = this->eqn_number(local_eqn_lagr);
+		      
 		      // dC/dlambda-hat
 		      jacobian(external_eqn_c, local_eqn_lagr) +=
 			u_sing_unscaled[ising][i] * psi[l] * psi_sing[ising_node] * W;
@@ -4573,6 +4566,10 @@ namespace oomph
 	  dynamic_cast<BoundaryNodeBase*>(node_pt)->
 	  index_of_first_value_assigned_by_face_element_pt() );
 
+	Vector<double> x_l(Dim, 0.0);
+	for(unsigned i=0; i<Dim; i++)
+	  x_l[i] = node_pt->x(i);
+	
 	for(unsigned i=0; i<Dim; i++)
 	{
 	  // Contributions to the bulk Lagrange multiplier equations which
@@ -4611,26 +4608,33 @@ namespace oomph
 	      for(unsigned ising_node=0; ising_node<nnode_sing; ising_node++)
 	      {
 		// external data index for this singular node
-		int ext_index = this->C_external_data_index_at_knot[ipt][ising_node];
+		unsigned ext_index = this->C_external_data_index_at_knot[ipt][ising_node];
 
-		if(ext_index >= 0)
+		// QUEHACERES delete
+		/* if(ext_index >= 0) */
 		{
 		  // loop over the singular functions
 		  for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
 		  {
 		    // external equation number which determines the singular amplitude
 		    int external_eqn_c = this->external_local_eqn(ext_index, ising);
-
+  
 		    // if this singular amplitude isn't pinned
 		    if(external_eqn_c >= 0)	      
 		    {
-		      // QUEHACERES for debug
-		      abort();
+		      // QUEHACERES debug @@
+		      int global_c_eqn = this->eqn_number(external_eqn_c);
+		    
+		      // QUEHACERES debug @@
+		      double jac_entry = jacobian(local_eqn_lagr_mom, external_eqn_c);
 		      
 		      // singular pressure contribution
 		      jacobian(local_eqn_lagr_mom, external_eqn_c) +=
 			psi_sing[ising_node] * p_sing_unscaled[ising] * unit_normal[i] * psi[l] * W;
 
+		      // QUEHACERES debug @@
+		      jac_entry = jacobian(local_eqn_lagr_mom, external_eqn_c);
+		      
 		      // velocity gradient contribution
 		      for(unsigned j=0; j<Dim; j++)
 		      {
@@ -4639,8 +4643,12 @@ namespace oomph
 			    psi_sing[ising_node] * dudx_sing_unscaled[ising](i,j) +
 			    u_sing_unscaled[ising][j] * dpsi_sing_dx(ising_node, i) +
 			    psi_sing[ising_node] * dudx_sing_unscaled[ising](j,i)
-			  ) * unit_normal[j] * psi[l] * W;		   
+			  ) * unit_normal[j] * psi[l] * W;
+
+			jac_entry = jacobian(local_eqn_lagr_mom, external_eqn_c);
 		      }
+		      // QUEHACERES debug
+		      unsigned breakpoint = 0;
 		    } // end pinned amplitude check
 		  } // end loop over singular functions
 		}
@@ -6830,21 +6838,18 @@ namespace oomph
     /// Jacobian matrix
     inline void fill_in_contribution_to_jacobian(Vector<double>& residuals,
     						 DenseMatrix<double>& jacobian)
-    {
-      /* // QUEHACERES now doing all elements as PDE-constrained elements */
+    {      
       if(Is_augmented_element)
       {
-#ifndef USE_FD_JACOBIAN
-	oomph_info << "Analytic Jacobian not implemented" << std::endl;
-	abort();
-#endif 
+#ifdef USE_FD_JACOBIAN
 
-	// QUEHACERES do it properly!
+	FiniteElement::fill_in_contribution_to_jacobian(residuals, jacobian);
+
+#else
 	fill_in_generic_residual_contribution_pde_constrained_min(residuals,
     								  jacobian,
     								  1);
-        /* // finite-diff it for now */
-	/* FiniteElement::fill_in_contribution_to_jacobian(residuals, jacobian); */
+#endif
       }
       else
       {

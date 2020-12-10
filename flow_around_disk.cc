@@ -42,8 +42,8 @@
 
 // NNODE_1D for the singular line elements - may affect stability of the scheme
 #define SINGULAR_ELEMENT_NNODE_1D 2
-
-#define USE_FD_JACOBIAN
+ 
+#define xUSE_FD_JACOBIAN
 
 #define PRINT_SINGULAR_JACOBIAN
 
@@ -58,7 +58,7 @@
 #define DO_TETGEN
  
 // wraps the problem.newton_solve() in a try/catch block and prints jacobian
-// (but cocks up output of other exceptions) 
+// (but cocks up output of other exceptions)
 #define xPRINT_SINGULAR_JACOBIAN
 
 // QUEHACERES for debug - shift the lower plate nodes down by a small amount
@@ -681,7 +681,7 @@ private:
  
   /// Apply BCs and make elements functional
   void complete_problem_setup();
-
+ 
   /// Helper function to apply boundary conditions
   void apply_boundary_conditions();
 
@@ -4545,6 +4545,9 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
 	
 	if( has_two_sets_of_boundary_lagrange_multipliers )
 	{
+	  oomph_info << "shouldn't have two sets now!" << std::endl;
+	  abort();
+	  
 	  // if we've got both continuity and BC LMs, pin one set
 	  // el_pt->pin_lagrange_multiplier_at_specified_local_node(j, i, BC_el_id);
 
@@ -5468,27 +5471,264 @@ void FlowAroundDiskProblem<ELEMENT>::pin_singular_function(const unsigned& sing_
 template <class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 {
-  // QUEHACERES debug
-  {
-    Vector<double> residuals(100,0);
-    DenseMatrix<double> jacobian(100,100,0);
-    bool flag = true;
-    
-    dynamic_cast<NavierStokesWithSingularityBCFaceElement<ELEMENT>*>(Face_mesh_for_bc_pt->element_pt(40))
-      ->fill_in_contribution_to_jacobian(residuals,jacobian);
+  ofstream some_file;
+  ofstream some_file2;
+  ofstream face_some_file;
+  ofstream coarse_some_file;
+  char filename[100];
+  
+  // QUEHACERES debug @@@@@@@@
+  { 
+    sprintf(filename,"%s/dpsi_dx_debug.dat",
+  	    Doc_info.directory().c_str());
+
+    some_file.open(filename);
+
+    unsigned ntest_pts = 50;
+    unsigned ignored_pt_count = 0;
+    for(unsigned i_pt=0; i_pt<ntest_pts; i_pt++)
+    {
+      // get a random number in the range [-(1+r_torus), +(1+r_torus)] for x & y,
+      // and [-r_torus, +r_torus] for z
+      double range_xy = 2 * (1 + Global_Parameters::R_torus);
+      double range_z  = 2 * Global_Parameters::R_torus;
+
+      Vector<double> x(3, 0.0);
+      x[0] = (rand() / double(RAND_MAX) - 0.5) * range_xy;
+      x[1] = (rand() / double(RAND_MAX) - 0.5) * range_xy;    
+      x[2] = (rand() / double(RAND_MAX) - 0.5) * range_z;
+ 
+      // get the edge coords & line elem of this random point
+      // ----------------------------------------------------
+      EdgeCoordinates edge_coords;
+      std::pair<GeomObject*, Vector<double> > line_el_and_local_coord;
+      
+      get_edge_coordinates_and_singular_element( 0x0, x, edge_coords,
+						 line_el_and_local_coord );
+      
+      ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>* sing_el_pt =
+	dynamic_cast<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>*>(
+	  line_el_and_local_coord.first);
+
+      Vector<double> s_sing = line_el_and_local_coord.second;
+
+
+      // get the interpolated shape functions and derivatives
+      // ------------------------------------------------
+      Shape psi_sing(SINGULAR_ELEMENT_NNODE_1D);
+      DShape dpsi_dx(SINGULAR_ELEMENT_NNODE_1D, 3);
+
+      sing_el_pt->shape(s_sing, psi_sing);
+      
+      sing_el_pt->dshape_eulerian(edge_coords,
+				  s_sing,
+				  dpsi_dx);
+
+      // now do the finite-diff version
+      // --------------------------------
+      DenseMatrix<double> dpsi_dx_fd(SINGULAR_ELEMENT_NNODE_1D, 3, 0.0);
+      
+      const double fd_dx = 1e-8;
+
+      bool ignore_point = false;
+            
+      for(unsigned i=0; i<3; i++)
+      {
+	// shifted Eulerian position
+	Vector<double> x_plus_dx = x;
+
+	// add the increments in the ith direction
+	x_plus_dx[i] += fd_dx;
+
+	EdgeCoordinates edge_coords_plus_dx;
+	std::pair<GeomObject*, Vector<double> > line_el_and_local_coord_plus_dx;
+      
+	get_edge_coordinates_and_singular_element( 0x0, x_plus_dx, edge_coords_plus_dx,
+						   line_el_and_local_coord_plus_dx );
+
+	// if the increment means we land in a different singular line elem,
+	// then ignore this point
+	if( line_el_and_local_coord.first != line_el_and_local_coord_plus_dx.first)
+	{
+	  ignore_point = true;
+	  ignored_pt_count++;
+	  break;
+	}
+
+	Vector<double> s_sing_plus_dx = line_el_and_local_coord_plus_dx.second;
+	
+	Shape psi_sing_plus_dx(SINGULAR_ELEMENT_NNODE_1D);
+	sing_el_pt->shape(s_sing_plus_dx, psi_sing_plus_dx);
+
+	for(unsigned k=0; k<SINGULAR_ELEMENT_NNODE_1D; k++)
+	{
+	  dpsi_dx_fd(k,i) = (psi_sing_plus_dx[k] - psi_sing[k]) / fd_dx;
+	}
+
+      }
+
+      if(ignore_point)
+	continue;
+
+      for(unsigned j=0; j<3; j++)
+	some_file << x[j] << " ";
+      
+      
+      for(unsigned k=0; k<SINGULAR_ELEMENT_NNODE_1D; k++)
+      {
+	for(unsigned j=0; j<3; j++)
+	{
+	  some_file << dpsi_dx(k,j) << " ";
+	}
+      }
+
+      for(unsigned k=0; k<SINGULAR_ELEMENT_NNODE_1D; k++)
+      {
+	for(unsigned j=0; j<3; j++)
+	{
+	  some_file << dpsi_dx_fd(k,j) << " ";
+	}
+      }
+
+      some_file << std::endl;      
     }
+
+    oomph_info << "@@ Ignored point count: " << ignored_pt_count << std::endl;
+    
+    // // set a sinusoidal amplitude for testing
+    // for(unsigned n=0; n<Singular_fct_element_mesh_pt->nnode(); n++)
+    // {
+    //   Node* node_pt = Singular_fct_element_mesh_pt->node_pt(n);
+
+    //   Vector<double> x(3, 0.0);
+    //   for(unsigned i=0; i<3; i++)
+    // 	x[i] = node_pt->x(i);
+
+    //   double zeta = atan2(x[1],x[0]);
+
+    //   // random sin function
+    //   double c = 2.0 * sin(2.0*zeta) + 3.0;
+      
+    //   node_pt->set_value(0, c);
+    // }
+    
+    // for(unsigned e=0; e<Face_mesh_for_stress_jump_pt->nelement(); e++)
+    // {
+    //   NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>* elem_pt =
+    // 	dynamic_cast<NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>*>(
+    // 	  Face_mesh_for_stress_jump_pt->element_pt(e));
+	
+    //   for(unsigned ipt=0; ipt<elem_pt->integral_pt()->nweight(); ipt++)
+    //   {      
+    // 	std::pair<GeomObject*, Vector<double> > line_el_and_s = 
+    // 	  elem_pt->line_element_and_local_coordinate_at_knot(ipt);
+
+    // 	ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>* sing_el_pt =
+    // 	  dynamic_cast<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>*>(
+    // 	    line_el_and_s.first);
+
+    // 	EdgeCoordinates edge_coords = elem_pt->edge_coordinate_at_knot(ipt);
+	
+    // 	Vector<double> s_sing = line_el_and_s.second;
+	
+    // 	DShape dpsi_dx(SINGULAR_ELEMENT_NNODE_1D, 3);
+      
+    // 	sing_el_pt->dshape_eulerian(edge_coords,
+    // 				    s_sing,
+    // 				    dpsi_dx);
+
+    // 	// get the cartesians
+    // 	Vector<double> x(3, 0.0);
+    // 	CoordinateConversions::lagrangian_to_eulerian_coordinates(edge_coords, x);
+
+    // 	some_file << e << " " << ipt << " ";
+	
+    // 	for(unsigned i=0; i<3; i++)
+    // 	  some_file << x[i] << " ";
+
+    // 	Vector<double> interpolated_dc_dx(3, 0.0);
+    // 	for(unsigned n=0; n<SINGULAR_ELEMENT_NNODE_1D; n++)
+    // 	{
+    // 	  for(unsigned i=0; i<3; i++)
+    // 	  {
+    // 	    interpolated_dc_dx[i] += sing_el_pt->nodal_value(n, 0) * dpsi_dx(n,i);
+    // 	  }
+    // 	}
+	
+    // 	for(unsigned i=0; i<3; i++)
+    // 	{
+    // 	  some_file << interpolated_dc_dx[i] << " ";
+    // 	}
+
+    // 	some_file << std::endl;
+    //   }
+    // }
+
+    some_file.close();
+  }
+  // @@@@@@@@@@@@@@@@@@@
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  // jacobian debug
+
+  // {
+  //   sprintf(filename,"%s/element-wise_jacobian_stress_jump.dat",
+  // 	    Doc_info.directory().c_str());
+  
+  //   some_file.open(filename);
+
+  //   const double threshold = 1e-10;
+    
+  //   for(unsigned e=0; e<Face_mesh_for_stress_jump_pt->nelement(); e++)
+  //   {
+  //     NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>* elem_pt =
+  // 	dynamic_cast<NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>*>(
+  // 	  Face_mesh_for_stress_jump_pt->element_pt(e));
+
+  //     unsigned ndof = elem_pt->ndof();
+  //     Vector<double> residuals(ndof, 0.0);
+  //     DenseMatrix<double> jacobian_analytic(ndof, ndof, 0.0);
+  //     DenseMatrix<double> jacobian_fd(ndof, ndof, 0.0);
+
+  //     // get the analytic jacobian
+  //     elem_pt->get_jacobian(residuals, jacobian_analytic);
+
+  //     // get it by finite diff
+  //     elem_pt->fill_in_jacobian_by_fd(residuals, jacobian_fd);
+
+  //     some_file << "ELEMENT: " << e << "\n";
+  //     for(unsigned i=0; i<ndof; i++)
+  //     {
+  // 	for(unsigned j=0; j<ndof; j++)
+  // 	{
+  // 	  // only output if we don't have all zeros
+  // 	  if(abs(jacobian_analytic(i,j)) > threshold ||
+  // 	     abs(jacobian_fd(i,j)) > threshold ||
+  // 	     abs(jacobian_fd(i,j) - jacobian_analytic(i,j)) > threshold)
+  // 	  {
+  // 	    int global_eqn = elem_pt->eqn_number(i);
+  // 	    int global_unknown = elem_pt->eqn_number(j);
+	    
+  // 	    some_file << i << " " << j << " "
+  // 		      << global_eqn << " " << global_unknown << " " 
+  // 		      << jacobian_analytic(i,j) << " "
+  // 		      << jacobian_fd(i,j) << " "
+  // 		      << jacobian_fd(i,j) - jacobian_analytic(i,j) << "\n";
+  // 	  }
+  // 	}
+  //     }
+  //     some_file << std::endl;
+  //   }
+
+  //   some_file.close();
+  // }
+
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
   
   bool do_bulk_output = true;
   if (CommandLineArgs::command_line_flag_has_been_set("--suppress_bulk_output"))
   {
     do_bulk_output = false;
   }
-
-  ofstream some_file;
-  ofstream some_file2;
-  ofstream face_some_file;
-  ofstream coarse_some_file;
-  char filename[100];
   
   if (CommandLineArgs::command_line_flag_has_been_set("--output_mesh_quality"))
   {

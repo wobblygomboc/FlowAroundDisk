@@ -323,13 +323,8 @@ namespace CoordinateConversions
     return dxdxi;
   }
 
-  // ==========================================================================
-  /// Function which computes dzeta/dx
-  // ==========================================================================
-  Vector<double> dzeta_dx(const EdgeCoordinates& edge_coords)
+  DenseMatrix<double> dxi_dx(const EdgeCoordinates& edge_coords)
   {
-    const double tol = 1e-8;
-
     // get the derivatives dx_i/dxi_j
     DenseMatrix<double> dxdxi = dx_dxi(edge_coords);
 
@@ -341,33 +336,58 @@ namespace CoordinateConversions
       - dxdxi(0,1) * dxdxi(1,0) * dxdxi(2,2) 
       - dxdxi(0,2) * dxdxi(1,1) * dxdxi(2,0); 
     
-    DenseMatrix<double> inverse_dx_dxi(3, 3, 0.0);
+    DenseMatrix<double> dxidx(3, 3, 0.0);
     
     //Calculate the inverse of the Lagrangian derivatives of the Eulerian coords
-    inverse_dx_dxi(0,0) =  (dxdxi(1,1) * dxdxi(2,2) 
-			    - dxdxi(1,2) * dxdxi(2,1)) / det; 
-    inverse_dx_dxi(0,1) = -(dxdxi(0,1) * dxdxi(2,2) 
-			    - dxdxi(0,2) * dxdxi(2,1)) / det; 
-    inverse_dx_dxi(0,2) =  (dxdxi(0,1) * dxdxi(1,2) 
-			    - dxdxi(0,2) * dxdxi(1,1)) / det; 
-    inverse_dx_dxi(1,0) = -(dxdxi(1,0) * dxdxi(2,2) 
-			    - dxdxi(1,2) * dxdxi(2,0)) / det; 
-    inverse_dx_dxi(1,1) =  (dxdxi(0,0) * dxdxi(2,2) 
-			    - dxdxi(0,2) * dxdxi(2,0)) / det; 
-    inverse_dx_dxi(1,2) = -(dxdxi(0,0) * dxdxi(1,2) 
-			    - dxdxi(0,2) * dxdxi(1,0)) / det; 
-    inverse_dx_dxi(2,0) =  (dxdxi(1,0) * dxdxi(2,1) 
-			    - dxdxi(1,1) * dxdxi(2,0)) / det; 
-    inverse_dx_dxi(2,1) = -(dxdxi(0,0) * dxdxi(2,1) 
-			    - dxdxi(0,1) * dxdxi(2,0)) / det; 
-    inverse_dx_dxi(2,2) =  (dxdxi(0,0) * dxdxi(1,1) 
-			    - dxdxi(0,1) * dxdxi(1,0)) / det; 
+    dxidx(0,0) =  (dxdxi(1,1) * dxdxi(2,2) 
+		   - dxdxi(1,2) * dxdxi(2,1)) / det; 
+    dxidx(0,1) = -(dxdxi(0,1) * dxdxi(2,2) 
+		   - dxdxi(0,2) * dxdxi(2,1)) / det; 
+    dxidx(0,2) =  (dxdxi(0,1) * dxdxi(1,2) 
+		   - dxdxi(0,2) * dxdxi(1,1)) / det; 
+    dxidx(1,0) = -(dxdxi(1,0) * dxdxi(2,2) 
+		   - dxdxi(1,2) * dxdxi(2,0)) / det; 
+    dxidx(1,1) =  (dxdxi(0,0) * dxdxi(2,2) 
+		   - dxdxi(0,2) * dxdxi(2,0)) / det; 
+    dxidx(1,2) = -(dxdxi(0,0) * dxdxi(1,2) 
+		   - dxdxi(0,2) * dxdxi(1,0)) / det; 
+    dxidx(2,0) =  (dxdxi(1,0) * dxdxi(2,1) 
+		   - dxdxi(1,1) * dxdxi(2,0)) / det; 
+    dxidx(2,1) = -(dxdxi(0,0) * dxdxi(2,1) 
+		   - dxdxi(0,1) * dxdxi(2,0)) / det; 
+    dxidx(2,2) =  (dxdxi(0,0) * dxdxi(1,1) 
+		   - dxdxi(0,1) * dxdxi(1,0)) / det;
+    
+    return dxidx;
+  }
+  
+  // ==========================================================================
+  /// Function which computes dzeta/dx
+  // ==========================================================================
+  Vector<double> dzeta_dx(const EdgeCoordinates& edge_coords)
+  {
+    // QUEHACERES delete
+    /* const double tol = 1e-8; */
 
-    // now extract the zeta derivatives
+    /* // get the derivatives dx_i/dxi_j */
+    /* DenseMatrix<double> dxdxi = dx_dxi(edge_coords); */
+
+    /* // Calculate the determinant of the matrix */
+    /* const double det = dxdxi(0,0) * dxdxi(1,1) * dxdxi(2,2)  */
+    /*   + dxdxi(0,1) * dxdxi(1,2) * dxdxi(2,0)  */
+    /*   + dxdxi(0,2) * dxdxi(1,0) * dxdxi(2,1)  */
+    /*   - dxdxi(0,0) * dxdxi(1,2) * dxdxi(2,1)  */
+    /*   - dxdxi(0,1) * dxdxi(1,0) * dxdxi(2,2)  */
+    /*   - dxdxi(0,2) * dxdxi(1,1) * dxdxi(2,0);  */
+
+    // get the derivatives dxi_i/dx_j
+    DenseMatrix<double> dxidx = dxi_dx(edge_coords);
+    
+    // now extract the zeta (= xi_2) derivatives
     Vector<double> dzetadx(3, 0.0);
 
     for(unsigned i=0; i<3; i++)
-      dzetadx[i] = inverse_dx_dxi(1,i);
+      dzetadx[i] = dxidx(1,i);
     
     return dzetadx;
   }
