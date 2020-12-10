@@ -4488,23 +4488,20 @@ namespace oomph
 		residuals[external_eqn_c] +=
 		  lambda_cont[i] * u_sing_unscaled[ising][i] * psi_sing[ising_node] * W;
 		
-		// QUEHACERES for consistency, if we've used the asymmetric version
-		// where we take variations of the FE boundary term, then we can't
-		// include this contribution
-		/* // contribution of the momentum-enforcing LMs to the C equations */
-		/* residuals[external_eqn_c] += */
-		/* 	lambda_momentum[i] * u_sing_unscaled[ising][Dim] * */
-		/* 	unit_normal[i] * psi_sing[ising_node] * W; */
+		// contribution of the momentum-enforcing LMs to the C equations
+		residuals[external_eqn_c] +=
+			lambda_momentum[i] * p_sing_unscaled[ising] *
+			unit_normal[i] * psi_sing[ising_node] * W;
 		
-		/* for(unsigned j=0; j<Dim; j++) */
-		/* {		 */
-		/* 	residuals[external_eqn_c] -= */
-		/* 	  lambda_momentum[i] * unit_normal[j] * ( */
-		/* 	    psi_sing[ising_node] * (dudx_sing_unscaled[ising](i,j) + */
-		/* 				    dudx_sing_unscaled[ising](j,i)) + */
-		/* 	    dpsi_sing_dx(ising_node,j) * u_sing_unscaled[ising][i] + */
-		/* 	    dpsi_sing_dx(ising_node,i) * u_sing_unscaled[ising][j] ) * W; */
-		/* } */
+		for(unsigned j=0; j<Dim; j++)
+		{
+			residuals[external_eqn_c] -=
+			  lambda_momentum[i] * unit_normal[j] * (
+			    psi_sing[ising_node] * (dudx_sing_unscaled[ising](i,j) +
+						    dudx_sing_unscaled[ising](j,i)) +
+			    dpsi_sing_dx(ising_node,j) * u_sing_unscaled[ising][i] +
+			    dpsi_sing_dx(ising_node,i) * u_sing_unscaled[ising][j] ) * W;
+		}
 	      
 		// Jacobian?
 		if (flag == 1)
@@ -4541,12 +4538,16 @@ namespace oomph
 		    }
 		  }
 
-		  // QUEHACERES if we switch to symmetric version, need to
-		  // add dC/dlambda-mom entry here
+		  // QUEHACERES this jacobian entry is symmetric, so added in the same section
+		  // as the transpose entry
 		  
-		  // QUEHACERES delete once above is correct
-		  /* oomph_info << "never get here (variations with C_n in Sing Jump Face elem)\n" << std::endl; */
-		  /* abort(); */
+		  // QUEHACERES delete @@
+		  /* // QUEHACERES if we switch to symmetric version, need to */
+		  /* // add dC/dlambda-mom entry here */
+		  
+		  /* // QUEHACERES delete once above is correct */
+		  /* /\* oomph_info << "never get here (variations with C_n in Sing Jump Face elem)\n" << std::endl; *\/ */
+		  /* /\* abort(); *\/ */
 		}
 	      } // end loop over dimensions
 	      
@@ -4560,6 +4561,17 @@ namespace oomph
       {
 	Node* node_pt = this->node_pt(l);
 
+	Node* nonaug_node_pt = non_augmented_bulk_elem_pt->
+	  node_pt(External_data_index_for_non_aug_node[l]);
+		  
+	// get the bulk node number corresponding to this face element vertex node
+	const unsigned l_in_bulk = this->bulk_node_number(l);
+	  
+	// get the node number of this node as referred to by the non-augmented
+	// bulk element (need to compute dpsi/dx from the non-aug side)
+	const int l_in_non_aug_bulk =
+	  non_augmented_bulk_elem_pt->get_node_number(nonaug_node_pt);
+	
 	// get the map which gives the starting nodal index for
 	// the Lagrange multipliers associated with each boundary ID
 	std::map<unsigned, unsigned> first_index = *(
@@ -4632,6 +4644,11 @@ namespace oomph
 		      jacobian(local_eqn_lagr_mom, external_eqn_c) +=
 			psi_sing[ising_node] * p_sing_unscaled[ising] * unit_normal[i] * psi[l] * W;
 
+
+		      // entry is symmetric, so add the transpose term here too
+		      jacobian(external_eqn_c, local_eqn_lagr_mom) +=
+			psi_sing[ising_node] * p_sing_unscaled[ising] * unit_normal[i] * psi[l] * W;
+		      
 		      // QUEHACERES debug @@
 		      jac_entry = jacobian(local_eqn_lagr_mom, external_eqn_c);
 		      
@@ -4645,6 +4662,14 @@ namespace oomph
 			    psi_sing[ising_node] * dudx_sing_unscaled[ising](j,i)
 			  ) * unit_normal[j] * psi[l] * W;
 
+			jacobian(external_eqn_c, local_eqn_lagr_mom) -=
+			  ( u_sing_unscaled[ising][i] * dpsi_sing_dx(ising_node, j) +
+			    psi_sing[ising_node] * dudx_sing_unscaled[ising](i,j) +
+			    u_sing_unscaled[ising][j] * dpsi_sing_dx(ising_node, i) +
+			    psi_sing[ising_node] * dudx_sing_unscaled[ising](j,i)
+			  ) * unit_normal[j] * psi[l] * W;
+			
+			// QUEHACERES delete
 			jac_entry = jacobian(local_eqn_lagr_mom, external_eqn_c);
 		      }
 		      // QUEHACERES debug
@@ -4690,7 +4715,7 @@ namespace oomph
 		}
 	      }
 
-	      // now loop over *all* the non-aguemented bulk nodes, which make
+	      // now loop over *all* the non-augmented bulk nodes, which make
 	      // contributions to the velocity derivatives in the non-augmented traction
 	      for(unsigned l2=0; l2<non_augmented_bulk_elem_pt->nnode(); l2++)
 	      {
@@ -4707,8 +4732,15 @@ namespace oomph
 		  if(ext_eqn_non_aug_u >= 0)
 		  {
 		    jacobian(local_eqn_lagr_mom, ext_eqn_non_aug_u) +=
-		      dpsidx_non_aug(l2, i) * unit_normal[i2] * psi[l] * W;		  
+		      dpsidx_non_aug(l2, i) * unit_normal[i2] * psi[l] * W;
 
+		    // QUEHACERES delete, doing it with the non-aug stuff now
+		    /* // Jacobian is symmetric, so make the transpose */
+		    /* // contribution while we're at it */
+		    /* jacobian(ext_eqn_non_aug_u, local_eqn_lagr_mom) += */
+		    /*   /\* dpsidx_non_aug(l2, i) * unit_normal[i2] * psi[l] * W; *\/ */
+		    /*   dpsidx_non_aug(l_in_non_aug_bulk, i2) * unit_normal[i] * psi_bulk[l2] * W; */
+		    
 		    // add additional contribution with delta function
 		    if(i2 == i)
 		    {
@@ -4716,6 +4748,12 @@ namespace oomph
 		      {
 			jacobian(local_eqn_lagr_mom, ext_eqn_non_aug_u) +=
 			  dpsidx_non_aug(l2,j) * unit_normal[j] * psi[l] * W;
+
+			// QUEHACERES delete, doing it with the non-aug stuff now
+			/* // Jacobian is symmetric, so make the transpose */
+			/* // contribution while we're at it */
+			/* jacobian(ext_eqn_non_aug_u, local_eqn_lagr_mom) += */
+			/*   dpsidx_non_aug(l_in_non_aug_bulk,j) * unit_normal[j] * psi_bulk[l2] * W; */
 		      }
 		    }
 		  }
@@ -4791,25 +4829,23 @@ namespace oomph
 	  // multipliers to augmented velocity equations
 	  // ==================================================================
 
-	  // get the bulk node number corresponding to this face element vertex node
-	  const unsigned l_in_bulk = this->bulk_node_number(l);
-	  
 	  int local_eqn_augmented = this->nodal_local_eqn(l, i);
 	  if (local_eqn_augmented >= 0)
 	  {
 	    // QUEHACERES write-up Eq. 1.3 term 5
 	    residuals[local_eqn_augmented] += lambda_cont[i] * psi[l]*W;
 
-#ifndef ALL_ELEMENTS_ARE_PDE_CONSTRAINED
-	    for(unsigned j=0; j<Dim; j++)
-	    {
-	      // boundary contribution from momentum-enforcing LMs
-	      // QUEHACERES write-up Eq. 4.24 term 4
-	      residuals[local_eqn_augmented] +=
-	      	(lambda_momentum[i] * unit_normal[j] +
-	      	 lambda_momentum[j] * unit_normal[i]) * dpsidx(l_in_bulk, j)*W;
-	    }
-#endif
+	    // QUEHACERES delete once symm version works ###
+/* #ifndef ALL_ELEMENTS_ARE_PDE_CONSTRAINED */
+/* 	    for(unsigned j=0; j<Dim; j++) */
+/* 	    { */
+/* 	      // boundary contribution from momentum-enforcing LMs */
+/* 	      // QUEHACERES write-up Eq. 4.24 term 4 */
+/* 	      residuals[local_eqn_augmented] += */
+/* 	      	(lambda_momentum[i] * unit_normal[j] + */
+/* 	      	 lambda_momentum[j] * unit_normal[i]) * dpsidx(l_in_bulk, j)*W; */
+/* 	    } */
+/* #endif */
 
 	    // compute Jacobian
 	    if (flag == 1)
@@ -4840,88 +4876,89 @@ namespace oomph
 		}
 	      }
 
-	      // Now need to loop over the full bulk elements nodes since the
-	      // derivatives of the momentum-enforcing LMs make contributions.
-	      // The equation number is slightly awkward;  some nodes are
-	      // common with this face element, i.e. have local nodal equation
-	      // numbers, and the rest are external to this element so we
-	      // need to look them up their equation numbers in the external
-	      // index list
+	      // QUEHACERES delete once symm version working
+	      /* // Now need to loop over the full bulk elements nodes since the */
+	      /* // derivatives of the momentum-enforcing LMs make contributions. */
+	      /* // The equation number is slightly awkward;  some nodes are */
+	      /* // common with this face element, i.e. have local nodal equation */
+	      /* // numbers, and the rest are external to this element so we */
+	      /* // need to look them up their equation numbers in the external */
+	      /* // index list */
 
-	      // first the nodes shared with the face element
-	      for(unsigned l2=0; l2<n_node; l2++)
-	      {
-		// loop over the problem dimensions again
-		for(unsigned i2=0; i2<Dim; i2++)
-		{
-		  unsigned l2_in_bulk = this->bulk_node_number(l2);
+	      /* // first the nodes shared with the face element */
+	      /* for(unsigned l2=0; l2<n_node; l2++) */
+	      /* { */
+	      /* 	// loop over the problem dimensions again */
+	      /* 	for(unsigned i2=0; i2<Dim; i2++) */
+	      /* 	{ */
+	      /* 	  unsigned l2_in_bulk = this->bulk_node_number(l2); */
 		
-		  // Index of the bulk Lagrange multiplier which enforces momentum PDEs 
-		  unsigned lambda_momentum_index =
-		    bulk_el_pt->index_of_lagrange_multiplier(l2_in_bulk, i2);
+	      /* 	  // Index of the bulk Lagrange multiplier which enforces momentum PDEs  */
+	      /* 	  unsigned lambda_momentum_index = */
+	      /* 	    bulk_el_pt->index_of_lagrange_multiplier(l2_in_bulk, i2); */
 
-		  int local_unknown_lagr_mom =
-		    this->nodal_local_eqn(l2, lambda_momentum_index);
+	      /* 	  int local_unknown_lagr_mom = */
+	      /* 	    this->nodal_local_eqn(l2, lambda_momentum_index); */
 
-		  // check the momentum LM isn't pinned
-		  if(local_unknown_lagr_mom >= 0)
-		  {
-		    jacobian(local_eqn_augmented, local_unknown_lagr_mom) +=
-		      psi[l2] * unit_normal[i] * dpsidx(l_in_bulk, i2) * W;
+	      /* 	  // check the momentum LM isn't pinned */
+	      /* 	  if(local_unknown_lagr_mom >= 0) */
+	      /* 	  { */
+	      /* 	    jacobian(local_eqn_augmented, local_unknown_lagr_mom) += */
+	      /* 	      psi[l2] * unit_normal[i] * dpsidx(l_in_bulk, i2) * W; */
 
-		    // add additional contribution with delta function
-		    if(i2 == i)
-		    {
-		      for(unsigned k=0; k<Dim; k++)
-		      {
-			jacobian(local_eqn_augmented, local_unknown_lagr_mom) +=
-			  psi[l2] * unit_normal[k] * dpsidx(l_in_bulk, k) * W;
-		      }
-		    }
-		  }
-		}
-	      }
+	      /* 	    // add additional contribution with delta function */
+	      /* 	    if(i2 == i) */
+	      /* 	    { */
+	      /* 	      for(unsigned k=0; k<Dim; k++) */
+	      /* 	      { */
+	      /* 		jacobian(local_eqn_augmented, local_unknown_lagr_mom) += */
+	      /* 		  psi[l2] * unit_normal[k] * dpsidx(l_in_bulk, k) * W; */
+	      /* 	      } */
+	      /* 	    } */
+	      /* 	  } */
+	      /* 	} */
+	      /* } */
 
-	      // now do the non-shared bulk nodes
-	      for(unsigned l2=0; l2<bulk_el_pt->nnode(); l2++)
-	      {
-		// is this a shared node? (i.e. is it not in the map?)
-		  if(External_data_index_bulk_aug_node_map.find(l2) ==
-		     External_data_index_bulk_aug_node_map.end())
-		    continue;
+	      /* // now do the non-shared bulk nodes */
+	      /* for(unsigned l2=0; l2<bulk_el_pt->nnode(); l2++) */
+	      /* { */
+	      /* 	// is this a shared node? (i.e. is it not in the map?) */
+	      /* 	  if(External_data_index_bulk_aug_node_map.find(l2) == */
+	      /* 	     External_data_index_bulk_aug_node_map.end()) */
+	      /* 	    continue; */
 		  
-		// loop over the problem dimensions again
-		for(unsigned i2=0; i2<Dim; i2++)
-		{
-		  // Index of the bulk Lagrange multiplier which enforces momentum PDEs 
-		  unsigned lambda_momentum_index =
-		    bulk_el_pt->index_of_lagrange_multiplier(l2, i2);
+	      /* 	// loop over the problem dimensions again */
+	      /* 	for(unsigned i2=0; i2<Dim; i2++) */
+	      /* 	{ */
+	      /* 	  // Index of the bulk Lagrange multiplier which enforces momentum PDEs  */
+	      /* 	  unsigned lambda_momentum_index = */
+	      /* 	    bulk_el_pt->index_of_lagrange_multiplier(l2, i2); */
 
-		  // if it is then it's a bulk node which isn't shared with this
-		  // face element, so get it's eternal data index from the map
-		  unsigned ext_index = External_data_index_bulk_aug_node_map[l2];
+	      /* 	  // if it is then it's a bulk node which isn't shared with this */
+	      /* 	  // face element, so get it's eternal data index from the map */
+	      /* 	  unsigned ext_index = External_data_index_bulk_aug_node_map[l2]; */
 
-		  int local_unknown_lagr_mom =
-		    this->external_local_eqn(ext_index, lambda_momentum_index);
+	      /* 	  int local_unknown_lagr_mom = */
+	      /* 	    this->external_local_eqn(ext_index, lambda_momentum_index); */
 		  		  
-		  // check the momentum LM isn't pinned
-		  if(local_unknown_lagr_mom >= 0)
-		  {
-		    jacobian(local_eqn_augmented, local_unknown_lagr_mom) +=
-		      psi_bulk[l2] * unit_normal[i] * dpsidx(l_in_bulk, i2) * W;
+	      /* 	  // check the momentum LM isn't pinned */
+	      /* 	  if(local_unknown_lagr_mom >= 0) */
+	      /* 	  { */
+	      /* 	    jacobian(local_eqn_augmented, local_unknown_lagr_mom) += */
+	      /* 	      psi_bulk[l2] * unit_normal[i] * dpsidx(l_in_bulk, i2) * W; */
 
-		    // add additional contribution with delta function
-		    if(i2 == i)
-		    {
-		      for(unsigned k=0; k<Dim; k++)
-		      {
-			jacobian(local_eqn_augmented, local_unknown_lagr_mom) +=
-			  psi_bulk[l2] * unit_normal[k] * dpsidx(l_in_bulk, k) * W;
-		      }
-		    }
-		  }
-		}
-	      }      
+	      /* 	    // add additional contribution with delta function */
+	      /* 	    if(i2 == i) */
+	      /* 	    { */
+	      /* 	      for(unsigned k=0; k<Dim; k++) */
+	      /* 	      { */
+	      /* 		jacobian(local_eqn_augmented, local_unknown_lagr_mom) += */
+	      /* 		  psi_bulk[l2] * unit_normal[k] * dpsidx(l_in_bulk, k) * W; */
+	      /* 	      } */
+	      /* 	    } */
+	      /* 	  } */
+	      /* 	} */
+	      /* } */      
 
 	    } // end Jacobian flag check
           } // end of augmented velocity equations
@@ -4936,27 +4973,30 @@ namespace oomph
 	    this->external_local_eqn(External_data_index_for_non_aug_node[l], i);
 
 	  // QUEHACERES debug
-	  
-	  Node* nonaug_node_pt = non_augmented_bulk_elem_pt->
-	    node_pt(External_data_index_for_non_aug_node[l]);
-	    
 	  bool nonaug_node_is_pinned = nonaug_node_pt->is_pinned(i);
 
 	  Vector<double> nonaug_x(3, 0.0);
 	  nonaug_x[0] = nonaug_node_pt->x(0);
 	  nonaug_x[1] = nonaug_node_pt->x(1);
 	  nonaug_x[2] = nonaug_node_pt->x(2);
-	  	  
+
+	  if(l_in_non_aug_bulk < 0)
+	  {
+	    oomph_info << "couldn't find the node number of this node in the non-aug"
+		       << " bulk element\n" << std::endl;
+	    abort();
+	  }
+	  
 	  if (local_eqn_non_aug >= 0)
 	  {
-	    
+	    /* // QUEHACERES symm version */
 	    /* for(unsigned j=0; j<Dim; j++) */
 	    /* { */
 	    /*   // boundary contribution from momentum-enforcing LMs */
 	    /*   // QUEHACERES write-up Eqn. 1.4 term 1 */
 	    /*   residuals[local_eqn_non_aug] += */
 	    /* 	(lambda_momentum[i] * unit_normal[j] + */
-	    /* 	 lambda_momentum[j] * unit_normal[i]) * dpsidx(l_in_bulk, j)*W; */
+	    /* 	 lambda_momentum[j] * unit_normal[i]) * dpsidx_non_aug(l_in_non_aug_bulk, j)*W; */
 	    /* } */
 
 	    /* /\* // QUEHACERES experimental *\/ */
@@ -5005,14 +5045,83 @@ namespace oomph
 		  }
 		}
 	      }
-	    } // end Jacobian check
-	  }
 
+	    } // end Jacobian check
+	  } // end check for non-aug velocity pinned
+
+	  // now add the contributions that the momentum-enforcing LMs make to
+	  // *all* of the bulk non-augmented nodal velocities
+	  if (flag == 1)	    
+	  {
+	    // loop over the non-augmented bulk nodes
+	    for(unsigned l2=0; l2<non_augmented_bulk_elem_pt->nnode(); l2++)
+	    {
+	      // external data index for this non-augmented node
+	      unsigned ext_index = External_data_index_all_non_aug_nodes[l2];
+
+	      int ext_eqn_non_aug_u =
+		this->external_local_eqn(ext_index, i);
+
+	      // check the non-augmented nodal velocity isn't pinned
+	      if(ext_eqn_non_aug_u >= 0)
+	      {
+		// loop over the problem dimensions again
+		for(unsigned i2=0; i2<Dim; i2++)
+		{
+		  // Index of the bulk Lagrange multiplier which enforces momentum PDEs 
+		  unsigned lambda_momentum_index =
+		    bulk_el_pt->index_of_lagrange_multiplier(node_pt, i2);
+
+		  int local_unknown_lagr_mom = this->nodal_local_eqn(l, lambda_momentum_index);
+
+		  if(local_unknown_lagr_mom >= 0)
+		  {
+		    jacobian(ext_eqn_non_aug_u, local_unknown_lagr_mom) +=		   
+		      dpsidx_non_aug(l2, i2) * unit_normal[i] * psi[l] * W;
+		    
+		    // add additional contribution with delta function
+		    if(i2 == i)
+		    {
+		      for(unsigned j=0; j<Dim; j++)
+		      {
+			jacobian(ext_eqn_non_aug_u, local_unknown_lagr_mom) +=
+			  dpsidx_non_aug(l2,j) * unit_normal[j] * psi[l] * W;
+		      }
+		    }
+		  }
+		}
+	      }
+	    }	   // end loop over all non-aug nodes
+	  }
+	  
 	  // QUEHACERES these lagrange multipliers also contribute to r_c, write-up Eq. 4.31
 	    	
 	} // end loop over dimensions
       } // end loop over test functions
 
+      // loop over the non-augmented bulk nodes
+      for(unsigned l=0; l<non_augmented_bulk_elem_pt->nnode(); l++)
+      {
+	for(unsigned i=0; i<Dim; i++)
+	{
+	// get the external equation number for the non-augmented nodal dof
+	  int local_eqn_non_aug =
+	    this->external_local_eqn(External_data_index_all_non_aug_nodes[l], i);
+
+	  if(local_eqn_non_aug >= 0)
+	  {
+	    // QUEHACERES symm version      
+	    for(unsigned j=0; j<Dim; j++)
+	    {
+	      // boundary contribution from momentum-enforcing LMs
+	      // QUEHACERES write-up Eqn. 1.4 term 1
+	      residuals[local_eqn_non_aug] +=
+	    	(lambda_momentum[i] * unit_normal[j] +
+	    	 lambda_momentum[j] * unit_normal[i]) * dpsidx_non_aug(l, j)*W;
+	    }
+	  }
+	}
+      }
       // Boundary contributions of momentum LMs to the augmented pressure residual
       // --------------------------------------------------------------------
 
@@ -5030,31 +5139,30 @@ namespace oomph
 	// get the bulk node number corresponding to this face element vertex node
 	unsigned k_in_bulk = this->bulk_node_number(k);
 
-	// get the local equation number for the non-augmented pressure at this vertex node
-	
-	/* int local_eqn_p_non_aug = */
-	/*   this->external_local_eqn(External_data_index_for_non_aug_node[k], */
-	/*   			   bulk_el_pt->p_index_nst()); */
+	// get the local equation number for the non-augmented pressure at this vertex node	
+	int local_eqn_p_non_aug =
+	  this->external_local_eqn(External_data_index_for_non_aug_node[k],
+	  			   bulk_el_pt->p_index_nst());
 
 	/* // QUEHACERES version 3, no pressure contribution! */
 	// QUEHACERES version 2, going back to this being an augmented pressure contribution
-	int local_eqn_p_aug =  this->nodal_local_eqn(k, this->P_index_nst);
+	/* int local_eqn_p_aug =  this->nodal_local_eqn(k, this->P_index_nst); */
 
-	/* if(local_eqn_p_non_aug >= 0) */
+	if(local_eqn_p_non_aug >= 0)
 	// QUEHACERES version 2
-	if(local_eqn_p_aug >= 0)
+	/* if(local_eqn_p_aug >= 0) */
 	{
-	  // QUEHACERES debug
-	  int global_eqn = this->eqn_number(local_eqn_p_aug);
+	  /* // QUEHACERES debug */
+	  /* int global_eqn = this->eqn_number(local_eqn_p_aug); */
 	
 	  for(unsigned j=0; j<Dim; j++)
 	  {
 #ifndef ALL_ELEMENTS_ARE_PDE_CONSTRAINED
 	  
 	    /* // QUEHACERES write-up Eq. 1.6 */
-	    /* residuals[local_eqn_p_non_aug] -= */
+	    residuals[local_eqn_p_non_aug] -=
 
-	    residuals[local_eqn_p_aug] -=
+	    /* residuals[local_eqn_p_aug] -= */
 	      lambda_momentum[j] * unit_normal[j] * psip[k_in_bulk] * W;
 #endif	  
 	    // Derivatives of pressure residual w.r.t. momentum-enforcing LM
@@ -5077,7 +5185,8 @@ namespace oomph
 		  int global_eqn_lagr_mom = this->eqn_number(local_eqn_lagr_mom);
 		
 		  // add dr^p/dLambda
-		  jacobian(local_eqn_p_aug, local_eqn_lagr_mom) -=
+		  /* jacobian(local_eqn_p_aug, local_eqn_lagr_mom) -= */
+		  jacobian(local_eqn_p_non_aug, local_eqn_lagr_mom) -=
 		    psi[l2] * unit_normal[j] * psip[k_in_bulk] * W;
 		}	      
 	      } // end loop over face nodes
