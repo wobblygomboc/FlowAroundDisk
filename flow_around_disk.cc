@@ -36,6 +36,8 @@
 //Generic routines
 #include "generic.h"
 
+#include "external_src/oomph_superlu_4.3/slu_ddefs.h"
+
 // ============================================================================
 // custom defines
 // ============================================================================
@@ -45,11 +47,15 @@
  
 #define xUSE_FD_JACOBIAN
 
-#define PRINT_SINGULAR_JACOBIAN
+#define xPRINT_SINGULAR_JACOBIAN
 
-#define xSINGLE_SINGULAR_AMPLITUDE_DOF
+#define SINGLE_SINGULAR_AMPLITUDE_DOF
 
-//#define COMPUTE_INITIAL_JACOBIAN_EIGENFUNCTIONS
+#define USE_SYMMETRIC_JACOBIAN 
+ 
+#define ALL_ELEMENTS_ARE_PDE_CONSTRAINED
+
+#define xCOMPUTE_INITIAL_JACOBIAN_EIGENFUNCTIONS
 
 // do we want to duplicate the edge nodes (for better output)?
 #define xDUPLICATE_EDGE_NODES
@@ -68,8 +74,6 @@
 #ifdef SHIFT_LOWER_PLATE_NODES_BY_DZ
 const double lower_plate_z_shift = -0.987e-8;
 #endif
-
-#define xALL_ELEMENTS_ARE_PDE_CONSTRAINED
 
 // QUEHACERES hacky, do this properly at some point
 double L2_VELOCITY_PENALTY = 1.0;
@@ -157,10 +161,10 @@ namespace Global_Parameters
   // number of vertices on the cross-sectional circles of the torus
   unsigned Nvertex_torus = 8; //10;
 
-  // QUEHACERES delete, doing this in the constructor now
-  // // number of elements in the singular line mesh which holds the
-  // // singular amplitudes
-  // unsigned Nsingular_line_element = Half_nsegment_disk * 4 - 1;
+  // number of elements in the singular line mesh which holds the
+  // singular amplitudes.
+  // Default: same number of elements as on the edge of the disk
+  unsigned Nsingular_line_element = Half_nsegment_disk * 4 - 1;
   
   unsigned Nplot_for_bulk = 5;
 
@@ -676,6 +680,12 @@ public:
   /// \short Helper to pin the dofs in the singular line mesh corresponding to
   /// a particular singular function
   void pin_singular_function(const unsigned& sing_fct_id);
+
+  // QUEHACERES for debug: compute the condition number of the Jacobian
+  // matrix
+  double compute_jacobian_condition_number();
+
+  void compute_and_assign_smallest_eigensolution(const double& threshold=1e-12);
   
 private:
  
@@ -1214,7 +1224,6 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   Mesh_as_geom_object_pt = 0x0;
 
   // Make new geom object
-  // delete Mesh_as_geom_object_pt;
   Mesh_as_geom_object_pt = new MeshAsGeomObject(Bulk_mesh_pt);
 
   // hacky - set the global pointer to the GeomObj representation of the mesh
@@ -1291,28 +1300,16 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   
   // make the line mesh of elements that sit around the outer edge of the disk
   // and provide the singular functions as functions of the edge coordinates
-  unsigned nsingular_line_element = Global_Parameters::Half_nsegment_disk * 4;
-  create_one_d_singular_element_mesh(nsingular_line_element);
+  // unsigned nsingular_line_element = Global_Parameters::Half_nsegment_disk * 4;
+  
+  create_one_d_singular_element_mesh(Global_Parameters::Nsingular_line_element);
 
-  oomph_info << "Singular mesh, upper elements: "
-	     << Singular_fct_element_mesh_upper_pt->nelement() << "\n"
-	     << "               lower elements: "
-    	     << Singular_fct_element_mesh_lower_pt->nelement() << "\n\n";
+  oomph_info << "Number of singular amplitude elements: "
+	     << Singular_fct_element_mesh_pt->nelement() << "\n";
   
   Singular_line_mesh_as_geom_object_pt =
     new MeshAsGeomObject(Singular_fct_element_mesh_pt);
-  
-  // ### QUEHACERES 
-  // // now build the GeomObject representation of these guys
-  // Singular_line_mesh_lower_as_geom_object_pt = 0x0;
-  // Singular_line_mesh_upper_as_geom_object_pt = 0x0;
-  
-  // Singular_line_mesh_upper_as_geom_object_pt =
-  //   new MeshAsGeomObject(Singular_fct_element_mesh_upper_pt);
-
-  // Singular_line_mesh_lower_as_geom_object_pt =
-  //   new MeshAsGeomObject(Singular_fct_element_mesh_lower_pt);
-  
+    
   // Add 'em to mesh
   add_sub_mesh(Bulk_mesh_pt);
   add_sub_mesh(Singular_fct_element_mesh_pt);
@@ -1347,8 +1344,9 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
 
     for(unsigned i=0; i<3; i++)
       some_file << node_pt->x(i) << " ";
-    
-    some_file << node_pt << std::endl;
+
+    some_file << node_pt->nvalue() << " "
+	      << node_pt << std::endl;
   }
   some_file.close();
 
@@ -1413,6 +1411,30 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   }
   some_file.close();
 
+  filename.str("");
+  filename << Doc_info.directory() << "/debug_non_aug_bulk_nodes.dat";
+  some_file.open(filename.str().c_str());
+  unsigned region_id = 0;
+  unsigned n_el = Bulk_mesh_pt->nregion_element(region_id);
+  for (unsigned e=0; e<n_el; e++)
+  {
+    // get a pointer to the torus-region element
+    ELEMENT* el_pt =
+      dynamic_cast<ELEMENT*>(Bulk_mesh_pt->region_element_pt(region_id, e));
+
+    for(unsigned n=0; n<el_pt->nnode(); n++)
+    {
+      Node* node_pt = el_pt->node_pt(n);
+
+      for(unsigned i=0; i<3; i++)
+	some_file << node_pt->x(i) << " ";
+      
+      some_file << node_pt->nvalue() << " "
+		<< node_pt << std::endl;
+    }
+  }
+  some_file.close();
+  
   // output the singular line mesh nodes
   // ----------------------------------------------------------
   filename.str("");
@@ -1459,12 +1481,9 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   }
   some_file.close();
   
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-
   // use mumps, as it's much faster!
 #ifdef OOMPH_HAS_MUMPS
-
-  // QUEHACERES taking out for debug
+  
   // oomph_info << "Using MUMPS linear solver\n\n";
   
   // MumpsSolver* mumps_linear_solver_pt = new MumpsSolver;
@@ -3109,9 +3128,8 @@ void FlowAroundDiskProblem<ELEMENT>::get_edge_coordinates_and_singular_element(
   // QUEHACERES experiental @@@@@@@@@@@@@@@
   double zeta_plus_pi_4 = Analytic_Functions::map_angle_to_range_0_to_2pi(
     edge_coordinates_at_point.zeta + MathematicalConstants::Pi/4.0);
-  
-  //  double exact_p0 = 
-  edge_coordinates_at_point.p0 = Global_Parameters::p0; //  + exact_p0;
+
+  edge_coordinates_at_point.p0 = Global_Parameters::p0;
 }
 
 //========================================================================
@@ -3208,361 +3226,16 @@ create_one_d_singular_element_mesh(const unsigned& nsingular_el)
   dynamic_cast<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>*>(
     Singular_fct_element_mesh_pt->element_pt(nsingular_el - 1))->
     setup_zeta_nodal(use_zeta_2pi_instead_of_0);
-
-  // QUEHACERES debug - delete
-  {
-    typedef ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>* SING_EL;
-      
-    // these should be the same
-    Node* first_node_pt =
-      dynamic_cast<SING_EL>(Singular_fct_element_mesh_pt->element_pt(0))->node_pt(0);
-    Node* last_node_pt =
-      dynamic_cast<SING_EL>(Singular_fct_element_mesh_pt->element_pt(nsingular_el-1))->
-      node_pt(SINGULAR_ELEMENT_NNODE_1D-1);
-
-    for(unsigned j=0; j<dynamic_cast<SING_EL>(Singular_fct_element_mesh_pt->element_pt(0))->nnode(); j++)
-    {
-      double zeta_nodal_first_el =
-	dynamic_cast<SING_EL>(Singular_fct_element_mesh_pt->element_pt(0))->zeta_nodal(j);
-      double zeta_nodal_last_el =
-	dynamic_cast<SING_EL>(Singular_fct_element_mesh_pt->element_pt(nsingular_el-1))->zeta_nodal(j);
-      unsigned breakpoint = 1;
-    }
-  }
-  // ### QUEHACERES delete
-  
-  // // maps to keep track of nodes we've already duplicated;
-  // // map are original node -> new node
-  // std::map<Node*,Node*> existing_duplicate_node_upper_pt;
-  // std::map<Node*,Node*> existing_duplicate_node_lower_pt;
-  
-  // // sets of nodes which will be added to the upper and lower meshes
-  // std::set<Node*> upper_mesh_nodes_pt;
-  // std::set<Node*> lower_mesh_nodes_pt;
-  
-  // for(Vector<unsigned>::iterator zero_based_id =
-  // 	Boundary_id_for_upper_disk_within_torus.begin();
-  //     zero_based_id != Boundary_id_for_upper_disk_within_torus.end(); zero_based_id++)
-  // {
-  //   // get the oomph-lib zero based boundary ID for the disk boundary
-  //   unsigned ibound = *zero_based_id;
-    
-  //   unsigned nel = Bulk_mesh_pt->nboundary_element(ibound);
-  //   for(unsigned e=0; e<nel; e++)
-  //   {
-    
-  //     // get the boundary element
-  //     ELEMENT* tet_el_pt = dynamic_cast<ELEMENT*>(
-  // 	Bulk_mesh_pt->boundary_element_pt(ibound, e));
-
-  //     // get the index of the tet face which sits on the disk
-  //     int face_index = Bulk_mesh_pt->face_index_at_boundary(ibound, e);
-
-  //     // build a 2D face element for this face
-  //     NavierStokesFaceElement<ELEMENT>* triangle_el_pt =
-  //     	new NavierStokesFaceElement<ELEMENT>(tet_el_pt, face_index);
-      
-  //     // now we need to find the "face" (i.e. 1D edge) of this disk element which is
-  //     // on the outer edge of the disk - we'll have to do this by exhaustively trying
-  //     // each edge and looking at the radial position of the nodes
-
-  //     // the face id of the edge of this 2D element which is on the outer edge of the disk
-  //     unsigned face_index_of_outer_edge = 0;
-
-  //     // did we find it?
-  //     bool found_outer_edge_face = false;
-
-  //     // is it in the lower half-plane (y<0)? 
-  //     bool is_in_lower_half_plane = false;
-    
-  //     for(face_index_of_outer_edge = 0; face_index_of_outer_edge<3; face_index_of_outer_edge++)
-  //     {
-  // 	NavierStokesFaceElement<TTaylorHoodElement<2> >* line_el_pt =
-  // 	   new NavierStokesFaceElement<TTaylorHoodElement<2> >
-  // 	   (triangle_el_pt, face_index_of_outer_edge);
-
-  // 	// tolerance on the nodal radius
-  // 	double r_tol = 1e-8;
-      
-  // 	// now test the nodes
-  // 	unsigned nnode_on_outer_edge = 0;
-
-  // 	unsigned nnode = line_el_pt->nnode();
-  // 	for(unsigned j=0; j<nnode; j++)
-  // 	{
-  // 	  Node* node_pt = line_el_pt->node_pt(j);
-
-  // 	  // compute the x-y radius of this node
-  // 	  double r = sqrt(pow(node_pt->x(0), 2) + pow(node_pt->x(1), 2));
-
-  // 	  // if the radius is within the tolerance, this node is on the outer edge
-  // 	  if(abs(r - 1.0) < r_tol)
-  // 	    nnode_on_outer_edge++;
-  // 	  else break;
-  // 	}
-
-  // 	if(nnode_on_outer_edge == nnode)
-  // 	{
-  // 	  found_outer_edge_face = true;
-
-  // 	  // now check if all the nodes are in the lower plane (i.e. we may need to
-  // 	  // exchange zeta=0 for zeta=2pi). If the nodes are all in the lower half-plane
-  // 	  // but none of them are on the x-axis then their zeta will be unaffected so
-  // 	  // it is enough to simply check the sign of the y-coordinate.
-  // 	  unsigned nnegative = 0;
-  // 	  unsigned npositive = 0;
-	  
-  // 	  double tol = 1e-12;
-  // 	  for(unsigned j=0; j<nnode; j++)
-  // 	  {
-  // 	    if(line_el_pt->node_pt(j)->x(1) < tol)
-  // 	      nnegative++;
-  // 	    if(line_el_pt->node_pt(j)->x(1) > -tol)
-  // 	      npositive++;
-  // 	  }
-
-  // 	  // check if all the nodes are negative
-  // 	  if(nnegative == nnode)
-  // 	  {
-  // 	    is_in_lower_half_plane = true;
-  // 	  }
-  // 	  else if((nnegative > 0 && nnegative < nnode) && (npositive < nnode))
-  // 	  {
-  // 	    ostringstream error_message;
-
-  // 	    error_message << "Something has gone wrong, there seems to be an element at "
-  // 			  << "the edge of the disk which crosses the x-axis \n"
-  // 			  << "(and so crosses the discontinuity in the azimuthal angle)\n"
-  // 			  << "Coordinates of this line element are: \n";
-
-  // 	    for(unsigned j=0; j<line_el_pt->nnode(); j++)
-  // 	    {
-  // 	      error_message << "Node " << j << ": ("
-  // 			    << line_el_pt->node_pt(j)->x(0) << ", "
-  // 			    << line_el_pt->node_pt(j)->x(1) << ", "
-  // 			    << line_el_pt->node_pt(j)->x(2) << ")\n";
-  // 	    }
-	
-  // 	    throw OomphLibError(error_message.str(),
-  // 				OOMPH_CURRENT_FUNCTION,
-  // 				OOMPH_EXCEPTION_LOCATION);
-  // 	  }
-  // 	  // element shouldn't have multiple edges on the outer disk (unless we're
-  // 	  // super under-resolved!) so don't need to check the other sides
-  // 	  break;
-  // 	}
-
-  // 	// clean up the temporary face element
-  // 	delete line_el_pt;
-  //     }
-      
-  //     // if we didn't find an edge on the disk boundary for this element, move on
-  //     if(!found_outer_edge_face)
-  // 	continue;
-
-  //     // build a permanent copy of the new line element
-  //     ScalableSingularityForNavierStokesLineElement<ELEMENT::_NNODE_1D_>*
-  // 	singularity_line_el_pt;
-      
-  //     if(is_in_lower_half_plane)
-  //     {
-  // 	singularity_line_el_pt = 
-  // 	  new ScalableSingularityForNavierStokesLineElement<ELEMENT::_NNODE_1D_>(triangle_el_pt,
-  // 								      face_index_of_outer_edge,
-  // 								      existing_duplicate_node_lower_pt,
-  // 								      is_in_lower_half_plane);
-	
-  // 	Singular_fct_element_mesh_lower_pt->add_element_pt(singularity_line_el_pt);
-	
-  // 	// stick this elements nodes in the lower set
-  // 	for(unsigned j=0; j<singularity_line_el_pt->nnode(); j++)
-  // 	  lower_mesh_nodes_pt.insert(singularity_line_el_pt->node_pt(j));
-  //     }
-  //     else
-  //     {
-  // 	singularity_line_el_pt = 
-  // 	  new ScalableSingularityForNavierStokesLineElement<ELEMENT::_NNODE_1D_>(triangle_el_pt,
-  // 								      face_index_of_outer_edge,
-  // 								      existing_duplicate_node_upper_pt,
-  // 								      is_in_lower_half_plane);
-	
-  // 	Singular_fct_element_mesh_upper_pt->add_element_pt(singularity_line_el_pt);
-
-  // 	// stick this elements nodes in the upper set
-  // 	for(unsigned j=0; j<singularity_line_el_pt->nnode(); j++)
-  // 	  upper_mesh_nodes_pt.insert(singularity_line_el_pt->node_pt(j));	
-  //     }
-
-  //     // QUEHACERES the code as-is will now leak memory as we don't clean up here -
-  //     // but when we have actual plate elements we won't be creating the triangle_el_pt
-  //     // by "new", so we then won't want to delete the plate element anyway. Now we
-  //     // can't delete this as the singularity_line_el_pt's bulk_element_pt points to this
-  //     // // clean up
-  //     // delete triangle_el_pt;
-      
-  //   } // end loop over elements on each boundary
-  // } // end loop over upper disk boundaries
-
-  // // now add the nodes to the relevant meshes
-  // for(std::set<Node*>::iterator it = upper_mesh_nodes_pt.begin();
-  //     it != upper_mesh_nodes_pt.end(); it++)
-  // {
-  //   Singular_fct_element_mesh_upper_pt->add_node_pt(*it);
-  // }
-  // for(std::set<Node*>::iterator it = lower_mesh_nodes_pt.begin();
-  //     it != lower_mesh_nodes_pt.end(); it++)
-  // {
-  //   Singular_fct_element_mesh_lower_pt->add_node_pt(*it);
-  // }
-
-  // // ==========================================================================
-  // // Now add the two halves of the singular line mesh together
-  
-  // std::set<Node*> singular_line_mesh_nodes_set;
-  // for(unsigned e=0; e<Singular_fct_element_mesh_upper_pt->nelement(); e++)
-  // {
-  //   ScalableSingularityForNavierStokesLineElement<ELEMENT::_NNODE_1D_>* sing_el_pt =
-  //     dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
-  // 	Singular_fct_element_mesh_upper_pt->element_pt(e));
-
-  //   Singular_fct_element_mesh_pt->add_element_pt(sing_el_pt);
-
-  //   // // and grab the nodes from the upper half
-  //   // for(unsigned j=0; j<sing_el_pt->nnode(); j++)
-  //   //   singular_line_mesh_nodes_set.insert(sing_el_pt->node_pt(j));
-  // }
-  // for(unsigned e=0; e<Singular_fct_element_mesh_lower_pt->nelement(); e++)
-  // {
-  //   ScalableSingularityForNavierStokesLineElement<ELEMENT::_NNODE_1D_>* sing_el_pt =
-  //     dynamic_cast<ScalableSingularityForNavierStokesLineElement<3>*>(
-  // 	Singular_fct_element_mesh_lower_pt->element_pt(e));
-
-  //   Singular_fct_element_mesh_pt->add_element_pt(sing_el_pt);
-
-  //   // // and grab the nodes from the lower half
-  //   // for(unsigned j=0; j<sing_el_pt->nnode(); j++)
-  //   //   singular_line_mesh_nodes_set.insert(sing_el_pt->node_pt(j));
-  // } 
-
-  // // Now find the 2 pairs of overlapping nodes (where the upper and lower meshes meet)
-  // // and merge them
-  // // ---------------------------------------------------------  
-  // std::map<FiniteElement*, std::pair<unsigned, Node*> > element_and_node_to_update;
-  
-  // for(unsigned e=0; e<Singular_fct_element_mesh_pt->nelement(); e++)
-  // {
-  //   FiniteElement* sing_el_pt =	dynamic_cast<FiniteElement*>(
-  //     Singular_fct_element_mesh_pt->element_pt(e));
-    
-  //   // grab the nodes and insert them into a set to avoid duplicates
-  //   for(unsigned j=0; j<sing_el_pt->nnode(); j++)
-  //   {
-  //     Node* node_pt = sing_el_pt->node_pt(j);
-
-  //     // check we haven't already accounted fo this node
-  //     bool have_already_replaced_this_node = false;
-  //     for(std::map<FiniteElement*, std::pair<unsigned, Node*> >::iterator it =
-  // 	    element_and_node_to_update.begin(); it != element_and_node_to_update.end(); it++)
-  //     {
-  // 	if ( it->first == sing_el_pt)
-  // 	{
-  // 	  have_already_replaced_this_node = true;
-  // 	  break;
-  // 	}
-  //     }
-
-  //     if(have_already_replaced_this_node)
-  // 	continue;
-      
-  //     // get the spatial location of this node
-  //     Vector<double> x(Dim, 0.0);
-  //     for(unsigned i=0; i<Dim; i++)
-  // 	x[i] = node_pt->x(i);
-      
-  //     // now loop over the elements and nodes again to find if this node
-  //     // needs merging (should apply to two nodes where the upper and lower
-  //     // meshes meet)
-  //     for(unsigned e2=0; e2<Singular_fct_element_mesh_pt->nelement(); e2++)
-  //     {
-  // 	FiniteElement* sing_el2_pt = dynamic_cast<FiniteElement*>(
-  // 	  Singular_fct_element_mesh_pt->element_pt(e2));
-
-  // 	// don't want to check the same element
-  // 	if (sing_el_pt == sing_el2_pt)
-  // 	  continue;
-
-  // 	// loop over the nodes and check if any of them are the same as this one
-  // 	for(unsigned j2=0; j2<sing_el2_pt->nnode(); j2++)
-  // 	{
-  // 	  Node* node2_pt = sing_el2_pt->node_pt(j2);
-
-  // 	  // don't want to count the same node approached from neighbouring elements
-  // 	  if((node2_pt == node_pt))
-  // 	    continue;
-	  
-  // 	  // get the location of this node
-  // 	  Vector<double> x2(Dim, 0.0);
-  // 	  for(unsigned i=0; i<Dim; i++)
-  // 	    x2[i] = node2_pt->x(i);
-
-  // 	  const double tol = 1e-8;
-  // 	  if( ( abs(x[0] - x2[0]) < tol) &&
-  // 	      ( abs(x[1] - x2[1]) < tol) &&
-  // 	      ( abs(x[2] - x2[2]) < tol) )
-  // 	  {
-  // 	    // add the info to our map
-  // 	    element_and_node_to_update[sing_el2_pt] = std::make_pair(j2, node_pt);
-
-  // 	    // QUEHACERES debug
-  // 	    oomph_info << "merging two nodes at: ";
-
-  // 	    for(unsigned i=0; i<Dim; i++)
-  // 	      oomph_info << x2[i] << ", ";
-  // 	    oomph_info << std::endl;
-  // 	  }	  
-  // 	}
-  //     }
-      
-  //     singular_line_mesh_nodes_set.insert(node_pt);
-  //   }
-  // }
-
-  // // now actually do the node updates
-  // unsigned nmerged_nodes = 0;
-  // for(std::map<FiniteElement*, std::pair<unsigned, Node*> >::iterator it =
-  // 	element_and_node_to_update.begin(); it != element_and_node_to_update.end(); it++)
-  // {
-  //   FiniteElement* el_pt = it->first;
-  //   std::pair<unsigned, Node*> node_num_and_new_node_pt = it->second;
-
-  //   // do the update
-  //   el_pt->node_pt(node_num_and_new_node_pt.first) = node_num_and_new_node_pt.second;
-
-  //   // update the counter to make sure we've found the right number
-  //   nmerged_nodes++;
-  // }
-  
-  // // finally, add the unique nodes to the combined mesh
-  // for(std::set<Node*>::iterator it = singular_line_mesh_nodes_set.begin();
-  //     it != singular_line_mesh_nodes_set.end(); it++)
-  //   Singular_fct_element_mesh_pt->add_node_pt(*it);
-
+ 
 #ifdef PARANOID
 
   // sanity check - is the number of nodes in the two meshes the same as the
   // number of vertices requested for the meshing of the disk? (minus two,
   // because the two halves of the mesh overlap at 2 nodes
-  oomph_info // << "Number of nodes in singular mesh (upper): "
-	     // << Singular_fct_element_mesh_upper_pt->nnode() << "\n"
-	     // << "Number of nodes in singular mesh (lower): "
-	     // << Singular_fct_element_mesh_lower_pt->nnode() << "\n"
-	     << "Number of nodes in singular line mesh:    "
+  oomph_info << "Number of nodes in singular line mesh:    "
 	     << Singular_fct_element_mesh_pt->nnode() << "\n"
-	     // << "Number of merged nodes:                   "
-	     // << nmerged_nodes << "\n"
 	     << "Number of nodes on disk edge:             "
 	     << Global_Parameters::Half_nsegment_disk * 4 << "\n" << std::endl;
-    
 #endif
 }
 
@@ -3572,7 +3245,7 @@ create_one_d_singular_element_mesh(const unsigned& nsingular_el)
 // ///////////////////////////////////////////////////////////////////////
 // ///////////////////////////////////////////////////////////////////////
 
-
+// QUEHACERES delete
 //========================================================================
 /// Setup disk on disk plots
 //========================================================================
@@ -3695,23 +3368,6 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
 
     dynamic_cast<BoundaryNode<Node>*>(Singular_fct_element_mesh_pt->node_pt(0))->
       make_periodic_nodes(periodic_nodes_pt);
-
-    // QUEHACERES delete
-    // for(unsigned e=0; e<Singular_fct_element_mesh_pt->nelement(); e++)
-    // {
-    //   for(unsigned e2=0; e2<Singular_fct_element_mesh_pt->nelement(); e2++)
-    //   {
-    // 	if(e == e2)
-    // 	  continue;
-	
-    // 	for(unsigned n=1; n<SINGULAR_ELEMENT_NNODE_1D; n++)
-    // 	  Singular_fct_element_mesh_pt->element_pt(e)->add_external_data(
-    // 	    dynamic_cast<FiniteElement*>(Singular_fct_element_mesh_pt->element_pt(e2))->node_pt(n));
-    //   }
-    // }
-       
-    // // QUEHACERES temporarily pin the first node now
-    // Singular_fct_element_mesh_pt->node_pt(0)->pin(0);
   }
 #endif
   
@@ -3943,14 +3599,7 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
       	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_broadside,
       	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_broadside,
       	Sing_fct_id_broadside);
-      
-      // QUEHACERES taking out moffatt versions for the time being 11/08
-      // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-      // 	&Global_Parameters::SingularFunctions::singular_fct_broadside,
-      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_broadside,
-      // 	Sing_fct_id_broadside);
 
-      
       // In-plane singular function -------------------------------------------
 
       // QUEHACERES using the asymptotically expanded exact solution for now 12/08
@@ -3958,12 +3607,6 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
       	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_in_plane,
       	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_in_plane,
       	Sing_fct_id_in_plane);
-
-      // // QUEHACERES taking out moffatt versions for the time being 12/08
-      // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-      // 	&Global_Parameters::SingularFunctions::singular_fct_in_plane,
-      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_in_plane,
-      // 	Sing_fct_id_in_plane);
 
       // u_zeta velocity component for in-plane singular function ----------------
       // QUEHACERES if this works, change the enum name for the ID
@@ -3982,7 +3625,6 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
 
     // set the function pointer to the function which computes dzeta/dx
     sing_el_pt->dzeta_dx_fct_pt() = &CoordinateConversions::dzeta_dx;
-      // &Global_Parameters::SingularFunctions::compute_dzeta_dx;
   }
 
   // add the elements in the torus region to the torus region mesh, so that it
@@ -4105,11 +3747,7 @@ find_corresponding_element_on_bulk_side_of_augmented_boundary(FiniteElement*& au
 //========================================================================
 template <class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::create_face_elements()
-{
-  // QUEHACERES delete, this is now private member data
-  // // Map to keep track of mapping between old and duplicated nodes
-  // std::map<Node*,Node*> existing_duplicate_node_pt;
-
+{  
   // Flux jump elements on boundary of torus
   //----------------------------------------
   // NOTE: Since these duplicate nodes, these elements must be
@@ -4154,11 +3792,6 @@ void FlowAroundDiskProblem<ELEMENT>::create_face_elements()
 	//Add the flux jump element to the mesh
 	Face_mesh_for_stress_jump_pt->add_element_pt(stress_jump_element_pt);
 
-	// QUEHACERES delete, taking this in the constructor now
-	// // and pass the pointer to the corresponding bulk region element
-	// stress_jump_element_pt->non_augmented_region_bulk_element_pt() = 
-	//   dynamic_cast<ELEMENT*>(Torus_boundary_element_augmented_to_bulk_map.at(el_pt));
-	
 	// hierher
 	stress_jump_element_pt->output(some_file);
       }
@@ -4442,32 +4075,44 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
     // Dirichlet boundaries
 
     // loop over the bulk elements on this boundary
-    unsigned nel = Bulk_mesh_pt->nboundary_element(bnd);
+    unsigned nel = Bulk_mesh_pt->nboundary_element(ibound);
+    
+    // QUEHACERES debug
+    if(nel == 0)
+    {
+      oomph_info << "No elements on boundary " << bnd << std::endl;
+      abort();
+    }
+    
     for(unsigned e=0; e<nel; e++)
     {
       // get the boundary bulk element
-      ELEMENT* bulk_elem_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->boundary_element_pt(bnd, e));
+      ELEMENT* bulk_elem_pt = dynamic_cast<ELEMENT*>(
+	Bulk_mesh_pt->boundary_element_pt(ibound, e));
 
       //Get Face index of boundary in the bulk element
       int face_index = Bulk_mesh_pt->face_index_at_boundary(ibound, e);
 
-      // attach a face element to it (any face element will do)
-      NavierStokesTractionElement<ELEMENT>* face_elem_pt =
-	new NavierStokesTractionElement<ELEMENT>(bulk_elem_pt, face_index);
+      // // attach a face element to it (any face element will do)
+      // NavierStokesTractionElement<ELEMENT>* face_elem_pt =
+      // 	new NavierStokesTractionElement<ELEMENT>(bulk_elem_pt, face_index);
 
       // now loop over the boundary nodes to get their bulk node numbers,
       // so we can tell the bulk element to pin the LMs at those nodes
-      for(unsigned j=0; j<face_elem_pt->nnode(); j++)
+      // for(unsigned j=0; j<face_elem_pt->nnode(); j++)
+      for(unsigned j=0; j<bulk_elem_pt->nnode_on_face(); j++)
       {
 	// get the number of this node in the bulk elements numbering scheme
-	unsigned node_number_in_bulk = face_elem_pt->bulk_node_number(j);
+	unsigned node_number_in_bulk = bulk_elem_pt->get_bulk_node_number(face_index, j);
+	  // face_elem_pt->bulk_node_number(j);
 	
 	// now tell the bulk element to pin the pde-enforcing LMs
 	bulk_elem_pt->pin_momentum_lagrange_multipliers(node_number_in_bulk);
       }
-      
-      // clean up
-      delete face_elem_pt;
+
+      // QUEHACERES delete
+      // // clean up 
+      // delete face_elem_pt;
     }
 #endif
   }
@@ -4542,21 +4187,25 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
 
 	// ### QUEHACERES temporarily pin all the BC LMs and just do stress-jump
 	// el_pt->pin_lagrange_multiplier_at_specified_local_node(j, i, BC_el_id);
+
 	
 	if( has_two_sets_of_boundary_lagrange_multipliers )
 	{
-	  oomph_info << "shouldn't have two sets now!" << std::endl;
-	  abort();
+	  // QUEHACERES for lambda-hat-hat  
+	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, i, 123);
 	  
-	  // if we've got both continuity and BC LMs, pin one set
-	  // el_pt->pin_lagrange_multiplier_at_specified_local_node(j, i, BC_el_id);
+	//   oomph_info << "shouldn't have two sets now!" << std::endl;
+	//   abort();
+	  
+	//   // if we've got both continuity and BC LMs, pin one set
+	//   // el_pt->pin_lagrange_multiplier_at_specified_local_node(j, i, BC_el_id);
 
-	  // QUEHACERES might not be a free choice here, pinning the BC LMs means
-	  // the stress jump LMs make rogue contributions to u_non_aug...
-	  // update this comment and remove above commented pin of BCs if correct 
-	  el_pt->pin_lagrange_multiplier_at_specified_local_node(j, i, Stress_jump_el_id);
+	//   // QUEHACERES might not be a free choice here, pinning the BC LMs means
+	//   // the stress jump LMs make rogue contributions to u_non_aug...
+	//   // update this comment and remove above commented pin of BCs if correct 
+	//   el_pt->pin_lagrange_multiplier_at_specified_local_node(j, i, Stress_jump_el_id);
 
-	  nodes_with_3_lms_set.insert(node_pt);	    
+	//   nodes_with_3_lms_set.insert(node_pt);	    
 	}
 
 	// QUEHACERES debug
@@ -4598,8 +4247,8 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
       // QUEHACERES delete at some point, seems we shouldn't pin \lambda_p
       // // and we need to pin \lambda_p at a single node to set
       // // it's level (like pressure), but should be unpinned everywhere else
-      // if( (e==0) && (j==1) )
-      // {
+      if( (e==0) && (j==1) )
+      {
 	// oomph_info << "Pinning \lambda_p at ";
 
 	// for(unsigned i=0; i<Dim; i++)
@@ -4607,8 +4256,8 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
 	
 	// oomph_info << std::endl;
 	
-	//bulk_el_pt->pin_lagrange_multiplier_p(node_number_in_bulk, 100.0);
-
+	// bulk_el_pt->pin_lagrange_multiplier_p(node_number_in_bulk, 0.0);
+      
 	// // get the exact pressure
 	// Vector<double> u_exact(4,0.0);
 	// Analytic_Functions::exact_solution_flat_disk(x, u_exact);
@@ -4631,7 +4280,7 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
 	
 	// and set the pressure offset
 	// Global_Parameters::p_offset = -u_exact[Dim];
-      // }
+      }
             
     } // end loop over BC nodes
     
@@ -4641,121 +4290,10 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
     
   } // end loop over bc face elements
 
-  // for(unsigned e=0; e<Torus_region_mesh_pt->nelement(); e++)
+  // // QUEHACERES try pinning lambda_p in the non-aug region
   // {
-  //   ELEMENT* el_pt = dynamic_cast<ELEMENT*>(Torus_region_mesh_pt->element_pt(e));
-
-  //   bool pinned_bulk_node = false;
-      
-  //   for(unsigned j=0; j<Dim+1; j++)
-  //   {
-  //     Node* node_pt = el_pt->node_pt(j);
-	
-  //     if(!(node_pt->is_pinned(0)))
-  //     {
-  // 	el_pt->pin_lagrange_multiplier_p(j, 0.0);
-
-  // 	oomph_info << "Pinned lambda_p to " << 0.0 << " at ";
-	  
-  // 	for(unsigned i=0; i<Dim; i++)
-  // 	  oomph_info << el_pt->node_pt(j)->x(i) << " ";
-
-  // 	oomph_info << std::endl;
-	  
-  // 	pinned_bulk_node = true;
-  // 	break;
-  //     }
-  //   }
-
-  //   if(pinned_bulk_node) break;    
-  // }
-  
-  // QUEHACERES this won't work if there are no free vertices not on
-  // boundaries in a very course mesh!
-  // // pin Lambda_p at a random node bulk node in the torus
-  // for(unsigned e=0; e<Torus_region_mesh_pt->nelement(); e++)
-  // {
-  //   ELEMENT* el_pt = dynamic_cast<ELEMENT*>(Torus_region_mesh_pt->element_pt(e));
-
-  //   bool pinned_bulk_node = false;
-      
-  //   for(unsigned j=0; j<Dim+1; j++)
-  //   {
-  //     Node* node_pt = el_pt->node_pt(j);
-	
-  //     if(!(node_pt->is_on_boundary()))
-  //     {
-  // 	el_pt->pin_lagrange_multiplier_p(j, 0.0);
-
-  // 	oomph_info << "Pinned lambda_p to " << 0.0 << " at ";
-	  
-  // 	for(unsigned i=0; i<Dim; i++)
-  // 	  oomph_info << el_pt->node_pt(j)->x(i) << " ";
-
-  // 	oomph_info << std::endl;
-	  
-  // 	pinned_bulk_node = true;
-  // 	break;
-  //     }
-  //   }
-
-  //   if(pinned_bulk_node) break;    
-  // }
-  
-  // nel = Face_mesh_for_stress_jump_pt->nelement();
-  // for (unsigned e=0; e<nel; e++)
-  // {
-  //   // Get element
-  //   NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>* el_pt =
-  //     dynamic_cast<NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>*>(
-  // 	Face_mesh_for_stress_jump_pt->element_pt(e));
-
-  //   // get the bulk element this face element is attached to
-  //   ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(el_pt->bulk_element_pt());
-    
-  //   // number of nodes in this face element
-  //   unsigned nnod = el_pt->nnode();
-    
-  //   for(unsigned j=0; j<nnod; j++)
-  //   {
-  //     // get the number of this node in the bulk elements numbering scheme
-  //     unsigned node_number_in_bulk = el_pt->bulk_node_number(j);
-
-  //     // QUEHACERES experimentally pin the pde-enforcing LMs
-  //     bulk_el_pt->pin_momentum_lagrange_multipliers(node_number_in_bulk);
-
-  //     // // QUEHACERES for debug - pin the Lagrange multipliers which enforce the stress
-  //     // // jump. This should decouple the two regions, so we effectively have two separate
-  //     // // Stokes flows which don't talk to each other
-  //     // // now pin the continuity-enforcing LMs in the face element
-  //     // for(unsigned i=0; i<Dim; i++)
-  //     // {
-  //     // 	el_pt->pin_lagrange_multiplier_at_specified_local_node(j, i, Stress_jump_el_id);
-  //     // }
-  //   }
-  // }
-
-  // // QUEHACERES fuck it, pin everything
-  // {
-  //   unsigned region_id = Torus_region_id;
-  //   unsigned n_el = Bulk_mesh_pt->nregion_element(region_id);
-  //   for (unsigned e=0; e<n_el; e++)
-  //   {
-  //     ELEMENT* aug_el_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->region_element_pt(region_id,e));
-
-  //     for(unsigned j=0; j<aug_el_pt->nnode(); j++)
-  //     {
-  // 	aug_el_pt->pin_pde_lagrange_multipliers(j);
-
-  // 	// pin velocities
-  // 	for(unsigned i=0; i<3; i++)
-  // 	  aug_el_pt->node_pt(j)->pin(i);
-
-  // 	// pin pressure if it's there
-  // 	if(j<4)
-  // 	  aug_el_pt->node_pt(j)->pin(3);
-  //     }
-  //   }
+  //   ELEMENT* el_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->region_element_pt(0,0));
+  //   el_pt->pin_lagrange_multiplier_p(0, 0.0);
   // }
   
   oomph_info << "LM pin counter = " << nodes_with_3_lms_set.size() << std::endl;
@@ -4857,6 +4395,57 @@ void FlowAroundDiskProblem<ELEMENT>::output_submesh_dof_pin_status() const
       }
     }
   
+    pin_file.close();
+  }
+
+  // non-augmented region of bulk mesh
+  // ---------------------------------------------------------
+  {
+    // clear the filename
+    filename.str("");
+
+    // generate a filename specific to the submesh name
+    filename << Doc_info.directory() << "/pinned_nodes_non-augmented_region.dat";
+    
+    pin_file.open(filename.str().c_str());
+
+    std::set<Node*> submesh_node_pt;
+
+    // non-augmented region ID
+    unsigned nonaug_region_id = 0;
+  
+    // now loop over the elements in the non-augmented region (region 0)
+    for(unsigned e=0; e<Bulk_mesh_pt->nregion_element(nonaug_region_id); e++)
+    {
+      // get a pointer to this element
+      FiniteElement* el_pt =
+	dynamic_cast<FiniteElement*>(Bulk_mesh_pt->region_element_pt(nonaug_region_id, e));
+
+      // now loop over its nodes
+      for(unsigned j=0; j<el_pt->nnode(); j++)
+      {
+	Node* node_pt = el_pt->node_pt(j);
+
+	// check we haven't already output this node from a neighbouring element
+	if(submesh_node_pt.find(node_pt) == submesh_node_pt.end())
+	{
+	  // output the Cartesian coordinates of this node
+	  for(unsigned i=0; i<3; i++)
+	    pin_file << node_pt->x(i) << " ";
+
+	  // now loop over the nodal dofs and output their pin status
+	  for(unsigned i=0; i<node_pt->nvalue(); i++)
+	    pin_file << node_pt->is_pinned(i) << " ";
+
+	  // and output the node pointer for good measure
+	  pin_file << node_pt << std::endl;
+
+	  // add the node pointer to the list of nodes we've outputted
+	  submesh_node_pt.insert(node_pt);
+	}
+      }
+    }
+    
     pin_file.close();
   }
 }
@@ -6411,6 +6000,11 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
     // get 'em
     get_jacobian(r,jac);
 
+    oomph_info << "Number of non-zero Jacobian entries: " << jac.nnz() << "\n";
+    oomph_info << "Jacobian density: " << std::setprecision(2)
+	       << 100.0 * jac.nnz() / (double)(jac.nrow() * jac.nrow())
+	       << "%" << std::endl;
+    
     sprintf(filename,"%s/residuals%i.dat", Doc_info.directory().c_str(),
 	    Doc_info.number());
     some_file.open(filename);
@@ -6646,16 +6240,243 @@ void FlowAroundDiskProblem<ELEMENT>::validate_exact_solution_divergence() const
   some_file.close();
 }
 
+typedef struct {
+    SuperMatrix *L;
+    SuperMatrix *U;
+    int *perm_c;
+    int *perm_r;
+} factors_t;
+
+template <class ELEMENT>
+void FlowAroundDiskProblem<ELEMENT>::compute_and_assign_smallest_eigensolution(
+  const double& threshold)
+{
+  oomph_info << "Doing eigenshizzle...\n" << std::endl;
+  
+   // output the jacobian if it's singular
+      
+  // residual vector and Jacobian matrix
+  DoubleVector r;
+  CRDoubleMatrix jac;
+
+  get_jacobian(r, jac);
+
+  char filename[100];
+  ofstream some_file;
+      
+  sprintf(filename,"%s/singular_jacobian_sparse%i.dat", doc_info().directory().c_str(),
+	  doc_info().number());
+  some_file.open(filename);
+
+  // allows for size detection in python
+  bool output_bottom_right = true;
+  unsigned precision = 0;
+  jac.sparse_indexed_output(some_file, precision, output_bottom_right);
+
+  some_file.close();
+
+  // Get eigenvalues/vectors?
+  //=========================
+  bool do_eigenvalues = true;
+  unsigned n = r.nrow();
+  if (do_eigenvalues)
+  {
+    DenseComplexMatrix DenseA(n);
+    DenseComplexMatrix DenseM(n);
+    for (unsigned i=0; i<n; i++)
+    {
+      DenseM(i,i) = complex<double>(1.0, 0.0);
+      for (unsigned j=0; j<n; j++)
+      {
+	DenseA(i,j) = complex<double>(jac(i,j), 0.0);
+      }
+    }
+    // DenseA.output(std::cout);
+      
+      
+    // Make eigensolver
+    LAPACK_QZ eigen_solver;
+      
+    // Storage
+    Vector<std::complex<double> >eval(n);
+    Vector<Vector<std::complex<double> > > evec(n);
+    DoubleVector singular_vector;
+      
+    // This is a little hack to resize the vector without needing
+    // to figure out how this annoying distribution pointer thing works.
+    get_dofs(singular_vector);
+    singular_vector.initialise(0.0);
+      
+    // Do it
+    eigen_solver.find_eigenvalues(DenseA, DenseM, eval, evec);
+
+    unsigned nzero_eigenvalues = 0;
+    
+    for(unsigned i=0; i<n; i++)
+    {
+      std::cout << "Eigenvalue " << i << " : " << eval[i] << "\n";
+      if (fabs( real(eval[i]) ) < threshold)
+      {
+	nzero_eigenvalues++;
+	
+	for(unsigned j=0; j<n; j++)
+	{
+	  singular_vector[j] = real( evec[i][j] );
+	  std::cout << evec[i][j] << ", ";
+	}
+      }
+      // std::cout << std::endl;
+    }
+    sprintf(filename, "%s/sing_eigen_vect.dat", doc_info().directory().c_str());
+    some_file.open(filename);
+	
+    for (unsigned i=0; i<n; i++)
+    {
+      oomph_info << "Singular eigenvector " << i
+		 << " " << singular_vector[i] << std::endl;
+      some_file << singular_vector[i] << std::endl;
+    }
+    some_file.close();
+    assign_eigenvector_to_dofs(singular_vector);
+    doc_solution(5); 
+
+    if(nzero_eigenvalues == 0)
+    {
+      oomph_info << "Didn't find any eigenvalues below "
+		 << threshold <<"!\n" << std::endl;
+    }
+    else
+    {
+      oomph_info << "Number of eigenvalues < " << threshold
+		 << ": " << nzero_eigenvalues << std::endl;
+    }
+    
+    oomph_info << "Done eigenshizzle\n" << std::endl;
+  }
+}
+
+template <class ELEMENT>
+double FlowAroundDiskProblem<ELEMENT>::compute_jacobian_condition_number()
+{
+  // residual vector and Jacobian matrix
+  DoubleVector r;
+  CRDoubleMatrix jac;
+
+  // get 'em
+  get_jacobian(r, jac);
+
+  // Vector<int> row_index(2, 0);
+  // row_index[0] = 0;
+  // row_index[1] = 2;
+
+  // Vector<double> vals(4, 0.0);
+  // vals[0] = 4.1;
+  // vals[1] = 2.8;
+  // vals[2] = 9.7;
+  // vals[3] = 6.6;
+
+  // Vector<int> cols(4, 0);
+  // cols[0] = 0;
+  // cols[1] = 1;
+  // cols[2] = 0;
+  // cols[3] = 1;
+
+  // unsigned ncols = 2;
+
+  // OomphCommunicator* comm = new OomphCommunicator();
+  // bool distr = false;
+  // LinearAlgebraDistribution* linalg = new LinearAlgebraDistribution(comm, ncols, distr);
+
+  // CRDoubleMatrix jac(linalg, ncols, vals, cols, row_index);
+    
+  // convert the CRDoubleMatrix Jacobian to a SuperMatrix for SuperLU
+  int n = jac.nrow();
+
+  //Number of non-zero entries in the matrix
+  int nnz           = jac.nnz();
+  double *values    = jac.value();
+  int* column_index = jac.column_index();
+  int* row_start    = jac.row_start(); 
+
+  // oomph_info << nnz << " " << *row_start << " " << *(row_start+1) << " " << *(row_start+2) << " "
+  // 	     << *(row_start+3) << std::endl;
+  
+  SuperMatrix A;
+  dCreate_CompRow_Matrix(&A, n, n, nnz, values, column_index, row_start,
+			 SLU_NC, SLU_D, SLU_GE);
+  
+  // Frobenius 1-norm
+  char* norm = "1";
+
+  // added this to slu_ddefs.h
+  // //extern double dlangs(char *, SuperMatrix *); 
+  
+  // get the norm of the Jacobian
+  double jac_norm = jac.inf_norm(); //dlangs(norm, &A);
+
+  oomph_info << "Jacobian inf-norm: " << jac_norm << std::endl;
+  
+  // create a SuperLU solver 
+  SuperLUSolver* linear_solver_pt = new SuperLUSolver;
+   
+  // do the LU factorisation
+  linear_solver_pt->factorise(&jac);
+
+  // retrive the LU factors
+
+  factors_t* f_factors = (factors_t*) linear_solver_pt->serial_f_factors();
+
+  int info = 0;
+  SuperLUStat_t stat;
+  
+  /* Initialize the statistics variables. */
+  StatInit(&stat);
+  
+  // get the condition number
+  double reciprocal_condition_number = 0.0;
+  dgscon(norm, f_factors->L, f_factors->U, jac_norm, &reciprocal_condition_number, &stat, &info);
+
+  // clean up
+  delete linear_solver_pt;
+  linear_solver_pt = 0x0;
+  
+  return 1.0/reciprocal_condition_number;
+}
+
 //========================================================================
 /// Driver
 //========================================================================
 int main(int argc, char* argv[])
-{  
-#ifdef USE_FD_JACOBIAN
-  oomph_info << "====== Using finite-diff jacobian ======\n";
+{
+  oomph_info << "\n\n=======================   Configuration:   =======================\n"  
+	     << "=                                                                =\n";
+#ifdef USE_FD_JACOBIAN  
+  oomph_info << "= - Using finite-diff jacobian                                   =\n";
 #else
-  oomph_info << "====== Using analytic jacobian ======\n\n";
+  oomph_info << "= - Using analytic jacobian                                      =\n";
 #endif
+
+#ifdef USE_SYMMETRIC_JACOBIAN
+  oomph_info << "= - Using formulation with symmetric Jacobian matrix             =\n";
+#else
+  oomph_info << "= - Using formulation with asymmetric Jacobian matrix            =\n";
+#endif
+
+#ifdef ALL_ELEMENTS_ARE_PDE_CONSTRAINED
+  oomph_info << "= - All elements are PDE-constrained                             =\n";
+#else
+  oomph_info << "= - Only augmented elements are PDE-constrained                  =\n";
+#endif
+  
+#ifdef SINGLE_SINGULAR_AMPLITUDE_DOF
+  oomph_info << "= - Using single DoF for singular amplitude (broadside)          =\n";
+#else  
+  oomph_info << "= - Using multiple spatially-varying DoFs for singular amplitude =\n";
+#endif
+
+  oomph_info << "=                                                                =\n"
+	     << "==================================================================\n"
+	     << std::endl;  
 
   // set up the multi-processor interface
   MPI_Helpers::init(argc,argv);
@@ -6785,6 +6606,9 @@ int main(int argc, char* argv[])
   CommandLineArgs::specify_command_line_flag("--half_nsegment_disk",
 					     &Global_Parameters::Half_nsegment_disk);
 
+  CommandLineArgs::specify_command_line_flag("--nsingular_line_element",
+					     &Global_Parameters::Nsingular_line_element);
+  
   CommandLineArgs::specify_command_line_flag("--target_element_volume_in_torus", 
 					     &Global_Parameters::Target_element_volume_in_torus_region);
   
@@ -6823,6 +6647,11 @@ int main(int argc, char* argv[])
   
   CommandLineArgs::specify_command_line_flag("--validate_exact_solution_divergence");
 
+  CommandLineArgs::specify_command_line_flag("--compute_jacobian_condition_number");
+
+  double threshold_for_zero_eigenval = 1e-12;
+  CommandLineArgs::specify_command_line_flag("--do_eigenshizzle", &threshold_for_zero_eigenval);
+  
   CommandLineArgs::specify_command_line_flag("--use_fd_lu_solver");
   
 #ifndef DO_TETGEN
@@ -6965,6 +6794,21 @@ int main(int argc, char* argv[])
   oomph_info << "--------------------------\n";
   oomph_info << "Number of equations: " << problem.assign_eqn_numbers() << std::endl; 
   oomph_info << "--------------------------\n" << std::endl;
+
+  if(CommandLineArgs::command_line_flag_has_been_set("--compute_jacobian_condition_number"))
+  {
+    double condition_number = problem.compute_jacobian_condition_number();
+
+    oomph_info << "Jacobian condition number: " << condition_number << std::endl;
+    exit(0);
+  }
+
+  if(CommandLineArgs::command_line_flag_has_been_set("--do_eigenshizzle"))
+  {
+    problem.compute_and_assign_smallest_eigensolution(threshold_for_zero_eigenval);
+
+    exit(0);
+  }
   
   // QUEHACERES for debug
   problem.newton_solver_tolerance() = 5e-8;
@@ -7025,93 +6869,10 @@ int main(int argc, char* argv[])
     }
     catch (const std::exception& ex)
     {
-#endif
-      // output the jacobian if it's singular
+#endif	
+      // QUEHACERES
+      problem.compute_and_assign_smallest_eigensolution();
       
-      // residual vector and Jacobian matrix
-      DoubleVector r;
-      CRDoubleMatrix jac;
-
-      problem.get_jacobian(r, jac);
-
-      char filename[100];
-      ofstream some_file;
-      
-      sprintf(filename,"%s/singular_jacobian_sparse%i.dat", problem.doc_info().directory().c_str(),
-	      problem.doc_info().number());
-      some_file.open(filename);
-
-      // allows for size detection in python
-      bool output_bottom_right = true;
-      unsigned precision = 0;
-      jac.sparse_indexed_output(some_file, precision, output_bottom_right);
-
-      some_file.close();
-
-      // Get eigenvalues/vectors?
-      //=========================
-      bool do_eigenvalues = true;
-      unsigned n = r.nrow();
-      if (do_eigenvalues)
-      {
-	DenseComplexMatrix DenseA(n);
-	DenseComplexMatrix DenseM(n);
-	for (unsigned i=0; i<n; i++)
-	{
-	  DenseM(i,i) = complex<double>(1.0, 0.0);
-	  for (unsigned j=0; j<n; j++)
-	  {
-	    DenseA(i,j) = complex<double>(jac(i,j), 0.0);
-	  }
-	}
-	// DenseA.output(std::cout);
-      
-      
-	// Make eigensolver
-	LAPACK_QZ eigen_solver;
-      
-	// Storage
-	Vector<std::complex<double> >eval(n);
-	Vector<Vector<std::complex<double> > > evec(n);
-	DoubleVector singular_vector;
-      
-	// This is a little hack to resize the vector without needing
-	// to figure out how this annoying distribution pointer thing works.
-	problem.get_dofs(singular_vector);
-	singular_vector.initialise(0.0);
-      
-	// Do it
-	eigen_solver.find_eigenvalues(DenseA, DenseM, eval, evec);
-      
-	for(unsigned i=0; i<n; i++)
-	{
-	  std::cout << "Eigenvalue " << i << " : " << eval[i] << "\n";
-	  if (fabs( real(eval[i]) ) < 1.0e-12)
-	  {
-	    for(unsigned j=0; j<n; j++)
-	    {
-	      singular_vector[j] = real( evec[i][j] );
-	      std::cout << evec[i][j] << ", ";
-	    }
-	  }
-	  // std::cout << std::endl;
-	}
-	sprintf(filename, "%s/sing_eigen_vect.dat", problem.doc_info().directory().c_str());
-	some_file.open(filename);
-	
-	for (unsigned i=0; i<n; i++)
-	{
-	  oomph_info << "Singular eigenvector " << i
-		     << " " << singular_vector[i] << std::endl;
-	  some_file << singular_vector[i] << std::endl;
-	}
-	some_file.close();
-	problem.assign_eigenvector_to_dofs(singular_vector);
-	problem.doc_solution(nplot); 
-      
-	oomph_info << "Done eigenstuff; bailing\n";
-	exit(0);
-      }
 #ifndef COMPUTE_INITIAL_JACOBIAN_EIGENFUNCTIONS    
     }
 #endif

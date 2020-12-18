@@ -188,12 +188,20 @@ namespace oomph
   ////////////////////////////////////////////////////////////////////////
   ////////////////////////////////////////////////////////////////////////
   ////////////////////////////////////////////////////////////////////////
-  // QUEHACERES put useful comment here once we've hashed out the details
+
+  //======================================================================
+  /// \short A class for 1D line elements which manage the singular
+  /// function pointers, store the singular amplitudes, and provide various
+  /// functionality such as providing scaled and unscaled singular
+  /// velocities / pressures, interpolating amplitudes and their
+  /// derivatives, etc.
+  /// N.B. this has nothing to do with the Poisson equation! this class
+  /// merely inherits from QPoissonElement to hijack useful functionality
+  //======================================================================
   
   template <unsigned NNODE_1D>
   class ScalableSingularityForNavierStokesLineElement :
-    /* ### */ public virtual QPoissonElement<1, NNODE_1D>
-    /* public virtual FaceGeometry<TElement<2,NNODE_1D> >, public virtual FaceElement */
+    public virtual QPoissonElement<1, NNODE_1D>    
   {
   public:
 
@@ -204,38 +212,20 @@ namespace oomph
     // their derivatives
     typedef Vector<double>(*UnscaledSingSolnFctPt) (const EdgeCoordinates& rzp_coords);
 
-    // QUEHACERES probably want to delete this if we don't need it for the C residuals
     typedef DenseMatrix<double>(*GradientOfUnscaledSingSolnFctPt)
       (const EdgeCoordinates& rzp_coords);
 
     // function which provides dzeta/dx
     typedef Vector<double>(*DzetaDxFctPt)(const EdgeCoordinates& edge_coords);
 	
-    /// \short Constructor, takes a pointer to the 2D disk element and the
-    /// index of the face to which this element is attached. 
-    ScalableSingularityForNavierStokesLineElement(); /* ### FiniteElement* const& disk_el_pt,  */
-						  /* const int& face_index, */
-						  /* // QUEHACERES delete const unsigned& nsingular_function, */
-						  /* std::map<Node*,Node*>& existing_duplicate_node_pt, */
-						  /* const bool& use_zeta_2pi_instead_of_0=false); */
-    
-    /* /// Broken empty constructor */
-    /* ScalableSingularityForNavierStokesLineElement() */
-    /* { */
-    /*    throw OomphLibError( */
-    /* 	"Don't call empty constructor for NavierStokesWithSingularityLineElement", */
-    /* 	OOMPH_CURRENT_FUNCTION, */
-    /* 	OOMPH_EXCEPTION_LOCATION); */
-    /* } */
-
-    /* // Destructor, need to clear up the nodes since these were created separately */
-    /* // with new */
-    /* ~ScalableSingularityForNavierStokesLineElement() */
-    /* { */
-    /*   for(unsigned j=0; j<nnode(); j++) */
-    /* 	delete node_pt(j); */
-    /* } */
-    
+    /// \short Constructor
+    ScalableSingularityForNavierStokesLineElement() :						  
+    Zeta_has_been_setup(false), Dim(1), Bulk_dim(3), Dzeta_dx_fct_pt(0x0)
+    {
+      // QUEHACERES get this programmatically
+      this->set_nodal_dimension(3);      
+    }
+	    
     /// Broken copy constructor
     ScalableSingularityForNavierStokesLineElement(
       const ScalableSingularityForNavierStokesLineElement&)
@@ -255,29 +245,6 @@ namespace oomph
       return Dzeta_dx_fct_pt;
     }
     
-    // QUEHACERES delete, now using add_unscaled_sing...()
-    /* ///Function to get pointer to the unscaled version of a singular function */
-    /* UnscaledSingSolnFctPt& unscaled_singular_fct_pt(const unsigned& sing_fct_id) */
-    /* { */
-    /*   // get the index for this ID from the map */
-    /*   // (std::map::at() throws an exception if this index doesn't exist) */
-    /*   unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id); */
-      
-    /*   return Unscaled_singular_fct_pt[sing_fct_index]; */
-    /* } */
-
-    /* ///Function to get pointer to unscaled version of the gradient of */
-    /* // a singular function */
-    /* GradientOfUnscaledSingSolnFctPt& */
-    /*   gradient_of_unscaled_singular_fct_pt(const unsigned& sing_fct_id) */
-    /* { */
-    /*   // get the index for this ID from the map */
-    /*   // (std::map::at() throws an exception if this index doesn't exist) */
-    /*   unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id); */
-      
-    /*   return Gradient_of_unscaled_singular_fct_pt[sing_fct_index]; */
-    /* } */
-
     void add_unscaled_singular_fct_and_gradient_pt(
       const UnscaledSingSolnFctPt& sing_fct_pt,
       const GradientOfUnscaledSingSolnFctPt& grad_of_sing_fct_pt,
@@ -339,14 +306,7 @@ namespace oomph
     ///Function to compute unscaled version of the requested unscaled version
     Vector<double> unscaled_singular_fct(const EdgeCoordinates& edge_coords,
 					 const unsigned& sing_fct_id) const
-    {
-      // QUEHACERES delete
-      /* if(Unscaled_singular_fct_pt[ising] == 0) */
-      /* { */
-      /* 	Vector<double> empty(rzp_coords.ncoord, 0.0); */
-      /* 	return empty; */
-      /* } */
-      
+    {      
       // get the index for this ID from the map
       // (std::map::at() throws an exception if this index doesn't exist)
       unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
@@ -455,8 +415,6 @@ namespace oomph
       // loop over each singular function and add the contribution to the total
       for(std::map<unsigned,unsigned>::const_iterator it = Singular_fct_index.begin();
 	  it != Singular_fct_index.end(); it++)
-      // QUEHACERES delete
-      /* for(unsigned ising=0; ising<Nsingular_fct; ising++) */
       {
 	// get the singular function ID
 	unsigned sing_fct_id = it->first;
@@ -486,8 +444,6 @@ namespace oomph
       // loop over each singular function and add the contribution to the total
       for(std::map<unsigned,unsigned>::const_iterator it = Singular_fct_index.begin();
 	  it != Singular_fct_index.end(); it++)
-      // QUEHACERES delete
-      /* for(unsigned ising=0; ising<Nsingular_fct; ising++) */
       {
 	// get the singular function ID
 	unsigned sing_fct_id = it->first;
@@ -640,8 +596,6 @@ namespace oomph
 	// interpolated amplitudes at this plot point
 	for(std::map<unsigned,unsigned>::iterator it = Singular_fct_index.begin();
 	  it != Singular_fct_index.end(); it++)
-	// QUEHACERES delete
-	/* for(unsigned ising=0; ising<Nsingular_fct; ising++) */
 	{
 	  // get the singular function ID
 	  unsigned sing_fct_id = it->first;
@@ -1010,106 +964,20 @@ namespace oomph
     /// The boundary zeta of each node in this element
     Vector<double> Zeta;
 
-    // QUEHACERES delete
-    /* /// Number of singular functions to subtract */
-    /* unsigned Nsingular_fct; */
-
     /// Dimensionality of this element
     unsigned Dim;
 
     /// Dimensionality of the whole problem
     unsigned Bulk_dim;
   };
-  
-  
-  /// \short Constructor, takes a pointer to the 2D disk element and the
-  /// index of the face to which this element is attached
-  // QUEHACERES don't hard code the dimensions
-  template <unsigned NNODE_1D>
-  ScalableSingularityForNavierStokesLineElement<NNODE_1D>::
-    ScalableSingularityForNavierStokesLineElement() : /* FiniteElement* const& disk_el_pt,  */
-						  /* const int& face_index, */
-						  /* // QUEHACERES delete: const unsigned& nsingular_fct, */
-						  /* std::map<Node*,Node*>& existing_duplicate_node_pt, */
-						  /* const bool& use_zeta_2pi_instead_of_0) : */
-    /* FaceGeometry<TElement<2,NNODE_1D> >(), FaceElement(), // QUEHACERES delete: Nsingular_fct(nsingular_fct), */
-    Zeta_has_been_setup(false), Dim(1), Bulk_dim(3), Dzeta_dx_fct_pt(0x0)
-  {
-    // QUEHACERES get this programmatically
-    this->set_nodal_dimension(3);
-    
-    // ### QUEHACERES update this / move to inside the class since it doesn't do much!
-    /* // ------------------------------------------------------------------------ */
-    /* // The nodes of this element are constructed by duplicating the nodes of a */
-    /* // line element attached to the plate. This duplication process is simplified */
-    /* // because we want a stand-alone mesh - these new nodes don't need the */
-    /* // Navier-Stokes dofs, or any additional dofs (Lagrange multipliers, etc.), */
-    /* // they don't need to be added to appropriate boundaries, and they do not */
-    /* // depend on external data.  */
-    
-    /* // Let the bulk element build the FaceElement, i.e. setup the pointers  */
-    /* // to its nodes (by referring to the appropriate nodes in the bulk */
-    /* // element), etc. */
-    /* disk_el_pt->build_face_element(face_index, this); */
 
-    // ###
-    /* for(unsigned j=0; j<nnode(); j++) */
-    /* { */
-    /*   Node* original_node_pt = node_pt(j); */
-
-    /*   // boundary node which stores the singular amplitude(s) */
-    /*   Node* singular_amplitude_node_pt = 0x0; */
-	  
-    /*   // check if we've already duplicated this one */
-    /*   if(existing_duplicate_node_pt.find(original_node_pt) */
-    /* 	 == existing_duplicate_node_pt.end())	 */
-    /*   { */
-    /* 	// if we haven't make a new one and setup it's values, coordinates, */
-    /* 	// boundary info etc. and add it to the singular mesh */
-	  
-    /* 	// get key attributes from the old node */
-    /* 	unsigned n_dim           = original_node_pt->ndim(); */
-    /* 	unsigned n_position_type = original_node_pt->nposition_type(); */
-
-    /* 	// QUEHACERES not time dependent for now */
-
-    /* 	// create a new node - this node stores as many dofs as there are singular */
-    /* 	// functions, but will be resized later */
-    /* 	singular_amplitude_node_pt = new Node(n_dim, n_position_type, 0);  */
-
-    /* 	// It has the same coordinates */
-    /* 	for (unsigned i=0; i<n_dim; i++) */
-    /* 	{ */
-    /* 	  singular_amplitude_node_pt->x(i) = original_node_pt->x(i); */
-    /* 	} */
-    /*   } */
-    /*   else */
-    /*   { */
-    /* 	// use the one we already have */
-    /* 	singular_amplitude_node_pt = existing_duplicate_node_pt[original_node_pt]; */
-    /*   } */
-      
-    /*   // switch over the node */
-    /*   node_pt(j) = singular_amplitude_node_pt; */
-      
-    /*   // Keep track  */
-    /*   existing_duplicate_node_pt[original_node_pt] = node_pt(j);      	   */
-    /* } */
-    
-    /* // ------------------------------------------------------------------------ */
-    
-    /* // Now setup the nodal values of zeta */
-    /* setup_zeta_nodal(use_zeta_2pi_instead_of_0); */
-  }
-
-  
   //////////////////////////////////////////////////////////////////////////////
   //////////////////////////////////////////////////////////////////////////////
   //////////////////////////////////////////////////////////////////////////////
   //////////////////////////////////////////////////////////////////////////////
 
   //===========================================================================
-  // QUEHACERES generic base class
+  // Generic base class for augmented face elements
   //===========================================================================
   template <class ELEMENT>
     class NavierStokesWithSingularityFaceElement :
@@ -1376,51 +1244,6 @@ namespace oomph
       return FaceElement::zeta_nodal(n,k,i);
     }
 
-    // compute the interpolated value of the sum of all boundary
-    // Lagrange multiplier fields at this boundary point
-    Vector<double> interpolated_total_boundary_lagrange_multiplier_field(const Vector<double>& s) const
-    {
-      const unsigned nnode = this->nnode();
-      
-      // Set up memory for the shape and test functions
-      Shape psi(nnode);
-
-      // Get the shape functions
-      this->shape(s, psi);
-
-      // total Lagrange mutiplier field at this local coordinate
-      Vector<double> interpolated_lambda(Dim, 0.0);
-
-      // loop the nodes in this element
-      for(unsigned n=0; n<nnode; n++)
-      {
-	// get the map which gives the starting nodal index for
-	// the Lagrange multipliers associated with each boundary ID
-	std::map<unsigned, unsigned> first_index = *(
-	  dynamic_cast<BoundaryNodeBase*>(this->node_pt(n))->
-	  index_of_first_value_assigned_by_face_element_pt() );
-
-	// loop over all the boundary IDs this node knows about; since
-	// the LM fields associated with each boundary are continuous, if
-	// this node is on multiple boundaries 
-	for(std::map<unsigned, unsigned>::iterator index_map_it = first_index.begin();
-	    index_map_it != first_index.end(); index_map_it++)
-	{
-	  // and loop over the coordinate directions
-	  for(unsigned i=0; i<Dim; i++)
-	  {
-	    // get the nodal index, accounting for the dimension offset
-	    unsigned lambda_index = index_map_it->second + i;
-
-	    // do the interpolation
-	    interpolated_lambda[i] += this->nodal_value(n, lambda_index) * psi[n];
-	  }
-	}
-      }
-
-      return interpolated_lambda;
-    }
-
     /// Pin Lagrange multiplier associated with ith coordinate at specified local node
     void pin_lagrange_multiplier_at_specified_local_node(const unsigned& j,
 							 const unsigned& i,
@@ -1476,13 +1299,6 @@ namespace oomph
       return Boundary_id;
     }
 
-    // QUEHACERES delete
-    /* // how many singular functions does this face element know about? */
-    /* unsigned nsingular_fct() const */
-    /* { */
-    /*   return Nsingular_fct; */
-    /* } */
-
     // function to get the pressure at local coordinates s in the
     // face element via the bulk element
     double interpolated_p_nst(const Vector<double>& s) const
@@ -1520,14 +1336,6 @@ namespace oomph
       //Get pressure from bulk
       return bulk_el_pt->strain_rate(s_bulk, _strain_rate);
     }
-
-    // QUEHACERES delete, moved to stressjumpelement
-    /* // function to return the pointer to the bulk element in the bulk region */
-    /* // (not the bulk element in the augmented region to which this element is attached) */
-    /* ELEMENT*& non_augmented_bulk_element_pt() */
-    /* { */
-    /*   return Non_augmented_bulk_element_pt; */
-    /* } */
 
     ExactTractionFctPt& exact_traction_fct_pt()
     {
@@ -1664,90 +1472,6 @@ namespace oomph
       return J_eulerian_at_knot(ipt);
     }
 
-    // QUEHACERES delete
-/*     /// \short Function to compute the (square-root of the) Jacobian of the */
-/*     /// mapping from edge coordinates (rho, zeta, phi) to local coordinates */
-/*     /// (s1, s2) which parameterise a 2D surface */
-/*     inline double J_edge_coords_at_knot(const unsigned& ipt) */
-/*     { */
-/*       //Find out the sptial dimension of the element */
-/*       unsigned n_dim_el = this->dim(); */
-
-/*       //Find out the dimension of the node */
-/*       unsigned n_dim = this->nodal_dimension(); */
-      
-/*       // surface metric tensor  */
-/*       DenseMatrix<double> metric_tensor(n_dim_el, n_dim_el, 0.0); */
-
-/* #ifdef PARANOID */
-/*       // have we actually been given the appropriate function? */
-/*       if(Dxi_dx_fct_pt == 0x0) */
-/*       { */
-/* 	throw OomphLibError( */
-/* 	      "This BC face element has no dxi/dx function pointer, "  */
-/* 	      "so can't compute the Jacobian of the edge coordinate mapping.\n", */
-/* 	      OOMPH_CURRENT_FUNCTION, */
-/* 	      OOMPH_EXCEPTION_LOCATION); */
-/*       } */
-/* #endif */
-      
-/*       // get the Eulerian derivatives of the edge coordinates */
-/*       // from the function pointer */
-/*       DenseMatrix<double> dxidx = Dxi_dx_fct_pt(Edge_coordinates_at_knot[ipt]); */
-
-/*       //Assign values of s */
-/*       Vector<double> s(n_dim_el, 0.0); */
-/*       for(unsigned i=0; i<n_dim_el; i++)  */
-/*       { */
-/* 	s[i] = this->integral_pt()->knot(ipt, i); */
-/*       } */
-      
-/*       // get the derivatives of the Eulerian coordinates w.r.t. the local coords */
-/*       DenseMatrix<double> dx_ds(n_dim, n_dim_el, 0.0); */
-/*       interpolated_dx_ds(s, dx_ds); */
-      
-/*       // compute the surface metric tensor dxi_k/dx_l * dx_l_ds_i * dxi_k/dx_m * dx_m/ds_j */
-/*       for(unsigned i=0; i<n_dim_el; i++) */
-/*       { */
-/* 	for(unsigned j=0; j<n_dim_el; j++) */
-/* 	{ */
-/* 	  for(unsigned k=0; k<n_dim; k++) */
-/* 	  { */
-/* 	    for(unsigned l=0; l<n_dim; l++) */
-/* 	    { */
-/* 	      for(unsigned m=0; m<n_dim; m++) */
-/* 	      { */
-/* 		metric_tensor(i,j) += dxidx(k,l) * dx_ds(l,i) * dxidx(k,m) * dx_ds(m,j); */
-/* 	      } */
-/* 	    } */
-/* 	  } */
-/* 	} */
-/*       } */
-
-/*       // compute the determinant of the metric tensor */
-/*       double det = 0; */
-
-/*       switch(n_dim_el)  */
-/*       { */
-/* 	case 1: */
-/* 	  det = metric_tensor(0,0); */
-/* 	  break; */
-/* 	case 2: */
-/* 	  det = metric_tensor(0,0) * metric_tensor(1,1) - */
-/* 	    metric_tensor(0,1) * metric_tensor(1,0); */
-/* 	  break; */
-/* 	default: */
-/* 	  throw  */
-/* 	    OomphLibError("Wrong dimension in FaceElement", */
-/* 			  "FaceElement::J_edge_coords()", */
-/* 			  OOMPH_EXCEPTION_LOCATION); */
-/*       } */
-      
-/*       // finally, square-root to give the scaling for a surface element */
-/*       // given in local coordinates, i.e. dS = sqrt(det) * s1 * s2 */
-/*       return sqrt(det); */
-/*     } */
-
   protected:
     
     /// Number of spatial dimensions in the problem
@@ -1767,11 +1491,6 @@ namespace oomph
     /// and the inner index is the node number of the singular line element
     /// which coresponds to the integration point
     Vector<Vector<unsigned> > C_external_data_index_at_knot;
-
-    // QUEHACERES delete
-    /* /// \short Index of value (within external Data) that stores the */
-    /* /// value of the amplitude of the singular function */
-    /* Vector<unsigned> C_external_data_value_index; */
     
   private:
     
@@ -1817,9 +1536,8 @@ namespace oomph
     NavierStokesWithSingularityFaceElement(FiniteElement* const& bulk_el_pt, 
 					     const int& face_index, 
 					     const unsigned& id) : 
-  FaceGeometry<ELEMENT>(), FaceElement(), /* QUEHACERES delete: Nsingular_fct(0), */ Boundary_id(id),
-    C_external_data_index_at_knot(0), /* QUEHACERES delete: C_external_data_value_index(0), */
-    No_throw_if_no_singular_elem_pt(false)
+  FaceGeometry<ELEMENT>(), FaceElement(), Boundary_id(id),
+    C_external_data_index_at_knot(0), No_throw_if_no_singular_elem_pt(false)
   {
     // Let the bulk element build the FaceElement, i.e. setup the pointers 
     // to its nodes (by referring to the appropriate nodes in the bulk
@@ -1851,7 +1569,8 @@ namespace oomph
 
     // Extract the dimension of the problem from the dimension of 
     // the first node
-    Dim = this->node_pt(0)->ndim();
+    // QUEHACERES this fixes the weird link error when building with -O3
+    Dim = 3; // this->node_pt(0)->ndim();
 
     // Set up P_index_nst. Initialise to Dim, (since we have Dim velocity components indexed
     // from zero, followed by the pressure) which probably won't change
@@ -1971,361 +1690,6 @@ namespace oomph
   ////////////////////////////////////////////////////////////////////////
   ////////////////////////////////////////////////////////////////////////
     
-
-  // QUEHACERES probably delete this at some point once Z2 stuff working
-  //===========================================================================
-  /// NavierStokesWithSingularityBoundaryIntegralFaceElement is a class of face elements 
-  ///used to compute the contribution to the residuals from the the singular function
-  //===========================================================================
-  template <class ELEMENT>
-    class NavierStokesWithSingularityBoundaryIntegralFaceElement :
-    public NavierStokesWithSingularityFaceElement<ELEMENT>
-  {
-      
-  public:
-
-    /// \short Function pointer to the "exact" non-singular function fct(x,u,grad u)
-    typedef void (*ExactNonSingularFctPt)(const Vector<double>& x, Vector<double>& u,
-					  DenseMatrix<double>& grad_u);
-      
-    /// \short Constructor, takes the pointer to the "bulk" element and the 
-    /// index of the face to which the element is attached.
-    NavierStokesWithSingularityBoundaryIntegralFaceElement(FiniteElement* const& bulk_el_pt, 
-							   const int& face_index,
-							   const int& boundary_id=0);
-
-    ///\short  Broken empty constructor
-    NavierStokesWithSingularityBoundaryIntegralFaceElement()
-    {
-      throw OomphLibError(
-	"Don't call empty constructor for NavierStokesWithSingularityBoundaryIntegralFaceElement",
-	OOMPH_CURRENT_FUNCTION,
-	OOMPH_EXCEPTION_LOCATION);
-    }
-
-    /// Broken copy constructor
-    NavierStokesWithSingularityBoundaryIntegralFaceElement(
-      const NavierStokesWithSingularityBoundaryIntegralFaceElement& dummy) 
-    { 
-      BrokenCopy::broken_copy("NavierStokesWithSingularityBoundaryIntegralFaceElement");
-    } 
-      
-    /// Broken assignment operator
-    void operator=(const NavierStokesWithSingularityBoundaryIntegralFaceElement&) 
-      {
-	BrokenCopy::broken_assign("NavierStokesWithSingularityBoundaryIntegralFaceElement");
-      }
-
-    /// Add the element's contribution to its residual vector
-    inline void fill_in_contribution_to_residuals(Vector<double> &residuals)
-    {
-      //Call the generic residuals function with flag set to 0
-      //using a dummy matrix argument
-      fill_in_generic_residual_contribution_to_singular_amplitude(
-	residuals,GeneralisedElement::Dummy_matrix,0);
-    }
-
-#ifndef USE_FD_JACOBIAN
-    /// \short Add the element's contribution to its residual vector and its
-    /// Jacobian matrix
-    inline void fill_in_contribution_to_jacobian(Vector<double> &residuals,
-						 DenseMatrix<double> &jacobian)
-    {
-      //Call the generic routine with the flag set to 1
-      fill_in_generic_residual_contribution_to_singular_amplitude(residuals,jacobian,1);
-    }
-#endif
-    
-    /// Output function -- forward to broken version in FiniteElement
-    /// until somebody decides what exactly they want to plot here...
-    void output(std::ostream& outfile)
-    {
-      FiniteElement::output(outfile);
-    }
-
-    /// Output with various contributions
-    void output(std::ostream &outfile, const unsigned &nplot)
-    {
-      // shorthand
-      unsigned Dim = this->Dim;
-      
-      //Vector of local coordinates
-      Vector<double> s(Dim-1);
-   
-      // Tecplot header info
-      outfile << this->tecplot_zone_string(nplot);
-   
-      // Loop over plot points
-      unsigned num_plot_points = this->nplot_points(nplot);
-      for (unsigned iplot=0; iplot<num_plot_points; iplot++)
-      {
-	// Get local coordinates of plot point
-	this->get_s_plot(iplot,nplot,s);
-     
-	Vector<double> x(Dim);
-	for(unsigned i=0; i<Dim; i++) 
-	{
-	  x[i]=this->interpolated_x(s,i);
-	  outfile << x[i] << " ";
-	}
-
-	// Compute outer unit normal at the specified local coordinate
-	Vector<double> unit_normal(Dim);
-	this->outer_unit_normal(s, unit_normal);
-
-	outfile << unit_normal[0] << " " << unit_normal[1] << " " << endl;
-
-	// QUEHACERES output something useful here
-      }
-   
-      // Write tecplot footer (e.g. FE connectivity lists)
-      this->write_tecplot_zone_footer(outfile,nplot);
-   
-    }
-
-    /// \short Compute this element's contribution to the integral that determines C
-    double get_contribution_integral();
- 
-    /// Pointer to exact non singular fct (and its gradient) only used
-    /// to validate the computation of the integral. Ignored if null 
-    /// which is the default
-    // hierher make read only and use set/unset fct to enable/disable;
-    // currently we'd have to reset this to null!
-    ExactNonSingularFctPt& exact_non_singular_fct_pt()
-    {
-      return Exact_non_singular_fct_pt;
-    }
-
-  private:
-
-    /// \short Add the element's contribution to its residual vector.
-    /// flag=1(or 0): do (or don't) compute the contribution to the
-    /// Jacobian as well. 
-    void fill_in_generic_residual_contribution_to_singular_amplitude(
-      Vector<double> &residuals, DenseMatrix<double> &jacobian, 
-      const unsigned& flag);
-
-    /// Pointer to exact non singular fct (and its gradient) only used
-    /// to validate the computation of the integral. Ignored if null 
-    /// which is the default
-    ExactNonSingularFctPt Exact_non_singular_fct_pt;
-  }; 
-
-  ////////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////////
-
-  //===========================================================================
-  /// Constructor, takes the pointer to the "bulk" element, the 
-  /// index of the fixed local coordinate and its value represented
-  /// by an integer (+/- 1), indicating that the face is located
-  /// at the max. or min. value of the "fixed" local coordinate
-  /// in the bulk element.
-  //===========================================================================
-  template <class ELEMENT>
-    NavierStokesWithSingularityBoundaryIntegralFaceElement<ELEMENT>::
-    NavierStokesWithSingularityBoundaryIntegralFaceElement(FiniteElement* const& bulk_el_pt, 
-							   const int& face_index,
-							   const int& boundary_id) : 
-  NavierStokesWithSingularityFaceElement<ELEMENT>(bulk_el_pt, face_index, boundary_id),
-    Exact_non_singular_fct_pt(0) { }
-
-  ////////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////////
-
-  //===========================================================================
-  /// Compute the element's residual vector and the (zero) Jacobian matrix.
-  //===========================================================================
-  template <class ELEMENT>
-    void NavierStokesWithSingularityBoundaryIntegralFaceElement<ELEMENT>::
-    fill_in_generic_residual_contribution_to_singular_amplitude(
-      Vector<double> &residuals, DenseMatrix<double> &jacobian, 
-      const unsigned& flag)
-  {
-
-    // hierher populate when contribution is split up
-    oomph_info << "This shouldn't be called at the moment\n";
-    abort();
-  }
-
-  ////////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////////
-
-  
-  //===========================================================================
-  /// Calculate the contribution of the face element to the integral that
-  /// determines the amplitude, via the Lorentz reciprocity theorem. 
-  //===========================================================================
-  template <class ELEMENT>
-    double NavierStokesWithSingularityBoundaryIntegralFaceElement<ELEMENT>::
-    get_contribution_integral()
-  {
-    // shorthand
-    const unsigned Dim = this->Dim;
-    
-    //Find out how many nodes there are
-    const unsigned n_node = this->nnode();
-  
-    //Set up memory for the shape and test functions
-    Shape psif(n_node), testf(n_node);
- 
-    //Set the value of Nintpt
-    const unsigned n_intpt = this->integral_pt()->nweight();
- 
-    // Set the Vector to hold local coordinates (in this face element, not the
-    // bulk element this is attached to)
-    Vector<double> s(Dim-1);
- 
-    // Saves result of integration
-    double integral_result = 0.0;
-
-    //Loop over the integration points
-    //--------------------------------
-    for(unsigned ipt=0; ipt<n_intpt; ipt++)
-    {
-
-      //Assign values of s
-      for(unsigned i=0; i<(Dim-1); i++)
-      {
-	s[i] = this->integral_pt()->knot(ipt,i);
-      }
-   
-      //Get the integral weight
-      double w = this->integral_pt()->weight(ipt);
-   
-      //Find the shape and test functions and return the Jacobian
-      //of the mapping
-      double J = this->shape_and_test(s, psif, testf);
-   
-      //Premultiply the weights and the Jacobian
-      double W = w*J;
-
-      // compute outer normal unit vector
-      Vector<double> unit_normal(Dim);
-      this->outer_unit_normal(s, unit_normal);
-
-      // local coordinates in bulk element this face element is attached to
-      Vector<double> s_bulk(Dim);
-
-      // global coordinates
-      Vector<double> x(Dim); 
-
-      // get global coordinates
-      for(unsigned i=0; i<Dim; i++)
-      { 
-	x[i] = this->interpolated_x(s,i); 
-      } 
-   
-      // Get gradient of scaled/unscaled singular velocity functions
-      DenseMatrix<double> dudx_sing(Dim, Dim);
-      DenseMatrix<double> dudx_sing_unscaled(Dim, Dim);
-
-      // ### UPDATE! don't delete entirely
-      /* dudx_sing          = Navier_stokes_sing_el_pt->gradient_of_singular_fct(x); */
-      /* dudx_sing_unscaled = Navier_stokes_sing_el_pt->gradient_of_unscaled_singular_fct(x); */
-      
-      // Get the values of the singular functions at our current location
-      Vector<double> u_sing(Dim+1);
-      Vector<double> u_sing_unscaled(Dim+1);
-
-      // ### UPDATE! don't delete entirely
-      /* u_sing          = Navier_stokes_sing_el_pt->singular_fct(x); */
-      /* u_sing_unscaled = Navier_stokes_sing_el_pt->unscaled_singular_fct(x); */
-
-      // get singular pressure
-      double p_sing          = u_sing[this->P_index_nst];
-      double p_sing_unscaled = u_sing_unscaled[this->P_index_nst];
-      
-      // shorthand
-      ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(this->bulk_element_pt());
-
-      // compute the singular contribution to the strain-rate
-      DenseMatrix<double>strain_rate_sing(Dim, Dim, 0.0);
-      DenseMatrix<double>strain_rate_sing_unscaled(Dim, Dim, 0.0);
-      
-      for (unsigned i=0; i<Dim; i++)
-      {
-	for(unsigned j=0; j<Dim; j++)
-	{
-	  strain_rate_sing(i,j) = 0.5*(dudx_sing(i,j) + dudx_sing(j,i));
-	  
-	  strain_rate_sing_unscaled(i,j) =
-	    0.5*(dudx_sing_unscaled(i,j) + dudx_sing_unscaled(j,i));
-	}
-      }
-	
-      // get contribution of singular pressure and singular velocity gradients to stress tensor
-      DenseMatrix<double> stress_sing(Dim, Dim);
-      DenseMatrix<double> stress_sing_unscaled(Dim, Dim);
-      stress_sing = (*bulk_el_pt->stress_fct_pt())(strain_rate_sing, p_sing);
-      stress_sing_unscaled = (*bulk_el_pt->stress_fct_pt())(strain_rate_sing_unscaled, p_sing_unscaled);
-      
-      // Get the local bulk coordinates    
-      s_bulk = this->local_coordinate_in_bulk(s);
-      
-      Vector<double> u_fe(Dim);
-      
-      // Get FE part of the velocity
-      for(unsigned i=0; i<Dim; i++)
-      {
-	u_fe[i] = bulk_el_pt->interpolated_u_nst(s_bulk, i);
-      }
-      
-      // get FE part of pressure
-      double p_fe = bulk_el_pt->interpolated_p_nst(s_bulk);
-
-      // get FE part of velocity gradient tensor
-      DenseMatrix<double> dudx_fe(Dim, Dim);
-      
-      for(unsigned i=0; i<Dim; i++)
-      {
-	for(unsigned j=0; j<Dim; j++)
-	{
-	  // get derivative du_i/dx_j
-	  dudx_fe(i,j) = bulk_el_pt->interpolated_dudx_nst(s_bulk, i, j);
-	}
-      }
-      
-      // get the FE strain rate 1/2(du_i/dx_j + du_j/dx_i)
-      DenseMatrix<double> strain_rate_fe(Dim, Dim, 0.0);
-      
-      bulk_el_pt->strain_rate(s_bulk, strain_rate_fe);
-      
-      // FE part of the stress
-      DenseMatrix<double> stress_fe(Dim, Dim, 0.0);
-
-      // compute it from consitutive equation
-      stress_fe = (*bulk_el_pt->stress_fct_pt())(strain_rate_fe, p_fe);
-            
-      // get FE part of the traction
-      Vector<double> traction_fe(Dim, 0.0);
-
-      // get FE traction from bulk element
-      bulk_el_pt->get_traction(s_bulk, unit_normal, traction_fe);
-
-      // ================================================
-      // Now we compute the contibution of the integral
-
-      for(unsigned i=0; i<Dim; i++)
-      {
-	for(unsigned j=0; j<Dim; j++)
-	{
-	  // Lorentz reciprocity theorem
-	  integral_result += W * unit_normal[j] * (stress_fe(i,j) * u_sing_unscaled[i]
-						   - stress_sing_unscaled(i,j) * u_fe[i] );
-	}
-      }      
-    } // end loop over integration points
-        
-    return integral_result;
-  }
-
-  ////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////
-  ////////////////////////////////////////////////////////////////////////
-  
   //======================================================================
   /// \short A class for elements that imposes Dirichlet boundary 
   /// conditions on complete solution (such that u_fe + C u_sing = u_bc) using a
@@ -2373,37 +1737,6 @@ namespace oomph
 	  BrokenCopy::broken_assign("NavierStokesWithSingularityBCFaceElement");
 	}
 
-      // ### <- but keep around until we've sorted out the external data stuff
-      
-      /* /// \short Set pointer to element that stores singular fct. Data that stores */
-      /* /// the amplitude of the singular fct and its index is retrieved from */
-      /* /// that element so the Data can be used as external Data in this */
-      /* /// element. */
-      /* void set_navier_stokes_sing_el_pt( */
-      /* 	Vector<ScalableSingularityForNavierStokesElement<ELEMENT>*> navier_stokes_sing_el_pt)  */
-      /* { */
-      /* 	// shorthand, get number of singlar functions */
-      /* 	unsigned nsing = navier_stokes_sing_el_pt.size(); */
-
-      /* 	// set the number of singular functions */
-      /* 	this->Nsingular_fct = nsing; */
-	
-      /* 	// make sure we've got enough space */
-      /* 	Navier_stokes_sing_el_pt.resize(nsing); */
-      /* 	C_external_data_index.resize(nsing); */
-      /* 	C_external_data_value_index.resize(nsing); */
-
-      /* 	// loop over the singular functions and add their amplitudes as external data */
-      /* 	for(unsigned ising=0; ising<nsing; ising++) */
-      /* 	{ */
-      /* 	  Navier_stokes_sing_el_pt[ising] = navier_stokes_sing_el_pt[ising]; */
-      /* 	  C_external_data_index[ising] = this->add_external_data( */
-      /* 	    navier_stokes_sing_el_pt[ising]->data_that_stores_amplitude_of_singular_fct()); */
-      /* 	  C_external_data_value_index[ising] = */
-      /* 	    navier_stokes_sing_el_pt[ising]->index_of_value_that_stores_amplitude_of_singular_fct(); */
-      /* 	} */
-      /* } */
-
       /// Add the element's contribution to its residual vector
       inline void fill_in_contribution_to_residuals(Vector<double> &residuals)
       {
@@ -2434,7 +1767,6 @@ namespace oomph
       /// \short Output function
       void output(std::ostream &outfile, const unsigned &nplot)
       {
-	//oomph_info << "hierher need to update output fct" << std::endl;
 	//Vector of local coordinates
 	Vector<double> s(this->Dim-1);
    
@@ -2494,167 +1826,11 @@ namespace oomph
 	throw OomphLibError(error_message.str(),
 	  OOMPH_CURRENT_FUNCTION,
 	      OOMPH_EXCEPTION_LOCATION);
-	
-	/* // shorthand */
-	/* unsigned Dim = this->Dim; */
-	
-	/* // pointer to the bulk element this face element is attached to */
-	/* ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(this->bulk_element_pt()); */
-      
-	/* // get the number of nodes in this face element */
-	/* unsigned nnode = this->nnode(); */
-    
-	/* //Set up memory for the shape and test functions */
-	/* Shape psi(nnode), test(nnode); */
-    
-	/* unsigned num_plot_points = this->nplot_points(nplot); */
-	/* for (unsigned iplot=0; iplot < num_plot_points; iplot++) */
-	/* { */
-	/*   // Get local coordinates of this plot point */
-	/*   Vector<double> s(this->dim());       */
-	/*   this->get_s_plot(iplot, nplot, s); */
-      
-	/*   //Find the shape and test functions and return the Jacobian */
-	/*   //of the mapping */
-	/*   double J = this->shape_and_test(s, psi, test); */
-         
-	/*   // local coordinates in bulk element this face element is attached to */
-	/*   Vector<double> s_bulk(this->Dim); */
-
-	/*   // Get the local bulk coordinates     */
-	/*   s_bulk = this->local_coordinate_in_bulk(s); */
-
-	/*   Vector<double> x(Dim); */
-
-	/*   for(unsigned i=0; i<Dim; i++) */
-	/*   { */
-	/*     x[i] = this->interpolated_x(s,i); */
-	/*   } */
-	  
-	/*   // Lagrange multipliers */
-	/*   Vector<double> lambda(Dim); */
-      
-	/*   unsigned nnode = this->nnode(); */
-	/*   for(unsigned j=0; j<nnode; j++) */
-	/*   { */
-	/*     // get the map which gives the starting nodal index for */
-	/*     // the Lagrange multipliers associated with each boundary ID */
-	/*     std::map<unsigned, unsigned> first_index = *( */
-	/*       dynamic_cast<BoundaryNodeBase*>(this->node_pt(j))-> */
-	/*       index_of_first_value_assigned_by_face_element_pt() ); */
-	
-	/*     for(unsigned i=0; i<Dim; i++) */
-	/*     { */
-	/*       unsigned lambda_index = first_index[this->Boundary_id] + i; */
-	  
-	/*       // get the Lagrange multiplier */
-	/*       lambda[i] += this->nodal_value(j, lambda_index) * psi[j]; */
-	/*     } */
-	/*   } */
-
-	/*   // get FE part of pressure */
-	/*   double p_fe = bulk_el_pt->interpolated_p_nst(s_bulk); */
-
-	/*   // total pressure */
-	/*   double p_total = p_fe; */
-
-	/*   // get the singular parts of the pressure */
-	/*   Vector<double> p_sing(this->Nsingular_fct, 0.0); */
-	  
-	/*   for(unsigned ising=0; ising<this->Nsingular_fct; ising++) */
-	/*   { */
-	/*     // Get the values of the scaled singular functions at our current location */
-	/*     Vector<double> u_sing(Dim+1); */
-	/*     u_sing = Navier_stokes_sing_el_pt[ising]->singular_fct(x); */
-	    
-	/*     // get scaled singular pressure */
-	/*     p_sing[ising] = u_sing[this->P_index_nst]; */
-
-	/*     // add to the total pressure */
-	/*     p_total += p_sing[ising]; */
-	/*   } */
-	  
-	/*   // get the FE strain rate 1/2(du_i/dx_j + du_j/dx_i) */
-	/*   DenseMatrix<double> strain_rate_fe(Dim, Dim);       */
-	/*   bulk_el_pt->strain_rate(s_bulk, strain_rate_fe); */
-
-	/*   // get the stress from the constitutive law */
-	/*   DenseMatrix<double> stress_fe(Dim, Dim); */
-	/*   stress_fe = (*bulk_el_pt->stress_fct_pt())(strain_rate_fe, p_fe); */
-	  	  
-
-	/*   // ==================================================== */
-	/*   // output stuff */
-	/*   // ==================================================== */
-	  
-	/*   // output the coordinates of this point */
-	/*   for(unsigned i=0; i<Dim; i++) */
-	/*   {	     */
-	/*     outfile << x[i] << " "; */
-	/*   } */
-	  
-	/*   // output the Lagrange multipliers at this plot point */
-	/*   for(unsigned i=0; i<Dim; i++) */
-	/*   { */
-	/*     outfile << lambda[i] << " "; */
-	/*   } */
-
-	/*   // output total pressure */
-	/*   outfile << p_total << " "; */
-	  
-	/*   // output the traction at this point */
-	/*   for(unsigned i=0; i<Dim; i++)	 */
-	/*   { */
-	/*     for(unsigned j=0; j<Dim; j++)	 */
-	/*     { */
-	/*       outfile << stress_fe(i,j) << " "; */
-	/*     } */
-	/*   } */
-
-	/*   for(unsigned ising=0; ising<this->Nsingular_fct; ising++) */
-	/*   { */
-	/*     // Get gradient of scaled singular velocity functions */
-	/*     DenseMatrix<double> dudx_sing(Dim, Dim); */
-	/*     dudx_sing = Navier_stokes_sing_el_pt[ising]->gradient_of_singular_fct(x); */
-
-	/*     // compute the unscaled singular contribution to the strain-rate */
-	/*     DenseMatrix<double>strain_rate_sing(Dim, Dim, 0.0); */
-      
-	/*     for (unsigned i=0; i<Dim; i++) */
-	/*     { */
-	/*       for(unsigned j=0; j<Dim; j++) */
-	/*       { */
-	/* 	strain_rate_sing(i,j) = 0.5*(dudx_sing(i,j) + dudx_sing(j,i)); */
-	/*       } */
-	/*     } */
-
-	/*     // get contribution of singular pressure and singular velocity gradients to stress tensor */
-	/*     DenseMatrix<double> stress_sing(Dim, Dim); */
-	/*     stress_sing = (*bulk_el_pt->stress_fct_pt())(strain_rate_sing, p_sing[ising]); */
-	  
-	/*     // output the traction at this point */
-	/*     for(unsigned i=0; i<Dim; i++)	 */
-	/*     { */
-	/*       for(unsigned j=0; j<Dim; j++)	 */
-	/*       { */
-	/* 	outfile << stress_sing(i,j) << " "; */
-	/*       } */
-	/*     } */
-	/*   } */
-	/*     outfile << std::endl;	   */
-	/* } */
       }
 
       // function to get the total normal stress acting on this element
       // (useful for convergence studies of total force, etc.)
       double get_contribution_to_normal_stress() const;
-
-      // QUEHACERES delete
-      /* // add a nodal index to the set of torus boundary nodes */
-      /* void add_nodal_index_on_torus(const unsigned& i) */
-      /* { */
-      /* 	Index_of_nodes_on_torus.insert(i); */
-      /* } */
       
     private:
 
@@ -2667,14 +1843,6 @@ namespace oomph
 
       /// Desired boundary values at nodes
       DenseMatrix<double> Nodal_boundary_value;
-
-      // QUEHACERES delete now we have the summed interpolation of lambda
-      /* /// \short set of nodal indices for nodes on the torus boundary. */
-      /* /// These nodes are shared by the stress-jump elements which impose */
-      /* /// their own boundary conditions, but only one set of BCs can be */
-      /* /// applied, so these BC elements will not contribute to the residuals */
-      /* /// of any nodes whose indices are in this set. */
-      /* std::set<unsigned> Index_of_nodes_on_torus; */
 	
     }; // end of NavierStokesWithSingularityBCFaceElement class 
 
@@ -2886,7 +2054,7 @@ namespace oomph
     //Set the Vector to hold local coordinates
     Vector<double> s(Dim-1);
   
-    //Loop over the integration points
+    // loop over the integration points
     //--------------------------------
     for(unsigned ipt=0; ipt<n_intpt; ipt++)
     {       
@@ -2896,30 +2064,29 @@ namespace oomph
 	s[i] = this->integral_pt()->knot(ipt, i);
       }
 
-      // Get the local bulk coordinates    
+      // get the local bulk coordinates    
       Vector<double> s_bulk = this->local_coordinate_in_bulk(s);
       
-      //Get the integral weight
+      // get the integral weight
       double w = this->integral_pt()->weight(ipt);
        
-      //Find the shape and test functions and return the Jacobian
+      // find the shape and test functions and return the Jacobian
       //of the mapping from Eulerian -> local coords
       double J = this->shape_and_test(s, psi, test);
 	
       // get the derivatives of the shape functions from the bulk element      
       bulk_el_pt->dshape_eulerian(s_bulk, psi_bulk, dpsidx);
       
-      //Premultiply the weights and the Jacobian
+      // premultiply the weights and the Jacobian
       double W = w * J;
       
-      //Calculate stuff at integration point
+      // calculate stuff at integration point
       Vector<double> u_fe(Dim, 0.0);
       Vector<double> u_bc(Dim, 0.0);	
 
-      // get the interpolated Lagrange mutliplier field at this Gauss point,
-      // taking into account any other LM fields which contribute to this one
-      Vector<double> lambda_bc =
-	this->interpolated_total_boundary_lagrange_multiplier_field(s);
+      // get the interpolated BC-enforcing Lagrange mutliplier field at
+      // this Gauss point
+      Vector<double> lambda_bc(Dim, 0.0);
 
       // get the momentum-enforcing Lagrange multiplier field from the bulk
       Vector<double> lambda_momentum = bulk_el_pt->interpolated_lambda(s_bulk);
@@ -2929,28 +2096,21 @@ namespace oomph
 	// grab a pointer to the current node
 	Node* node_pt = this->node_pt(l);
 
-	// QUEHACERES delete once the total interpolated LM function works
-	/* // get the map which gives the starting nodal index for */
-	/* // the Lagrange multipliers associated with each boundary ID */
-	/* std::map<unsigned, unsigned> first_index = *( */
-	/*   dynamic_cast<BoundaryNodeBase*>(node_pt)-> */
-	/*   index_of_first_value_assigned_by_face_element_pt() ); */
-
+	// get the map which gives the starting nodal index for
+	// the Lagrange multipliers associated with each boundary ID
+	std::map<unsigned, unsigned> first_index = *(
+	  dynamic_cast<BoundaryNodeBase*>(node_pt)->
+	  index_of_first_value_assigned_by_face_element_pt() );
+		  
 	for(unsigned i=0; i<Dim; i++)
 	{
-	  // QUEHACERES delete once the total interpolated LM function works
-	  /* // get the nodal index, accounting for the dimension offset */
-	  /* unsigned lambda_bc_index = first_index[Boundary_id] + i; */
-	    
 	  // get the nodal values of the FE solution and the boundary conditions
 	  u_fe[i] += this->nodal_value(l,i)    * psi[l];
 	  u_bc[i] += Nodal_boundary_value(l,i) * psi[l];
 
-	  // QUEHACERES delete once the total interpolated LM function works
-	  /* // get the interpolated Lagrange multipliers */
-	  /* lambda_bc[i] += this->nodal_value(l, lambda_bc_index) * psi[l]; */
-	}
-	  
+	  unsigned lambda_bc_index = first_index.at(this->Boundary_id) + i;
+	  lambda_bc[i] += this->nodal_value(l, lambda_bc_index) * psi[l];
+	}	  
       }
 
       // cast the GeomObject to a singular line element      
@@ -3051,72 +2211,65 @@ namespace oomph
 	// external data index for this singular node
 	unsigned ext_index = this->C_external_data_index_at_knot[ipt][ising_node];
 
-	// QUEHACERES delete, it's an unsigned
-	/* if(ext_index >= 0) */
+	// loop over the singular functions
+	for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
 	{
-	  // loop over the singular functions
-	  for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
-	  {
-	    // get the ID
-	    unsigned sing_fct_id = sing_ids[ising];
+	  // get the ID
+	  unsigned sing_fct_id = sing_ids[ising];
 
-	    // and get the unscaled singular function associated with this ID
-	    Vector<double> u_sing_unscaled =
-	      sing_el_pt->unscaled_singular_fct(edge_coords_at_knot, sing_fct_id);
+	  // and get the unscaled singular function associated with this ID
+	  Vector<double> u_sing_unscaled =
+	    sing_el_pt->unscaled_singular_fct(edge_coords_at_knot, sing_fct_id);
 
-	    // external equation number which determines the singular amplitude
-	    int external_eqn_c = this->external_local_eqn(ext_index, ising);
+	  // external equation number which determines the singular amplitude
+	  int external_eqn_c = this->external_local_eqn(ext_index, ising);
 
-	    // if this singular amplitude isn't pinned
-	    if(external_eqn_c >= 0)	      
-	    {	  
-	      for(unsigned i=0; i<Dim; i++)
-	      {		
-		residuals[external_eqn_c] +=
-		  lambda_bc[i] * u_sing_unscaled[i] * psi_sing[ising_node] * W;
+	  // if this singular amplitude isn't pinned
+	  if(external_eqn_c >= 0)	      
+	  {	  
+	    for(unsigned i=0; i<Dim; i++)
+	    {		
+	      residuals[external_eqn_c] +=
+		lambda_bc[i] * u_sing_unscaled[i] * psi_sing[ising_node] * W;
 
-		// Jacobian?
-		if (flag == 1)
-		{		  
-		  //Loop over the test functions in this face element
-		  for(unsigned l=0; l<n_node; l++)
-		  {
-		    // grab a pointer to the current node
-		    Node* node_pt = this->node_pt(l);
+	      // Jacobian?
+	      if (flag == 1)
+	      {		  
+		//Loop over the test functions in this face element
+		for(unsigned l=0; l<n_node; l++)
+		{
+		  // grab a pointer to the current node
+		  Node* node_pt = this->node_pt(l);
 	  
-		    // get the map which gives the starting nodal index for
-		    // the Lagrange multipliers associated with each boundary ID
-		    std::map<unsigned, unsigned> first_index = *(
-		      dynamic_cast<BoundaryNodeBase*>(node_pt)->
-		      index_of_first_value_assigned_by_face_element_pt() );
+		  // get the map which gives the starting nodal index for
+		  // the Lagrange multipliers associated with each boundary ID
+		  std::map<unsigned, unsigned> first_index = *(
+		    dynamic_cast<BoundaryNodeBase*>(node_pt)->
+		    index_of_first_value_assigned_by_face_element_pt() );
 	    
-		    // get the nodal index of the Lagrange multiplier for this
-		    // coordinate direction and boundary ID
-		    unsigned lambda_bc_index = first_index.at(Boundary_id) + i;
+		  // get the nodal index of the Lagrange multiplier for this
+		  // coordinate direction and boundary ID
+		  unsigned lambda_bc_index = first_index.at(Boundary_id) + i;
 
-		    // get the local Lagrange multiplier equation number 
-		    int local_eqn_lagr = this->nodal_local_eqn(l, lambda_bc_index);
+		  // get the local Lagrange multiplier equation number 
+		  int local_eqn_lagr = this->nodal_local_eqn(l, lambda_bc_index);
 
-		    if(local_eqn_lagr >= 0)
-		    {
-		      // dC/dlambda-tilde
-		      jacobian(external_eqn_c, local_eqn_lagr) +=
-			u_sing_unscaled[i] * psi[l] * psi_sing[ising_node] * W;
+		  if(local_eqn_lagr >= 0)
+		  {
+		    // dC/dlambda-tilde
+		    jacobian(external_eqn_c, local_eqn_lagr) +=
+		      u_sing_unscaled[i] * psi[l] * psi_sing[ising_node] * W;
 
-		      // symmetric jacobian entry, so chuck it in here too
-		      jacobian(local_eqn_lagr, external_eqn_c) +=
-			u_sing_unscaled[i] * psi[l] * psi_sing[ising_node] * W;
-		    }		    
-		  }
-
-		  // QUEHACERES delete
-		  /* oomph_info << "never get here (variations with C_n in BC Face elem)\n" << std::endl; */
-		  /* abort(); */
+		    // symmetric jacobian entry, so chuck it in here too
+		    jacobian(local_eqn_lagr, external_eqn_c) +=
+		      u_sing_unscaled[i] * psi[l] * psi_sing[ising_node] * W;
+		  }		    
 		}
 	      }
-	    }
-	  }
-	} // end ext_index >= 0 check
+	    } // end loop over dimensions
+	  } // end pinned c check
+	} // end loop over singular functions
+	
       }
 
       // Now do BC-enforcing Lagrange multiplier
@@ -3154,11 +2307,8 @@ namespace oomph
 	  // get the local Lagrange multiplier equation number 
 	  int local_eqn_lagr = this->nodal_local_eqn(l, lambda_bc_index);
 	      
-	  // QUEHACERES get this nodal index systematically, don't assume it starts at 0
+	  // equation for FE velocity
 	  int local_eqn_u_fe = this->nodal_local_eqn(l, d);
-
-	  // QUEHACERES debug
-	  int global_eqn = node_pt->eqn_number(lambda_bc_index);
 	    
 #ifdef PARANOID
 	  // Lagrange multiplier active but u_fe pinned won't work!
@@ -3201,16 +2351,6 @@ namespace oomph
 	  {
 	    // get the bulk node number corresponding to this face element vertex node
 	    const unsigned node_number_in_bulk = this->bulk_node_number(l);
-
-	    // QUEHACERES delete, this term should be for u_omega
-	    /* for(unsigned j=0; j<Dim; j++) */
-	    /* {	       */
-	    /*   // boundary contribution from momentum-enforcing LMs */
-	    /*   // QUEHACERES write-up Eq. 4.24 term 4 */
-	    /*   residuals[local_eqn_u_fe] += */
-	    /* 	(lambda_momentum[d] * unit_normal[j] + */
-	    /* 	 lambda_momentum[j] * unit_normal[d]) * dpsidx(node_number_in_bulk, j)*W; */
-	    /* } */
 	    	      
 	    // QUEHACERES write-up Eq. 1.3 term 4
 	    residuals[local_eqn_u_fe] += lambda_bc[d] * psi[l] * W;
@@ -3235,52 +2375,15 @@ namespace oomph
 		    
 		if (local_unknown_lambda_bc >= 0)
 		{
-		  // QUEHACERES debug
-		  int global_eqn = this->eqn_number(local_eqn_u_fe);
-		  int global_eqn_lm_bc = this->eqn_number(local_unknown_lambda_bc);
-		  
 		  // QUEHACERES write-up transpose of Eqn. 1.16
 		  jacobian(local_eqn_u_fe, local_unknown_lambda_bc) += psi[l2] * psi[l] * W;
 		}   
 	      }
-	    }	    
+	    }	// end Jacobian check    
 	  }
 
-	  // Index of the bulk Lagrange multiplier which enforces momentum PDEs 
-	  unsigned lambda_momentum_index =
-	    bulk_el_pt->index_of_lagrange_multiplier(node_pt, d);
-
-	  int local_eqn_lagr_bulk = this->nodal_local_eqn(l, lambda_momentum_index);
-	  
-	  if(local_eqn_lagr_bulk >= 0)
-	  {	    	    
-	    for(unsigned j=0; j<Dim; j++)
-	    {
-	      // QUEHACERES version 3, taking out...although should be zero anyway
-	      // as the bulk mom LMs should be pinned to zero here
-	      /* // QUEHACERES write-up Eq. 1.1 term 2 */
-	      /* residuals[local_eqn_lagr_bulk] += traction_fe[d] * psi[l] * W; */
-	      /* // QUEHACERES */
-	      /* residuals[local_eqn_lagr_bulk] -= stress_sing_total(d,j) * unit_normal[j] * psi[l] * W; */
-	    }
-	    
-	    if (flag == 1)
-	    {
-	      // QUEHACERES there are no boundary contributions
-	      
-	      /* /\* // QUEHACERES *\/ */
-	      /* /\* oomph_info << "Analytic Jacobian for boundary contributions to " *\/ */
-	      /* /\* 		 << "lambda-bulk not implemented yet" << std::endl; *\/ */
-
-	      /* /\* abort(); *\/ */
-
-	      /* // QUEHACERES maybe add boundary jacobian terms here, */
-	      /* // although in principle they should never been needed, since */
-	      /* // bulk LMs should always be pinned where BC LMs are active... */
-	      /* // (will need to add the boundary jacobian contributions to bulk LMs in */
-	      /* // the continuity enforcing boundary elements) */
-	    }
-	  }
+	  // no contributions from momentum-enforcing LMs, since they are zero
+	  // on Dirchlet boundaries
 	  
 	} // end loop over directions	
       } // end loop over nodes
@@ -3322,18 +2425,10 @@ namespace oomph
 	    residuals[local_eqn_p] -=
 	      lambda_momentum[j] * unit_normal[j] * psip[k_in_bulk] * W;
 	  }
-	  
-	  if(flag == 1)
-	  {
-	    // QUEHACERES maybe add boundary jacobian terms here,
-	    // although in principle they should never been needed, since
-	    // bulk LMs should always be pinned where BC LMs are active...
-	    // (will need to add the boundary jacobian contributions to bulk LMs in
-	    // the continuity enforcing boundary elements)
 
-	    /* oomph_info << "Never get here" << std::endl; */
-	    /* abort(); */
-	  }
+	  // no Jacobian contributions to momentum-enforcing LMs,
+	  // since they are zero on Dirchlet boundaries
+	  
 	}
       }
     } // end loop over integration points
@@ -3469,8 +2564,7 @@ namespace oomph
       // Loop over plot points
       unsigned num_plot_points = this->nplot_points(nplot);
       for (unsigned iplot=0; iplot<num_plot_points; iplot++)
-      {
-      
+      {      
 	// Get local coordinates/shape fcts at plot point
 	this->get_s_plot(iplot, nplot, s);
       
@@ -3483,34 +2577,30 @@ namespace oomph
 
 	// get the interpolated Lagrange mutliplier field at this point,
 	// taking into account any other LM fields which contribute to this one
-	Vector<double> lambda =
-	  this->interpolated_total_boundary_lagrange_multiplier_field(s);
-	
+	Vector<double> lambda(Dim, 0.0);
+
 	for(unsigned l=0; l<n_node; l++) 
 	{
 	  // grab a pointer to the current node
 	  Node* node_pt = this->node_pt(l);
 
-	  // QUEHACERES delete once interpolation function works
-	  /* // get the map which gives the starting nodal index for */
-	  /* // the Lagrange multipliers associated with each boundary ID */
-	  /* std::map<unsigned, unsigned> first_index = *( */
-	  /*   dynamic_cast<BoundaryNodeBase*>(node_pt)-> */
-	  /*   index_of_first_value_assigned_by_face_element_pt() ); */
+	  // get the map which gives the starting nodal index for
+	  // the Lagrange multipliers associated with each boundary ID
+	  std::map<unsigned, unsigned> first_index = *(
+	    dynamic_cast<BoundaryNodeBase*>(node_pt)->
+	    index_of_first_value_assigned_by_face_element_pt() );
 	
 	  for(unsigned i=0; i<Dim; i++)
 	  {
-	    // QUEHACERES delete once interpolation function works
-	    /* // get the nodal index, accounting for the dimension offset */
-	    /* unsigned lambda_index = first_index[this->Boundary_id] + i; */
-	  
 	    u_augmented[i]  += this->nodal_value(l,i) * psi[l];
 	    u_bulk[i] += Orig_node_pt[l]->value(i) * psi[l];
 
-	    // QUEHACERES delete once interpolation function works
-	    /* lambda[i]  += this->nodal_value(l,lambda_index) * psi[l]; */
-	    
 	    x[i] += this->nodal_position(l,i) * psi[l];
+
+	    // get the nodal index, accounting for the dimension offset
+	    unsigned lambda_index = first_index[this->Boundary_id] + i;
+
+	    lambda[i] += this->nodal_value(l, lambda_index) * psi[l];
 	  }
 	}
 	  
@@ -3589,11 +2679,9 @@ namespace oomph
 	Vector<double> u_augmented(Dim, 0.0);
 	Vector<double> u_bulk(Dim, 0.0);
 	
-	// get the interpolated Lagrange mutliplier field at this Gauss point,
-	// taking into account any other LM fields which contribute to this one
-	Vector<double> lambda =
-	this->interpolated_total_boundary_lagrange_multiplier_field(s);
-	
+	// get the interpolated Lagrange mutliplier field at this Gauss point
+	Vector<double> lambda(Dim, 0.0);
+
 	Vector<double> traction_augmented(Dim, 0.0);
 	Vector<double> traction_bulk(Dim, 0.0);
 
@@ -3612,23 +2700,19 @@ namespace oomph
 	{
 	  // grab a pointer to the current node
 	  Node* node_pt = this->node_pt(l);
-	  
-	  // QUEHACERES delete once interpolated function works	    
-	  /* // get the map which gives the starting nodal index for */
-	  /* // the Lagrange multipliers associated with each boundary ID */
-	  /* std::map<unsigned, unsigned> first_index = *( */
-	  /*   dynamic_cast<BoundaryNodeBase*>(node_pt)-> */
-	  /*   index_of_first_value_assigned_by_face_element_pt() ); */
-	  
-	  for(unsigned i=0; i<Dim; i++)
-	  {
-	    // QUEHACERES delete once interpolated function works
-	    /* // get the nodal index, accounting for the dimension offset */
-	    /* unsigned lambda_index = first_index[this->Boundary_id] + i; */
 
-	    /* lambda[i] += this->nodal_value(l,lambda_index) * psi[l]; */
-	    
+	  // get the map which gives the starting nodal index for
+	  // the Lagrange multipliers associated with each boundary ID
+	  std::map<unsigned, unsigned> first_index = *(
+	    dynamic_cast<BoundaryNodeBase*>(node_pt)->
+	    index_of_first_value_assigned_by_face_element_pt() );
+	
+	  for(unsigned i=0; i<Dim; i++)
+	  {	    
 	    x[i] += this->nodal_position(l,i) * psi[l];
+
+	    unsigned lambda_index = first_index.at(this->Boundary_id) + i;
+	    lambda[i] += this->nodal_value(l, lambda_index) * psi[l];
 	  }
 	}
 
@@ -3674,33 +2758,6 @@ namespace oomph
 	  
       } // end loop over knot points
     }
-    // ### <- but keep around until we've sorted out the external data stuff
-      
-    /* /// \short Set pointer to element that stores singular fcts. Data that stores */
-    /* /// the amplitude of the singular fct and its index is retrieved from */
-    /* /// that element so the Data can be used as external Data in this */
-    /* /// element. */
-    /* void set_navier_stokes_sing_el_pt( */
-    /* 	Vector<ScalableSingularityForNavierStokesElement<ELEMENT>*> navier_stokes_sing_el_pt)  */
-    /* { */
-    /* 	// set the number of singular functions */
-    /* 	this->Nsingular_fct = navier_stokes_sing_el_pt.size(); */
-
-    /* 	// make sure we've got enough space */
-    /* 	Navier_stokes_sing_el_pt.resize(this->Nsingular_fct); */
-    /* 	C_external_data_index.resize(this->Nsingular_fct); */
-    /* 	C_external_data_value_index.resize(this->Nsingular_fct); */
-
-    /* 	// loop over the singular functions and add their amplitudes as external data */
-    /* 	for(unsigned ising=0; ising<this->Nsingular_fct; ising++) */
-    /* 	{ */
-    /* 	  Navier_stokes_sing_el_pt[ising] = navier_stokes_sing_el_pt[ising]; */
-    /* 	  C_external_data_index[ising] = this->add_external_data( */
-    /* 	    navier_stokes_sing_el_pt[ising]->data_that_stores_amplitude_of_singular_fct()); */
-    /* 	  C_external_data_value_index[ising] = navier_stokes_sing_el_pt[ising]-> */
-    /* 	    index_of_value_that_stores_amplitude_of_singular_fct(); */
-    /* 	} */
-    /* }    */
  
     /// Pin Lagrange multipliers and set to zero
     void pin_lagrange_multipliers_and_set_to_zero()
@@ -3865,15 +2922,6 @@ namespace oomph
     /// on the augmented region boundary
     ELEMENT* Non_augmented_bulk_element_pt;
 
-    // QUEHACERES delete, now moved to the base class
-    /* /// \short Index of external Data that stores the value of the amplitude of */
-    /* /// the singular function */
-    /* Vector<unsigned> C_external_data_index; */
-      
-    /* /// \short Index of value (within external Data) that stores the */
-    /* /// value of the amplitude of the singular function */
-    /* Vector<unsigned> C_external_data_value_index; */
-
     // This is the external index for the non-augmented nodes which
     // correspond directly to the augmented nodes of this face element.
     // This vector is indexed by the node number in this face element.
@@ -3909,7 +2957,6 @@ namespace oomph
       std::map<Node*,Node*>& existing_duplicate_node_pt,
       const unsigned& boundary_id) : 
   NavierStokesWithSingularityFaceElement<ELEMENT>(augmented_bulk_el_pt, face_index, boundary_id),
-    /* QUEHACERES delete, moved to base class:  C_external_data_index(0), C_external_data_value_index(0), */
     Non_augmented_bulk_element_pt(non_augmented_bulk_el_pt)
   {   
     // Back up original nodes and make new ones
@@ -4066,12 +3113,6 @@ namespace oomph
       External_data_index_for_non_aug_node[j] = this->add_external_data(Orig_node_pt[j]);
     }
 
-    // we'll probably get warnings since we've already added the boundary nodes
-    // of the non-augmented element in the above loop, so suppress them since
-    // it's just easier to loop over all the non-augmented nodes and add them rather
-    // than trying to figure out which ones we've already added
-    /* GeneralisedElement::Suppress_warning_about_repeated_external_data = true; */
-    
     // Now loop over the nodes in the corresponding non-augmented bulk element
     // and add its nodes as external data, since they all contribute to the
     // non-augmented traction which this elements residuals depends on        
@@ -4120,9 +3161,13 @@ namespace oomph
     Vector<unsigned> n_additional_values(nnod, this->Dim);
     this->add_additional_values(n_additional_values, boundary_id);
 
+    // QUEHACERES and add another Dim LMs to handle the continuity of lambda
+    // QUEHACERES sort out the boundary_id if this works
+    this->add_additional_values(n_additional_values, 123);
+    
   } // end NavierStokesWithSingularityStressJumpFaceElement constructor
 
-    //===========================================================================
+  //===========================================================================
   /// Compute the element's residual vector and the Jacobian matrix.
   //===========================================================================
   template <class ELEMENT>
@@ -4196,19 +3241,25 @@ namespace oomph
       Vector<double> u_augmented(Dim, 0.0);
       Vector<double> u_non_aug(Dim, 0.0);
 
-      // get the interpolated Lagrange mutliplier field at this point,
-      // taking into account any other LM fields which contribute to this one
-      Vector<double> lambda_cont =
-	this->interpolated_total_boundary_lagrange_multiplier_field(s);
-
+      // interpolated continuity-enforcing Lagrange mutliplier field at this point
+      Vector<double> lambda_cont(Dim, 0.0);
+      
       // Eulerian coordinates
       Vector<double> x(Dim, 0.0);
+
+      Vector<double> lambda_hat_hat(Dim, 0.0);
       
       // loop over the nodes and compute the above at this integration point
       for(unsigned l=0; l<n_node; l++) 
       {
 	// grab a pointer to the current node
 	Node* node_pt = this->node_pt(l);
+
+	// get the map which gives the starting nodal index for
+	// the Lagrange multipliers associated with each boundary ID
+	std::map<unsigned, unsigned> first_index = *(
+	  dynamic_cast<BoundaryNodeBase*>(node_pt)->
+	  index_of_first_value_assigned_by_face_element_pt() );
 	
 	for(unsigned i=0; i<Dim; i++)
 	{
@@ -4217,6 +3268,17 @@ namespace oomph
 	  
 	  // interpolate the Eulerian coordinates
 	  x[i] += node_pt->x(i) * psi[l];
+	  
+	  unsigned lambda_cont_index = first_index.at(this->Boundary_id) + i;
+
+	  lambda_cont[i] += this->nodal_value(l, lambda_cont_index) * psi[l];
+	  
+	  // get the nodal index of the Lagrange multiplier for this
+	  // coordinate direction and boundary ID
+	  unsigned lambda_hat_hat_index = first_index.at(123) + i;
+
+	  // interpolated lambda_hat_hat
+	  lambda_hat_hat[i] += this->nodal_value(l, lambda_hat_hat_index) * psi[l];
 	}
       }
 
@@ -4298,10 +3360,6 @@ namespace oomph
       Vector<double> unit_normal(Dim, 0.0);
       this->outer_unit_normal(s, unit_normal);
 
-      // QUEHACERES for debug - get FE traction from bulk
-      Vector<double> traction_fe(Dim, 0.0);
-      bulk_el_pt->get_traction(s_bulk, unit_normal, traction_fe);
-      
       // total singular contribution to the strain-rate
       DenseMatrix<double> strain_rate_sing_total(Dim, Dim, 0.0);
 
@@ -4354,7 +3412,7 @@ namespace oomph
 
       // get the momentum-enforcing Lagrange multiplier field from the bulk
       Vector<double> lambda_momentum = bulk_el_pt->interpolated_lambda(s_bulk);
-      
+            
       // now get the traction from the non-augmented side
       // -------------------------------------------------
 
@@ -4367,51 +3425,30 @@ namespace oomph
 	
       non_augmented_bulk_elem_pt->locate_zeta(x, geom_object_pt, s_bulk_non_aug);
 
-      // QUEHACERES debug @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+#ifdef PARANOID
+      if (geom_object_pt == 0x0)
+      {
+	ostringstream error_message;
+
+	error_message << "Couldn't find corresponding local coordinates "
+		      << "in the non-augmented bulk element corresponding "
+		      << "to this StressJumpFaceElement \n";
+	
+	throw OomphLibError(error_message.str().c_str(),
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
+      }
+#endif      
       
-      DenseMatrix<double> strain_rate_fe(Dim, Dim, 0.0);
-      DenseMatrix<double> strain_rate_non_aug(Dim, Dim, 0.0);
-      
-      bulk_el_pt->strain_rate(s_bulk, strain_rate_fe);
-      non_augmented_bulk_elem_pt->strain_rate(s_bulk_non_aug, strain_rate_non_aug);
-
-      double strain_rate_fe_xx = strain_rate_fe(0,0);
-      double strain_rate_fe_xy = strain_rate_fe(0,1);
-      double strain_rate_fe_xz = strain_rate_fe(0,2);
-      double strain_rate_fe_yx = strain_rate_fe(1,0);
-      double strain_rate_fe_yy = strain_rate_fe(1,1);
-      double strain_rate_fe_yz = strain_rate_fe(1,2);
-      double strain_rate_fe_zx = strain_rate_fe(2,0);
-      double strain_rate_fe_zy = strain_rate_fe(2,1);
-      double strain_rate_fe_zz = strain_rate_fe(2,2);
-
-      double strain_rate_non_aug_xx = strain_rate_non_aug(0,0);
-      double strain_rate_non_aug_xy = strain_rate_non_aug(0,1);
-      double strain_rate_non_aug_xz = strain_rate_non_aug(0,2);
-      double strain_rate_non_aug_yx = strain_rate_non_aug(1,0);
-      double strain_rate_non_aug_yy = strain_rate_non_aug(1,1);
-      double strain_rate_non_aug_yz = strain_rate_non_aug(1,2);
-      double strain_rate_non_aug_zx = strain_rate_non_aug(2,0);
-      double strain_rate_non_aug_zy = strain_rate_non_aug(2,1);
-      double strain_rate_non_aug_zz = strain_rate_non_aug(2,2);
-
-      // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-      
-      // now get the traction
-
-      // QUEHACERES no, the maths already accounts for this, the outer unit normal is n^\Gamma
-      /* // (passing in the same unit normal as before, */
-      /* // so will need to flip the sign of the traction) */
+      // now get the traction from the non-augmented bulk element
       Vector<double> traction_non_aug(Dim, 0.0);
       non_augmented_bulk_elem_pt->get_traction(s_bulk_non_aug,
 					       unit_normal,
 					       traction_non_aug);
 
-      /* // flip the sign */
-      /* for(Vector<double>::iterator traction_it = traction_non_aug.begin(); */
-      /* 	  traction_it != traction_non_aug.end(); traction_it++) */
-      /* 	(*traction_it) = -(*traction_it); */
-
+      Vector<double> lambda_momentum_non_aug
+	= non_augmented_bulk_elem_pt->interpolated_lambda(s_bulk_non_aug);
+      
       // and get the augmented pressure
       double interpolated_p_fe = this->interpolated_p_nst(s);
 
@@ -4435,9 +3472,9 @@ namespace oomph
 
       non_augmented_bulk_elem_pt->pshape_nst(s_bulk_non_aug, psip_non_aug);
       
-      // ===================================================
+      // ======================================================================
       // Now add to the appropriate equations
-      // ===================================================
+      // ======================================================================
 
       // contribution to the singular amplitude equations
       // --------------------------------------------------
@@ -4460,100 +3497,77 @@ namespace oomph
 	// external data index for this singular node
 	unsigned ext_index = this->C_external_data_index_at_knot[ipt][ising_node];
 
-	// QUEHACERES delete, it's an unsigned
-	/* if(ext_index >= 0) */
+	// loop over the singular functions
+	for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
 	{
-	  // loop over the singular functions
-	  for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
+	  // external equation number which determines the singular amplitude
+	  int external_eqn_c = this->external_local_eqn(ext_index, ising);
+	  
+	  // if this singular amplitude isn't pinned
+	  if(external_eqn_c >= 0)	      
 	  {
-	    // external equation number which determines the singular amplitude
-	    int external_eqn_c = this->external_local_eqn(ext_index, ising);
+	    for(unsigned i=0; i<Dim; i++)
+	    {		
+	      // contribution of the continuity-enforcing LM to the C equations
+	      residuals[external_eqn_c] +=
+		lambda_cont[i] * u_sing_unscaled[ising][i] * psi_sing[ising_node] * W;
 
-	    // QUEHACERES debug @@@@@
-	    int global_eqn = sing_el_pt->node_pt(ising_node)->eqn_number(ising);
-
-	    Node* external_node_from_data_index_pt = dynamic_cast<Node*>(
-	      this->external_data_pt(this->C_external_data_index_at_knot[ipt][ising_node]));
-
-	    Node* external_node_from_sing_el_pt = sing_el_pt->node_pt(ising_node);
-	  
-	    // @@@@@@@@@@@@@@@@@@@@@@
-	  
-	    // if this singular amplitude isn't pinned
-	    if(external_eqn_c >= 0)	      
-	    {
-	      for(unsigned i=0; i<Dim; i++)
-	      {		
-		// contribution of the continuity-enforcing LM to the C equations
-		residuals[external_eqn_c] +=
-		  lambda_cont[i] * u_sing_unscaled[ising][i] * psi_sing[ising_node] * W;
+#ifdef USE_SYMMETRIC_JACOBIAN	      
+	      // contribution of the momentum-enforcing LMs to the C equations
+	      residuals[external_eqn_c] +=
+		lambda_momentum[i] * p_sing_unscaled[ising] *
+		unit_normal[i] * psi_sing[ising_node] * W;
 		
-		// contribution of the momentum-enforcing LMs to the C equations
-		residuals[external_eqn_c] +=
-			lambda_momentum[i] * p_sing_unscaled[ising] *
-			unit_normal[i] * psi_sing[ising_node] * W;
-		
-		for(unsigned j=0; j<Dim; j++)
+	      for(unsigned j=0; j<Dim; j++)
+	      {
+		residuals[external_eqn_c] -=
+		  lambda_momentum[i] * unit_normal[j] * (
+		    psi_sing[ising_node] * (dudx_sing_unscaled[ising](i,j) +
+					    dudx_sing_unscaled[ising](j,i)) +
+		    dpsi_sing_dx(ising_node,j) * u_sing_unscaled[ising][i] +
+		    dpsi_sing_dx(ising_node,i) * u_sing_unscaled[ising][j] ) * W;
+	      }
+#endif	      
+	      // Jacobian?
+	      if (flag == 1)
+	      {
+		//Loop over the test functions
+		for(unsigned l=0; l<n_node; l++)
 		{
-			residuals[external_eqn_c] -=
-			  lambda_momentum[i] * unit_normal[j] * (
-			    psi_sing[ising_node] * (dudx_sing_unscaled[ising](i,j) +
-						    dudx_sing_unscaled[ising](j,i)) +
-			    dpsi_sing_dx(ising_node,j) * u_sing_unscaled[ising][i] +
-			    dpsi_sing_dx(ising_node,i) * u_sing_unscaled[ising][j] ) * W;
-		}
-	      
-		// Jacobian?
-		if (flag == 1)
-		{
-		  //Loop over the test functions
-		  for(unsigned l=0; l<n_node; l++)
-		  {
-		    Node* node_pt = this->node_pt(l);
+		  Node* node_pt = this->node_pt(l);
 
-		    // get the map which gives the starting nodal index for
-		    // the Lagrange multipliers associated with each boundary ID
-		    std::map<unsigned, unsigned> first_index = *(
-		      dynamic_cast<BoundaryNodeBase*>(node_pt)->
-		      index_of_first_value_assigned_by_face_element_pt() );
+		  // get the map which gives the starting nodal index for
+		  // the Lagrange multipliers associated with each boundary ID
+		  std::map<unsigned, unsigned> first_index = *(
+		    dynamic_cast<BoundaryNodeBase*>(node_pt)->
+		    index_of_first_value_assigned_by_face_element_pt() );
 	
-		    // get the nodal index of the Lagrange multiplier for this
-		    // coordinate direction and boundary ID
-		    unsigned lambda_cont_index = first_index.at(this->Boundary_id) + i;
+		  // get the nodal index of the Lagrange multiplier for this
+		  // coordinate direction and boundary ID
+		  unsigned lambda_cont_index = first_index.at(this->Boundary_id) + i;
 		  
-		    int local_eqn_lagr = this->nodal_local_eqn(l, lambda_cont_index);
+		  int local_eqn_lagr = this->nodal_local_eqn(l, lambda_cont_index);
 	  
-		    if (local_eqn_lagr >= 0)
-		    {
-		      // QUEHACERES debug
-		      int global_eqn_lagr = this->eqn_number(local_eqn_lagr);
+		  if (local_eqn_lagr >= 0)
+		  {
+		    // QUEHACERES debug
+		    int global_eqn_lagr = this->eqn_number(local_eqn_lagr);
 		      
-		      // dC/dlambda-hat
-		      jacobian(external_eqn_c, local_eqn_lagr) +=
-			u_sing_unscaled[ising][i] * psi[l] * psi_sing[ising_node] * W;
+		    // dC/dlambda-hat
+		    jacobian(external_eqn_c, local_eqn_lagr) +=
+		      u_sing_unscaled[ising][i] * psi[l] * psi_sing[ising_node] * W;
 
-		      // symmetric jacobian entry, so chuck it in here too
-		      jacobian(local_eqn_lagr, external_eqn_c) +=
-			u_sing_unscaled[ising][i] * psi[l] * psi_sing[ising_node] * W;
-		    }
+		    // symmetric jacobian entry, so chuck it in here too
+		    jacobian(local_eqn_lagr, external_eqn_c) +=
+		      u_sing_unscaled[ising][i] * psi[l] * psi_sing[ising_node] * W;
 		  }
-
-		  // QUEHACERES this jacobian entry is symmetric, so added in the same section
-		  // as the transpose entry
-		  
-		  // QUEHACERES delete @@
-		  /* // QUEHACERES if we switch to symmetric version, need to */
-		  /* // add dC/dlambda-mom entry here */
-		  
-		  /* // QUEHACERES delete once above is correct */
-		  /* /\* oomph_info << "never get here (variations with C_n in Sing Jump Face elem)\n" << std::endl; *\/ */
-		  /* /\* abort(); *\/ */
 		}
-	      } // end loop over dimensions
+	      }
+	    } // end loop over dimensions
 	      
-	    } // end external_eqn_c >= check
-	  } // end ext_index >= 0 check
-	}
+	  } // end external_eqn_c >= check
+	} // end ext_index >= 0 check
+	
       } // end loop over singular nodes
       
       //Loop over the test functions
@@ -4561,8 +3575,9 @@ namespace oomph
       {
 	Node* node_pt = this->node_pt(l);
 
-	Node* nonaug_node_pt = non_augmented_bulk_elem_pt->
-	  node_pt(External_data_index_for_non_aug_node[l]);
+	Node* nonaug_node_pt = Orig_node_pt.at(l);
+	/* non_augmented_bulk_elem_pt-> */
+	/*   node_pt(External_data_index_for_non_aug_node[l]); */
 		  
 	// get the bulk node number corresponding to this face element vertex node
 	const unsigned l_in_bulk = this->bulk_node_number(l);
@@ -4596,11 +3611,6 @@ namespace oomph
 	  
 	  if(local_eqn_lagr_mom >= 0)
 	  {
-	    /* // QUEHACERES version 2, where we actually want this one */
-	    /* residuals[local_eqn_lagr_mom] += traction_fe[i] * psi[l] * W; */
-	    	    
-	    // QUEHACERES write-up Eqn. 1.1 term 2
-	    
 	    // contribution is the normal stress difference between the non-augmented region
 	    // and the singular fuction at the interface - this is where the
 	    // subtraction of the singularity actually enters the momentum equations
@@ -4611,6 +3621,9 @@ namespace oomph
 #endif
 	    residuals[local_eqn_lagr_mom] -= traction_sing_total[i] * psi[l] * W;
 
+	    // QUEHACERES ###
+	    residuals[local_eqn_lagr_mom] += lambda_hat_hat[i] * psi[l] * W;
+	    
 	    if (flag == 1)
 	    {
 	      // Derivatives w.r.t. C
@@ -4622,63 +3635,49 @@ namespace oomph
 		// external data index for this singular node
 		unsigned ext_index = this->C_external_data_index_at_knot[ipt][ising_node];
 
-		// QUEHACERES delete
-		/* if(ext_index >= 0) */
+		// loop over the singular functions
+		for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
 		{
-		  // loop over the singular functions
-		  for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++)
-		  {
-		    // external equation number which determines the singular amplitude
-		    int external_eqn_c = this->external_local_eqn(ext_index, ising);
+		  // external equation number which determines the singular amplitude
+		  int external_eqn_c = this->external_local_eqn(ext_index, ising);
   
-		    // if this singular amplitude isn't pinned
-		    if(external_eqn_c >= 0)	      
+		  // if this singular amplitude isn't pinned
+		  if(external_eqn_c >= 0)	      
+		  {		      
+		    // singular pressure contribution
+		    jacobian(local_eqn_lagr_mom, external_eqn_c) +=
+		      psi_sing[ising_node] * p_sing_unscaled[ising] * unit_normal[i] * psi[l] * W;
+
+#ifdef USE_SYMMETRIC_JACOBIAN		    
+		    // entry is symmetric, so add the transpose term here too
+		    jacobian(external_eqn_c, local_eqn_lagr_mom) +=
+		      psi_sing[ising_node] * p_sing_unscaled[ising] * unit_normal[i] * psi[l] * W;
+#endif
+		    // velocity gradient contribution
+		    for(unsigned j=0; j<Dim; j++)
 		    {
-		      // QUEHACERES debug @@
-		      int global_c_eqn = this->eqn_number(external_eqn_c);
-		    
-		      // QUEHACERES debug @@
-		      double jac_entry = jacobian(local_eqn_lagr_mom, external_eqn_c);
-		      
-		      // singular pressure contribution
-		      jacobian(local_eqn_lagr_mom, external_eqn_c) +=
-			psi_sing[ising_node] * p_sing_unscaled[ising] * unit_normal[i] * psi[l] * W;
-
-
-		      // entry is symmetric, so add the transpose term here too
-		      jacobian(external_eqn_c, local_eqn_lagr_mom) +=
-			psi_sing[ising_node] * p_sing_unscaled[ising] * unit_normal[i] * psi[l] * W;
-		      
-		      // QUEHACERES debug @@
-		      jac_entry = jacobian(local_eqn_lagr_mom, external_eqn_c);
-		      
-		      // velocity gradient contribution
-		      for(unsigned j=0; j<Dim; j++)
-		      {
-			jacobian(local_eqn_lagr_mom, external_eqn_c) -=
-			  ( u_sing_unscaled[ising][i] * dpsi_sing_dx(ising_node, j) +
-			    psi_sing[ising_node] * dudx_sing_unscaled[ising](i,j) +
-			    u_sing_unscaled[ising][j] * dpsi_sing_dx(ising_node, i) +
-			    psi_sing[ising_node] * dudx_sing_unscaled[ising](j,i)
+		      jacobian(local_eqn_lagr_mom, external_eqn_c) -=
+			( u_sing_unscaled[ising][i] * dpsi_sing_dx(ising_node, j) +
+			  psi_sing[ising_node] * dudx_sing_unscaled[ising](i,j) +
+			  u_sing_unscaled[ising][j] * dpsi_sing_dx(ising_node, i) +
+			  psi_sing[ising_node] * dudx_sing_unscaled[ising](j,i)
 			  ) * unit_normal[j] * psi[l] * W;
-
-			jacobian(external_eqn_c, local_eqn_lagr_mom) -=
-			  ( u_sing_unscaled[ising][i] * dpsi_sing_dx(ising_node, j) +
-			    psi_sing[ising_node] * dudx_sing_unscaled[ising](i,j) +
-			    u_sing_unscaled[ising][j] * dpsi_sing_dx(ising_node, i) +
-			    psi_sing[ising_node] * dudx_sing_unscaled[ising](j,i)
+		      
+#ifdef USE_SYMMETRIC_JACOBIAN
+		      jacobian(external_eqn_c, local_eqn_lagr_mom) -=
+			( u_sing_unscaled[ising][i] * dpsi_sing_dx(ising_node, j) +
+			  psi_sing[ising_node] * dudx_sing_unscaled[ising](i,j) +
+			  u_sing_unscaled[ising][j] * dpsi_sing_dx(ising_node, i) +
+			  psi_sing[ising_node] * dudx_sing_unscaled[ising](j,i)
 			  ) * unit_normal[j] * psi[l] * W;
-			
-			// QUEHACERES delete
-			jac_entry = jacobian(local_eqn_lagr_mom, external_eqn_c);
-		      }
-		      // QUEHACERES debug
-		      unsigned breakpoint = 0;
-		    } // end pinned amplitude check
-		  } // end loop over singular functions
-		}
+#endif
+		    }
+		  } // end pinned amplitude check
+		} // end loop over singular functions
+		
 	      } // end loop over singular nodes
-
+	      
+#ifndef ALL_ELEMENTS_ARE_PDE_CONSTRAINED
 	      // --------------------------------------------------------------
 	      // loop over the non-augmented nodes corresponding to this *face*
 	      // element, and add their pressure contribution to the 
@@ -4734,13 +3733,6 @@ namespace oomph
 		    jacobian(local_eqn_lagr_mom, ext_eqn_non_aug_u) +=
 		      dpsidx_non_aug(l2, i) * unit_normal[i2] * psi[l] * W;
 
-		    // QUEHACERES delete, doing it with the non-aug stuff now
-		    /* // Jacobian is symmetric, so make the transpose */
-		    /* // contribution while we're at it */
-		    /* jacobian(ext_eqn_non_aug_u, local_eqn_lagr_mom) += */
-		    /*   /\* dpsidx_non_aug(l2, i) * unit_normal[i2] * psi[l] * W; *\/ */
-		    /*   dpsidx_non_aug(l_in_non_aug_bulk, i2) * unit_normal[i] * psi_bulk[l2] * W; */
-		    
 		    // add additional contribution with delta function
 		    if(i2 == i)
 		    {
@@ -4748,26 +3740,78 @@ namespace oomph
 		      {
 			jacobian(local_eqn_lagr_mom, ext_eqn_non_aug_u) +=
 			  dpsidx_non_aug(l2,j) * unit_normal[j] * psi[l] * W;
-
-			// QUEHACERES delete, doing it with the non-aug stuff now
-			/* // Jacobian is symmetric, so make the transpose */
-			/* // contribution while we're at it */
-			/* jacobian(ext_eqn_non_aug_u, local_eqn_lagr_mom) += */
-			/*   dpsidx_non_aug(l_in_non_aug_bulk,j) * unit_normal[j] * psi_bulk[l2] * W; */
 		      }
 		    }
 		  }
 		}
 	      }	   // end loop over all non-aug nodes
-	      
-	      // QUEHACERES delete once the above works
-	      /* oomph_info << "Analytic Jacobian for boundary contributions to " */
-	      /* 		 << "lambda-bulk not implemented yet" << std::endl; */
-	      /* abort(); */
-	      
+#endif
+	      // Now add contributions from lambda-hat-hat to lambda
+	      for(unsigned l2=0; l2<n_node; l2++)
+	      {
+		Node* node2_pt = this->node_pt(l2);
+
+		// get the map which gives the starting nodal index for
+		// the Lagrange multipliers associated with each boundary ID
+		std::map<unsigned, unsigned> first_index2 = *(
+		  dynamic_cast<BoundaryNodeBase*>(node2_pt)->
+		  index_of_first_value_assigned_by_face_element_pt() );
+		
+		unsigned lambda_hat_hat_index = first_index2.at(123) + i;
+
+		// get lambda-hat-hat equation number at this node
+	      	int local_unknown = this->nodal_local_eqn(l2, lambda_hat_hat_index);
+		
+	      	if (local_unknown >= 0)
+	      	{
+	      	  jacobian(local_eqn_lagr_mom, local_unknown) +=
+	      	    psi[l2] * psi[l] * W;
+	      	}
+	      }
+	    
 	    } // end Jacobian flag check	    
 	  } // end momentum LM equations
 
+	  // QUEHACERES ###
+	  // Index of the bulk Lagrange multiplier which enforces momentum PDEs	    
+	  unsigned lambda_mom_non_aug_index =
+	    non_augmented_bulk_elem_pt->index_of_lagrange_multiplier(nonaug_node_pt, i);
+
+	  unsigned ext_index = External_data_index_for_non_aug_node[l];
+	  
+	  int local_eqn_lagr_mom_non_aug =
+	    this->external_local_eqn(ext_index, lambda_mom_non_aug_index);
+	  
+	  if(local_eqn_lagr_mom_non_aug >= 0)
+	  {
+	    residuals[local_eqn_lagr_mom_non_aug] -= lambda_hat_hat[i] * psi[l] * W;
+
+	    if(flag)
+	    {	      
+	      for(unsigned l2=0; l2<n_node; l2++)
+	      {
+		Node* node2_pt = this->node_pt(l2);
+
+		// get the map which gives the starting nodal index for
+		// the Lagrange multipliers associated with each boundary ID
+		std::map<unsigned, unsigned> first_index2 = *(
+		  dynamic_cast<BoundaryNodeBase*>(node2_pt)->
+		  index_of_first_value_assigned_by_face_element_pt() );
+		
+		unsigned lambda_hat_hat_index = first_index2.at(123) + i;
+
+		// get lambda-hat-hat equation number at this node
+	      	int local_unknown = this->nodal_local_eqn(l2, lambda_hat_hat_index);
+		
+	      	if (local_unknown >= 0)
+	      	{
+	      	  jacobian(local_eqn_lagr_mom_non_aug, local_unknown) -=
+	      	    psi[l2] * psi[l] * W;
+	      	}
+	      }
+	    }
+	  }
+	  
 	  // =======================================================================
 	  // Continuity Lagrange multiplier equations: Determined from continuity of
 	  // solution with (scaled!) singular solution in the augmented region.
@@ -4824,29 +3868,82 @@ namespace oomph
 	    } // end Jacobian flag check
 	  }
 
+	  // QUEHACERES ###
+	  {
+	    unsigned lambda_hat_hat_index = first_index.at(123) + i;
+
+	    int local_eqn_lambda_hat_hat = this->nodal_local_eqn(l, lambda_hat_hat_index);
+
+	    if(local_eqn_lambda_hat_hat >= 0)
+	    {
+	      residuals[local_eqn_lambda_hat_hat] +=
+		(lambda_momentum[i] - lambda_momentum_non_aug[i]) * psi[l] * W;
+
+	      if(flag == 1)
+	      {
+		for(unsigned l2=0; l2<n_node; l2++)
+		{
+		  Node* node2_pt = this->node_pt(l2);
+
+		  Node* nonaug_node2_pt = Orig_node_pt[l2];
+		    
+		  // Index of the bulk Lagrange multiplier which enforces momentum PDEs	    
+		  unsigned lambda_mom_non_aug2_index =
+		    non_augmented_bulk_elem_pt->index_of_lagrange_multiplier(nonaug_node2_pt, i);
+
+		  unsigned ext_index = External_data_index_for_non_aug_node[l2];
+	  
+		  int local_eqn_lagr_mom_non_aug =
+		    this->external_local_eqn(ext_index, lambda_mom_non_aug2_index);
+
+		  if(local_eqn_lagr_mom_non_aug >= 0)
+		  {
+		    jacobian(local_eqn_lambda_hat_hat, local_eqn_lagr_mom_non_aug) -=
+		      psi[l] * psi[l2] * W;
+		  }
+
+		  // Index of the bulk Lagrange multiplier which enforces momentum PDEs	    
+		  unsigned lambda_mom2_index =
+		    bulk_el_pt->index_of_lagrange_multiplier(node2_pt, i);
+
+		  int local_eqn_lagr_mom = this->nodal_local_eqn(l2, lambda_mom2_index);
+
+		  if(local_eqn_lagr_mom >= 0)
+		  {
+		    jacobian(local_eqn_lambda_hat_hat, local_eqn_lagr_mom) +=
+		      psi[l] * psi[l2] * W;
+		  }
+		}
+	      } // end Jacobian check
+	    }
+	  }
+	  
 	  // ==================================================================
 	  // Contribution of momentum- and continuity-enforcing Lagrange
 	  // multipliers to augmented velocity equations
 	  // ==================================================================
-
+	  
+	  // get the bulk node number corresponding to this face element vertex node
+	  const unsigned l_in_bulk = this->bulk_node_number(l);
+	  
 	  int local_eqn_augmented = this->nodal_local_eqn(l, i);
 	  if (local_eqn_augmented >= 0)
 	  {
 	    // QUEHACERES write-up Eq. 1.3 term 5
 	    residuals[local_eqn_augmented] += lambda_cont[i] * psi[l]*W;
 
-	    // QUEHACERES delete once symm version works ###
-/* #ifndef ALL_ELEMENTS_ARE_PDE_CONSTRAINED */
-/* 	    for(unsigned j=0; j<Dim; j++) */
-/* 	    { */
-/* 	      // boundary contribution from momentum-enforcing LMs */
-/* 	      // QUEHACERES write-up Eq. 4.24 term 4 */
-/* 	      residuals[local_eqn_augmented] += */
-/* 	      	(lambda_momentum[i] * unit_normal[j] + */
-/* 	      	 lambda_momentum[j] * unit_normal[i]) * dpsidx(l_in_bulk, j)*W; */
-/* 	    } */
-/* #endif */
-
+#ifndef ALL_ELEMENTS_ARE_PDE_CONSTRAINED	    
+#ifndef USE_SYMMETRIC_JACOBIAN	    
+	    for(unsigned j=0; j<Dim; j++)
+	    {
+	      // boundary contribution from momentum-enforcing LMs
+	      // QUEHACERES write-up Eq. 4.24 term 4
+	      residuals[local_eqn_augmented] +=
+	      	(lambda_momentum[i] * unit_normal[j] +
+	      	 lambda_momentum[j] * unit_normal[i]) * dpsidx(l_in_bulk, j)*W;
+	    }
+#endif
+#endif
 	    // compute Jacobian
 	    if (flag == 1)
 	    {
@@ -4873,93 +3970,95 @@ namespace oomph
 		  // QUEHACERES write-up Eqn. 1.17
 		  jacobian(local_eqn_augmented, local_unknown_lambda_cont) +=
 		    psi[l2] * psi[l] * W;
+		}		
+	      }
+#ifndef ALL_ELEMENTS_ARE_PDE_CONSTRAINED
+#ifndef USE_SYMMETRIC_JACOBIAN
+
+	      // Now need to loop over the full bulk elements nodes since the
+	      // derivatives of the momentum-enforcing LMs make contributions.
+	      // The equation number is slightly awkward;  some nodes are
+	      // common with this face element, i.e. have local nodal equation
+	      // numbers, and the rest are external to this element so we
+	      // need to look them up their equation numbers in the external
+	      // index list
+
+	      // first the nodes shared with the face element
+	      for(unsigned l2=0; l2<n_node; l2++)
+	      {
+		unsigned l2_in_bulk = this->bulk_node_number(l2);
+		
+		// loop over the problem dimensions again
+		for(unsigned i2=0; i2<Dim; i2++)
+		{
+		  // Index of the bulk Lagrange multiplier which enforces momentum PDEs 
+		  unsigned lambda_momentum_index =
+		    bulk_el_pt->index_of_lagrange_multiplier(l2_in_bulk, i2);
+
+		  int local_unknown_lagr_mom =
+		    this->nodal_local_eqn(l2, lambda_momentum_index);
+
+		  // check the momentum LM isn't pinned
+		  if(local_unknown_lagr_mom >= 0)
+		  {
+		    jacobian(local_eqn_augmented, local_unknown_lagr_mom) +=
+		      psi[l2] * unit_normal[i] * dpsidx(l_in_bulk, i2) * W;
+
+		    // add additional contribution with delta function
+		    if(i2 == i)
+		    {
+		      for(unsigned k=0; k<Dim; k++)
+		      {
+			jacobian(local_eqn_augmented, local_unknown_lagr_mom) +=
+			  psi[l2] * unit_normal[k] * dpsidx(l_in_bulk, k) * W;
+		      }
+		    }
+		  }
 		}
 	      }
 
-	      // QUEHACERES delete once symm version working
-	      /* // Now need to loop over the full bulk elements nodes since the */
-	      /* // derivatives of the momentum-enforcing LMs make contributions. */
-	      /* // The equation number is slightly awkward;  some nodes are */
-	      /* // common with this face element, i.e. have local nodal equation */
-	      /* // numbers, and the rest are external to this element so we */
-	      /* // need to look them up their equation numbers in the external */
-	      /* // index list */
-
-	      /* // first the nodes shared with the face element */
-	      /* for(unsigned l2=0; l2<n_node; l2++) */
-	      /* { */
-	      /* 	// loop over the problem dimensions again */
-	      /* 	for(unsigned i2=0; i2<Dim; i2++) */
-	      /* 	{ */
-	      /* 	  unsigned l2_in_bulk = this->bulk_node_number(l2); */
-		
-	      /* 	  // Index of the bulk Lagrange multiplier which enforces momentum PDEs  */
-	      /* 	  unsigned lambda_momentum_index = */
-	      /* 	    bulk_el_pt->index_of_lagrange_multiplier(l2_in_bulk, i2); */
-
-	      /* 	  int local_unknown_lagr_mom = */
-	      /* 	    this->nodal_local_eqn(l2, lambda_momentum_index); */
-
-	      /* 	  // check the momentum LM isn't pinned */
-	      /* 	  if(local_unknown_lagr_mom >= 0) */
-	      /* 	  { */
-	      /* 	    jacobian(local_eqn_augmented, local_unknown_lagr_mom) += */
-	      /* 	      psi[l2] * unit_normal[i] * dpsidx(l_in_bulk, i2) * W; */
-
-	      /* 	    // add additional contribution with delta function */
-	      /* 	    if(i2 == i) */
-	      /* 	    { */
-	      /* 	      for(unsigned k=0; k<Dim; k++) */
-	      /* 	      { */
-	      /* 		jacobian(local_eqn_augmented, local_unknown_lagr_mom) += */
-	      /* 		  psi[l2] * unit_normal[k] * dpsidx(l_in_bulk, k) * W; */
-	      /* 	      } */
-	      /* 	    } */
-	      /* 	  } */
-	      /* 	} */
-	      /* } */
-
-	      /* // now do the non-shared bulk nodes */
-	      /* for(unsigned l2=0; l2<bulk_el_pt->nnode(); l2++) */
-	      /* { */
-	      /* 	// is this a shared node? (i.e. is it not in the map?) */
-	      /* 	  if(External_data_index_bulk_aug_node_map.find(l2) == */
-	      /* 	     External_data_index_bulk_aug_node_map.end()) */
-	      /* 	    continue; */
+	      // now do the non-shared bulk nodes
+	      for(unsigned l2=0; l2<bulk_el_pt->nnode(); l2++)
+	      {
+		// is this a shared node? (i.e. is it not in the map?)
+		  if(External_data_index_bulk_aug_node_map.find(l2) ==
+		     External_data_index_bulk_aug_node_map.end())
+		    continue;
 		  
-	      /* 	// loop over the problem dimensions again */
-	      /* 	for(unsigned i2=0; i2<Dim; i2++) */
-	      /* 	{ */
-	      /* 	  // Index of the bulk Lagrange multiplier which enforces momentum PDEs  */
-	      /* 	  unsigned lambda_momentum_index = */
-	      /* 	    bulk_el_pt->index_of_lagrange_multiplier(l2, i2); */
+		// loop over the problem dimensions again
+		for(unsigned i2=0; i2<Dim; i2++)
+		{
+		  // Index of the bulk Lagrange multiplier which enforces momentum PDEs 
+		  unsigned lambda_momentum_index =
+		    bulk_el_pt->index_of_lagrange_multiplier(l2, i2);
 
-	      /* 	  // if it is then it's a bulk node which isn't shared with this */
-	      /* 	  // face element, so get it's eternal data index from the map */
-	      /* 	  unsigned ext_index = External_data_index_bulk_aug_node_map[l2]; */
+		  // if it is then it's a bulk node which isn't shared with this
+		  // face element, so get it's eternal data index from the map
+		  unsigned ext_index = External_data_index_bulk_aug_node_map[l2];
 
-	      /* 	  int local_unknown_lagr_mom = */
-	      /* 	    this->external_local_eqn(ext_index, lambda_momentum_index); */
+		  int local_unknown_lagr_mom =
+		    this->external_local_eqn(ext_index, lambda_momentum_index);
 		  		  
-	      /* 	  // check the momentum LM isn't pinned */
-	      /* 	  if(local_unknown_lagr_mom >= 0) */
-	      /* 	  { */
-	      /* 	    jacobian(local_eqn_augmented, local_unknown_lagr_mom) += */
-	      /* 	      psi_bulk[l2] * unit_normal[i] * dpsidx(l_in_bulk, i2) * W; */
+		  // check the momentum LM isn't pinned
+		  if(local_unknown_lagr_mom >= 0)
+		  {
+		    jacobian(local_eqn_augmented, local_unknown_lagr_mom) +=
+		      psi_bulk[l2] * unit_normal[i] * dpsidx(l_in_bulk, i2) * W;
 
-	      /* 	    // add additional contribution with delta function */
-	      /* 	    if(i2 == i) */
-	      /* 	    { */
-	      /* 	      for(unsigned k=0; k<Dim; k++) */
-	      /* 	      { */
-	      /* 		jacobian(local_eqn_augmented, local_unknown_lagr_mom) += */
-	      /* 		  psi_bulk[l2] * unit_normal[k] * dpsidx(l_in_bulk, k) * W; */
-	      /* 	      } */
-	      /* 	    } */
-	      /* 	  } */
-	      /* 	} */
-	      /* } */      
-
+		    // add additional contribution with delta function
+		    if(i2 == i)
+		    {
+		      for(unsigned k=0; k<Dim; k++)
+		      {
+			jacobian(local_eqn_augmented, local_unknown_lagr_mom) +=
+			  psi_bulk[l2] * unit_normal[k] * dpsidx(l_in_bulk, k) * W;
+		      }
+		    }
+		  }
+		}
+	      }   
+#endif
+#endif
 	    } // end Jacobian flag check
           } // end of augmented velocity equations
 
@@ -4972,36 +4071,17 @@ namespace oomph
 	  int local_eqn_non_aug =
 	    this->external_local_eqn(External_data_index_for_non_aug_node[l], i);
 
-	  // QUEHACERES debug
-	  bool nonaug_node_is_pinned = nonaug_node_pt->is_pinned(i);
-
-	  Vector<double> nonaug_x(3, 0.0);
-	  nonaug_x[0] = nonaug_node_pt->x(0);
-	  nonaug_x[1] = nonaug_node_pt->x(1);
-	  nonaug_x[2] = nonaug_node_pt->x(2);
-
+#ifdef PARANOID	  
 	  if(l_in_non_aug_bulk < 0)
 	  {
 	    oomph_info << "couldn't find the node number of this node in the non-aug"
 		       << " bulk element\n" << std::endl;
 	    abort();
 	  }
-	  
-	  if (local_eqn_non_aug >= 0)
-	  {
-	    /* // QUEHACERES symm version */
-	    /* for(unsigned j=0; j<Dim; j++) */
-	    /* { */
-	    /*   // boundary contribution from momentum-enforcing LMs */
-	    /*   // QUEHACERES write-up Eqn. 1.4 term 1 */
-	    /*   residuals[local_eqn_non_aug] += */
-	    /* 	(lambda_momentum[i] * unit_normal[j] + */
-	    /* 	 lambda_momentum[j] * unit_normal[i]) * dpsidx_non_aug(l_in_non_aug_bulk, j)*W; */
-	    /* } */
 
-	    /* /\* // QUEHACERES experimental *\/ */
-	    /* residuals[local_eqn_non_aug] -= (traction_fe[i]) * psi[l] * W; */
-	    
+#endif
+	  if (local_eqn_non_aug >= 0)
+	  { 
 	    // QUEHACERES write-up Eq. 1.4 term 2
 	    residuals[local_eqn_non_aug] -= lambda_cont[i] * psi[l] * W;
 
@@ -5018,37 +4098,25 @@ namespace oomph
 		  dynamic_cast<BoundaryNodeBase*>(node2_pt)->
 		  index_of_first_value_assigned_by_face_element_pt() );
 
-		// This is a subtle one - although this is a stress-jump face element
-		// and so is primarily responsible for the continuity-enforcing LM,
-		// lambda-hat, this LM field is continuous with the Dirichlet-enforcing
-		// LM field, lambda-tilde, at the intersection of the plate, and so
-		// some of the nodes in this element may have a set of of lambda-tildes
-		// too. If so, then these also make a contribution to the Jacobian
-		// entries for the non-augmented velocity field - so we need to loop over
-		// the map of additional values assigned by this node.
-
-		// QUEHACERES sort this shit out
-		for( std::map<unsigned, unsigned>::iterator lm_index_iter = first_index2.begin();
-		     lm_index_iter != first_index2.end(); lm_index_iter++)
-		{		
-		  // get the nodal index of the Lagrange multiplier for this
-		  // coordinate direction and boundary ID
-		  /* unsigned lambda_cont_index = first_index2.at(this->Boundary_id) + i; */
-		  unsigned lambda_cont_index = first_index2[lm_index_iter->first] + i;
+		// get the nodal index of the Lagrange multiplier for this
+		// coordinate direction and boundary ID
+		unsigned lambda_cont_index = first_index2.at(this->Boundary_id) + i;
 		  
-		  int local_unknown_lambda_cont = this->nodal_local_eqn(l2, lambda_cont_index);
-		  if (local_unknown_lambda_cont >= 0)
-		  {
-		    // QUEHACERES write-up transpose of Eqn 1.18
-		    jacobian(local_eqn_non_aug, local_unknown_lambda_cont) -=
-		      psi[l2] * psi[l]*W;
-		  }
+		int local_unknown_lambda_cont = this->nodal_local_eqn(l2, lambda_cont_index);
+		if (local_unknown_lambda_cont >= 0) 
+		{
+		  // QUEHACERES write-up transpose of Eqn 1.18
+		  jacobian(local_eqn_non_aug, local_unknown_lambda_cont) -=
+		    psi[l2] * psi[l]*W;
 		}
+
 	      }
 
 	    } // end Jacobian check
 	  } // end check for non-aug velocity pinned
 
+#ifndef ALL_ELEMENTS_ARE_PDE_CONSTRAINED
+#ifdef USE_SYMMETRIC_JACOBIAN
 	  // now add the contributions that the momentum-enforcing LMs make to
 	  // *all* of the bulk non-augmented nodal velocities
 	  if (flag == 1)	    
@@ -5060,7 +4128,7 @@ namespace oomph
 	      unsigned ext_index = External_data_index_all_non_aug_nodes[l2];
 
 	      int ext_eqn_non_aug_u =
-		this->external_local_eqn(ext_index, i);
+		this->external_local_eqn(ext_index, i); 
 
 	      // check the non-augmented nodal velocity isn't pinned
 	      if(ext_eqn_non_aug_u >= 0)
@@ -5092,13 +4160,15 @@ namespace oomph
 		}
 	      }
 	    }	   // end loop over all non-aug nodes
-	  }
-	  
-	  // QUEHACERES these lagrange multipliers also contribute to r_c, write-up Eq. 4.31
-	    	
+	  } // end Jacobian check
+#endif
+#endif
 	} // end loop over dimensions
       } // end loop over test functions
 
+#ifndef ALL_ELEMENTS_ARE_PDE_CONSTRAINED
+      
+#ifdef USE_SYMMETRIC_JACOBIAN   
       // loop over the non-augmented bulk nodes
       for(unsigned l=0; l<non_augmented_bulk_elem_pt->nnode(); l++)
       {
@@ -5122,7 +4192,8 @@ namespace oomph
 	  }
 	}
       }
-      // Boundary contributions of momentum LMs to the augmented pressure residual
+#endif
+      // Boundary contributions of momentum LMs to the (non)augmented pressure residual
       // --------------------------------------------------------------------
 
       // loop over the pressure shape functions
@@ -5138,33 +4209,33 @@ namespace oomph
       {
 	// get the bulk node number corresponding to this face element vertex node
 	unsigned k_in_bulk = this->bulk_node_number(k);
-
+	
+#ifdef USE_SYMMETRIC_JACOBIAN
+	
 	// get the local equation number for the non-augmented pressure at this vertex node	
 	int local_eqn_p_non_aug =
 	  this->external_local_eqn(External_data_index_for_non_aug_node[k],
 	  			   bulk_el_pt->p_index_nst());
 
-	/* // QUEHACERES version 3, no pressure contribution! */
-	// QUEHACERES version 2, going back to this being an augmented pressure contribution
-	/* int local_eqn_p_aug =  this->nodal_local_eqn(k, this->P_index_nst); */
-
 	if(local_eqn_p_non_aug >= 0)
-	// QUEHACERES version 2
-	/* if(local_eqn_p_aug >= 0) */
+#else
+	// asymm version - contribution is to the augmented pressure
+	int local_eqn_p_aug =  this->nodal_local_eqn(k, this->P_index_nst);
+
+	if(local_eqn_p_aug >= 0)
+#endif	
 	{
-	  /* // QUEHACERES debug */
-	  /* int global_eqn = this->eqn_number(local_eqn_p_aug); */
-	
 	  for(unsigned j=0; j<Dim; j++)
 	  {
-#ifndef ALL_ELEMENTS_ARE_PDE_CONSTRAINED
-	  
-	    /* // QUEHACERES write-up Eq. 1.6 */
-	    residuals[local_eqn_p_non_aug] -=
+#ifdef USE_SYMMETRIC_JACOBIAN
 
-	    /* residuals[local_eqn_p_aug] -= */
+	    residuals[local_eqn_p_non_aug] -=
 	      lambda_momentum[j] * unit_normal[j] * psip[k_in_bulk] * W;
-#endif	  
+#else
+	      residuals[local_eqn_p_aug] -=
+		lambda_momentum[j] * unit_normal[j] * psip[k_in_bulk] * W;
+#endif
+
 	    // Derivatives of pressure residual w.r.t. momentum-enforcing LM
 	    if(flag == 1)
 	    {
@@ -5185,449 +4256,26 @@ namespace oomph
 		  int global_eqn_lagr_mom = this->eqn_number(local_eqn_lagr_mom);
 		
 		  // add dr^p/dLambda
-		  /* jacobian(local_eqn_p_aug, local_eqn_lagr_mom) -= */
+#ifdef USE_SYMMETRIC_JACOBIAN
 		  jacobian(local_eqn_p_non_aug, local_eqn_lagr_mom) -=
 		    psi[l2] * unit_normal[j] * psip[k_in_bulk] * W;
+#else
+		  jacobian(local_eqn_p_aug, local_eqn_lagr_mom) -=
+		    psi[l2] * unit_normal[j] * psip[k_in_bulk] * W;
+#endif		  
 		}	      
 	      } // end loop over face nodes
 	    } // end Jacobian check
 
 	  } // end loop over dimensions
-	  
-	  // delete once this is all working
-	  /* oomph_info << "Never get here" << std::endl; */
-	  /* abort(); */
-	  
 	}
       } // end loop over pressure nodes
+      
+#endif // ALL_ELEMENTS_ARE_PDE_CONSTRAINED
+      
     } // end loop over integration points
     
   } // end of fill_in_generic_residual_contribution_nst_sing_jump
-
-  /* // @@@@@@@@@@@@@@@@@@@@@@@@@@@@ */
-  /* // QUEHACERES back up \/ */
-  /* //=========================================================================== */
-  /* /// Compute the element's residual vector and the Jacobian matrix. */
-  /* //=========================================================================== */
-  /* template <class ELEMENT> */
-  /*   void NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>:: */
-  /*   fill_in_generic_residual_contribution_nst_sing_jump_before_minimisation( */
-  /*     Vector<double>& residuals, DenseMatrix<double>& jacobian,  */
-  /*     const unsigned& flag) */
-  /* {      */
-  /*   //Find out how many nodes there are */
-  /*   const unsigned n_node = this->nnode(); */
-
-  /*   // shorthand */
-  /*   const unsigned Dim = this->Dim; */
-    
-  /*   //Set up memory for the shape and test functions */
-  /*   Shape psi(n_node), test(n_node); */
-     
-  /*   //Set the value of Nintpt */
-  /*   const unsigned n_intpt = this->integral_pt()->nweight(); */
-     
-  /*   //Set the Vector to hold local coordinates */
-  /*   Vector<double> s(Dim-1); */
-
-  /*   // shorthand */
-  /*   ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(this->bulk_element_pt()); */
-    
-  /*   //Loop over the integration points */
-  /*   for(unsigned ipt=0; ipt<n_intpt; ipt++) */
-  /*   {        */
-  /*     //Assign values of s */
-  /*     for(unsigned i=0; i<(Dim-1); i++) */
-  /*     { */
-  /* 	s[i] = this->integral_pt()->knot(ipt,i); */
-  /*     } */
-       
-  /*     //Get the integral weight */
-  /*     double w = this->integral_pt()->weight(ipt); */
-       
-  /*     //Find the shape and test functions and return the Jacobian */
-  /*     //of the mapping */
-  /*     double J = this->shape_and_test(s, psi, test); */
-       
-  /*     //Premultiply the weights and the Jacobian */
-  /*     double W = w*J; */
-
-  /*     // the velocity fields in the augmented and non-augmented (bulk) */
-  /*     // regions, and the Lagrange multipliers which enforce continuity */
-  /*     // of the solution across the boundary of the augmented region */
-  /*     Vector<double> u_augmented(Dim, 0.0); */
-  /*     Vector<double> u_bulk(Dim, 0.0); */
-  /*     Vector<double> lambda(Dim, 0.0); */
-
-  /*     // loop over the nodes and compute the above at this integration point */
-  /*     for(unsigned l=0; l<n_node; l++)  */
-  /*     { */
-  /* 	// grab a pointer to the current node */
-  /* 	Node* node_pt = this->node_pt(l); */
-
-  /* 	// get the map which gives the starting nodal index for */
-  /* 	// the Lagrange multipliers associated with each boundary ID */
-  /* 	std::map<unsigned, unsigned> first_index = *( */
-  /* 	  dynamic_cast<BoundaryNodeBase*>(node_pt)-> */
-  /* 	  index_of_first_value_assigned_by_face_element_pt() ); */
-
-  /* 	if(first_index.find(this->Boundary_id) == first_index.end()) */
-  /* 	{ */
-  /* 	  ostringstream error_message; */
-	  
-  /* 	  error_message << "Error: Lagrange multiplier index not found for node " */
-  /* 			<< l << "and boundary ID: " << this->Boundary_id << "\n"; */
-	  
-  /* 	  throw OomphLibError( error_message.str().c_str(), */
-  /* 			       OOMPH_CURRENT_FUNCTION, */
-  /* 			       OOMPH_EXCEPTION_LOCATION); */
-  /* 	} */
-	
-  /* 	for(unsigned i=0; i<Dim; i++) */
-  /* 	{ */
-  /* 	  // get the nodal index, accounting for the dimension offset */
-  /* 	  unsigned lambda_index = first_index[this->Boundary_id] + i; */
-
-  /* 	  // QUEHACERES */
-  /* 	  if(lambda_index < 3) */
-  /* 	  { */
-  /* 	    ostringstream error_message; */
-
-  /* 	    error_message << "wrong lambda index! Apparently index for " */
-  /* 			  << "Boundary_id: " << this->Boundary_id << " is: " */
-  /* 			  << first_index[this->Boundary_id] << "\n"; */
-	    
-  /* 	    throw OomphLibError(error_message.str().c_str(), */
-  /* 				OOMPH_CURRENT_FUNCTION, */
-  /* 				OOMPH_EXCEPTION_LOCATION); */
-  /* 	  } */
-	  
-  /* 	  u_augmented[i] += this->nodal_value(l,i) * psi[l]; */
-  /* 	  u_bulk[i]      += Orig_node_pt[l]->value(i) * psi[l]; */
-  /* 	  lambda[i]      += this->nodal_value(l, lambda_index) * psi[l]; */
-  /* 	} */
-  /*     } */
-
-  /*     // cast the GeomObject to a singular line element       */
-  /*     SingularLineElement* sing_el_pt; */
-
-  /*     EdgeCoordinates edge_coords_at_knot; */
-  /*     Vector<double> s_singular_el(1, 0.0); */
-
-  /*     // get the edge coordinates at this knot, the corresponding singular */
-  /*     // line element and it's local coordinates */
-  /*     this->edge_coords_and_singular_element_at_knot(ipt, */
-  /* 						     edge_coords_at_knot, */
-  /* 						     sing_el_pt, */
-  /* 						     s_singular_el); */
-      
-  /*     // check we've actually got one, or we're in trouble */
-  /*     if(sing_el_pt == 0x0) */
-  /*     { */
-  /* 	ostringstream error_message; */
-
-  /* 	error_message << "Error: this stress jump element has no " */
-  /* 		      << "singular line element pointer, so it " */
-  /* 		      << "cannot compute the correct jump in stress\n"; */
-	    
-  /* 	throw OomphLibError(error_message.str().c_str(), */
-  /* 			    OOMPH_CURRENT_FUNCTION, */
-  /* 			    OOMPH_EXCEPTION_LOCATION); */
-  /*     } */
-      
-  /*     // get the list of singular function IDs */
-  /*     Vector<unsigned> sing_ids = sing_el_pt->singular_fct_ids(); */
-
-  /*     // QUEHACERES delete */
-  /*     /\* // local coordinate in the singular element for the zeta of this knot *\/ */
-  /*     /\* Vector<double> s_singular_el = line_elem_and_local_coord.second; *\/ */
-      
-  /*     /\* // get the \rho,\zeta,\phi coordinates at this knot *\/ */
-  /*     /\* EdgeCoordinates edge_coords_at_knot = this->edge_coordinate_at_knot(ipt); *\/ */
-
-  /*     // unscaled stuff. These are stored in an array so that they can be */
-  /*     // looped over when implementing analytic jacobian */
-  /*     Vector<Vector<double> > u_sing_unscaled(sing_el_pt->nsingular_fct()); */
-  /*     Vector<DenseMatrix<double> > dudx_sing_unscaled(sing_el_pt->nsingular_fct()); */
-
-  /*     // unscaled singular pressures */
-  /*     Vector<double> p_sing_unscaled(sing_el_pt->nsingular_fct()); */
-      
-  /*     // the sum of all scaled singular functions */
-  /*     Vector<double> u_sing_total = */
-  /* 	sing_el_pt->total_singular_contribution(edge_coords_at_knot, */
-  /*                                       	s_singular_el); */
-
-  /*     // the total contribution of the singular velocity gradients */
-  /*     DenseMatrix<double> dudx_sing_total = sing_el_pt-> */
-  /* 	total_singular_gradient_contribution(edge_coords_at_knot, */
-  /* 					     s_singular_el); */
-      
-  /*     // total singular pressure */
-  /*     double p_sing_total = u_sing_total[this->P_index_nst]; */
-      
-  /*     // loop over all the singular functions this element knows about and */
-  /*     // compute the sum of their contributions to the total solution       */
-  /*     for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++) */
-  /*     { */
-  /* 	// get the ID */
-  /* 	unsigned sing_fct_id = sing_ids[ising]; */
-	
-  /* 	// unscaled stuff */
-  /* 	// ---------------- */
-  /* 	// unscaled singular function  */
-  /* 	u_sing_unscaled[ising] =	     */
-  /* 	  sing_el_pt->unscaled_singular_fct(edge_coords_at_knot, sing_fct_id);	   */
-	 
-  /* 	// unscaled singular gradient  */
-  /* 	dudx_sing_unscaled[ising] = */
-  /* 	  sing_el_pt->gradient_of_unscaled_singular_fct(edge_coords_at_knot, sing_fct_id); */
-	 
-  /* 	// unscaled singular pressure  */
-  /* 	p_sing_unscaled[ising] = u_sing_unscaled[ising][this->P_index_nst]; */
-	
-  /*     }       */
-
-  /*     // Compute outer unit normal at the specified local coordinate */
-  /*     // to compute scaled and unscaled flux of singular solution */
-  /*     Vector<double> unit_normal(Dim, 0.0); */
-  /*     this->outer_unit_normal(s, unit_normal); */
-
-  /*     // total singular contribution to the strain-rate */
-  /*     DenseMatrix<double> strain_rate_sing_total(Dim, Dim, 0.0); */
-
-  /*     // array of strain rate tensors associated with each singular function */
-  /*     Vector<DenseMatrix<double> > strain_rate_sing_unscaled */
-  /* 	(sing_el_pt->nsingular_fct(), DenseMatrix<double>(Dim, Dim, 0.0)); */
-
-  /*     // compute the strain-rate from the velocity gradients, */
-  /*     // \epsion_{ij} = 1/2 (du_i/dx_j + du_j/dx_i) */
-  /*     for (unsigned i=0; i<Dim; i++) */
-  /*     { */
-  /* 	for(unsigned j=0; j<Dim; j++) */
-  /* 	{ */
-  /* 	  strain_rate_sing_total(i,j) = 0.5*(dudx_sing_total(i,j) + dudx_sing_total(j,i)); */
-
-  /* 	  // and compute the individual contributions of each singular function */
-  /* 	  for(unsigned ising=0; ising<sing_el_pt->nsingular_fct(); ising++) */
-  /* 	  { */
-  /* 	    strain_rate_sing_unscaled[ising](i,j) += */
-  /* 	      0.5*(dudx_sing_unscaled[ising](i,j) + dudx_sing_unscaled[ising](j,i)); */
-  /* 	  } */
-  /* 	} */
-  /*     } */
-	
-  /*     // get contribution of total singular pressure and */
-  /*     // total singular strain-rate to total stress tensor */
-  /*     DenseMatrix<double> stress_sing_total(Dim, Dim); */
-
-  /*     if(bulk_el_pt->stress_fct_pt() == 0) */
-  /*     { */
-  /* 	throw OomphLibError( */
-  /* 	  "Error: the stress function pointer has not been set for the augmented elements\n", */
-  /* 	  OOMPH_CURRENT_FUNCTION, */
-  /* 	  OOMPH_EXCEPTION_LOCATION); */
-  /*     } */
-      
-  /*     stress_sing_total = (*bulk_el_pt->stress_fct_pt())(strain_rate_sing_total, p_sing_total); */
-
-  /*     // get stress associated with each singular function */
-  /*     Vector<DenseMatrix<double> > stress_sing_unscaled(sing_el_pt->nsingular_fct()); */
-      
-  /*     for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++) */
-  /*     { */
-  /* 	stress_sing_unscaled[ising] = */
-  /* 	  (*bulk_el_pt->stress_fct_pt())(strain_rate_sing_unscaled[ising], */
-  /* 					 p_sing_unscaled[ising]); */
-  /*     } */
-      
-  /*     // Now add to the appropriate equations */
-  /*     // ----------------------------------------------- */
-      
-  /*     //Loop over the test functions */
-  /*     for(unsigned l=0; l<n_node; l++) */
-  /*     { */
-  /* 	Node* node_pt = this->node_pt(l); */
-
-  /* 	// get the map which gives the starting nodal index for */
-  /* 	// the Lagrange multipliers associated with each boundary ID */
-  /* 	std::map<unsigned, unsigned> first_index = *( */
-  /* 	  dynamic_cast<BoundaryNodeBase*>(node_pt)-> */
-  /* 	  index_of_first_value_assigned_by_face_element_pt() ); */
-	
-  /* 	for(unsigned d=0; d<Dim; d++) */
-  /* 	{ */
-  /* 	  // Lagrange multiplier equations: Determined from continuity of */
-  /* 	  // solution with (scaled!) singular solution in the augmented region. */
-
-  /* 	  // get the nodal index of the Lagrange multiplier for this */
-  /* 	  // coordinate direction and boundary ID */
-  /* 	  unsigned lambda_index = first_index[this->Boundary_id] + d; */
-
-  /* 	  // QUEHACERES */
-  /* 	  if(lambda_index < 3) */
-  /* 	  { */
-  /* 	    ostringstream error_message; */
-
-  /* 	    error_message << "wrong lambda index! Apparently index for " */
-  /* 			  << "Boundary_id: " << this->Boundary_id << " is: " */
-  /* 			  << first_index[this->Boundary_id] << "\n"; */
-	    
-  /* 	    throw OomphLibError(error_message.str().c_str(), */
-  /* 				OOMPH_CURRENT_FUNCTION, */
-  /* 				OOMPH_EXCEPTION_LOCATION); */
-  /* 	  } */
-	  
-  /* 	  int local_eqn_lagr = this->nodal_local_eqn(l, lambda_index); */
-	  
-  /* 	  if (local_eqn_lagr >= 0) */
-  /* 	  { */
-  /* 	    residuals[local_eqn_lagr] += ((u_augmented[d] + u_sing_total[d]) - u_bulk[d]) * test[l]*W; */
-
-  /* 	    // compute Jacobian */
-  /* 	    if (flag == 1) */
-  /* 	    { */
-  /* 	      for(unsigned l2=0; l2<n_node; l2++) */
-  /* 	      { */
-               
-  /* 		int local_unknown_augmented = this->nodal_local_eqn(l2, d); */
-  /* 		if (local_unknown_augmented >= 0) */
-  /* 		{ */
-  /* 		  jacobian(local_eqn_lagr,local_unknown_augmented) += psi[l2]*test[l]*W; */
-  /* 		} */
-
-  /* 		int local_unknown_bulk = this->external_local_eqn( */
-  /* 		  External_data_index_for_non_aug_node[l2], d); */
-		
-  /* 		if (local_unknown_bulk >= 0) */
-  /* 		{ */
-  /* 		  jacobian(local_eqn_lagr, local_unknown_bulk) -= */
-  /* 		    psi[l2]*test[l]*W; */
-  /* 		} */
-  /* 	      } */
-
-  /* 	      // QUEHACERES come back to this when we have a c equation */
-  /* 	      /\* for(unsigned ising=0; ising < sing_el_pt->nsingular_fct(); ising++) *\/ */
-  /* 	      /\* { *\/ */
-  /* 	      /\* 	// Deriv w.r.t. amplitude is simply the unscaled fct *\/ */
-  /* 	      /\* 	int local_eqn_c = this->external_local_eqn(C_external_data_index[ising], *\/ */
-  /* 	      /\* 						   C_external_data_value_index[ising]); *\/ */
-  /* 	      /\* 	if (local_eqn_c >= 0) *\/ */
-  /* 	      /\* 	{ *\/ */
-  /* 	      /\* 	  jacobian(local_eqn_lagr, local_eqn_c) += *\/ */
-  /* 	      /\* 	    u_sing_unscaled[ising][d] * test[l]*W; *\/ */
-  /* 	      /\* 	} *\/ */
-  /* 	      /\* } *\/ */
-  /* 	    } // end Jacobian flag check */
-  /* 	  } */
-
-  /* 	  // Contribution of Lagrange multiplier and traction to bulk eqn in the aug region */
-  /* 	  int local_eqn_augmented = this->nodal_local_eqn(l, d); */
-  /* 	  if (local_eqn_augmented >= 0) */
-  /* 	  {	     */
-  /* 	    residuals[local_eqn_augmented] += lambda[d] * test[l]*W; */
-
-  /* 	    for(unsigned j=0; j<Dim; j++) */
-  /* 	    { */
-  /* 	      residuals[local_eqn_augmented] -= stress_sing_total(d,j)*unit_normal[j] * test[l]*W;  */
-  /* 	    } */
-
-  /* 	    // compute Jacobian */
-  /* 	    if (flag == 1) */
-  /* 	    { */
-  /* 	      for(unsigned l2=0; l2<n_node; l2++) */
-  /* 	      { */
-  /* 		Node* node2_pt = this->node_pt(l2); */
-
-  /* 		// get the map which gives the starting nodal index for */
-  /* 		// the Lagrange multipliers associated with each boundary ID */
-  /* 		std::map<unsigned, unsigned> first_index2 = *( */
-  /* 		  dynamic_cast<BoundaryNodeBase*>(node2_pt)-> */
-  /* 		  index_of_first_value_assigned_by_face_element_pt() ); */
-
-  /* 		// get the nodal index of the Lagrange multiplier for this */
-  /* 		// coordinate direction and boundary ID */
-  /* 		unsigned lambda_index = first_index2[this->Boundary_id] + d; */
-		
-  /* 		int local_unknown_lambda = this->nodal_local_eqn(l2, lambda_index); */
-  /* 		if (local_unknown_lambda >= 0) */
-  /* 		{ */
-  /* 		  jacobian(local_eqn_augmented,local_unknown_lambda) += */
-  /* 		    psi[l2]*test[l]*W; */
-  /* 		} */
-  /* 	      } */
-
-  /* 	      // QUEHACERES come back to this when we have a c equation */
-  /* 	      /\* for(unsigned ising=0; ising<sing_el_pt->nsingular_fct(); ising++) *\/ */
-  /* 	      /\* { *\/ */
-  /* 	      /\* 	int local_eqn_c = this->external_local_eqn(C_external_data_index[ising], *\/ */
-  /* 	      /\* 						   C_external_data_value_index[ising]); *\/ */
-  /* 	      /\* 	if (local_eqn_c >= 0) *\/ */
-  /* 	      /\* 	{ *\/ */
-  /* 	      /\* 	  // Deriv w.r.t. amplitude is simply the unscaled singular traction *\/ */
-  /* 	      /\* 	  // \hat\tau_{ij} n_j *\/ */
-  /* 	      /\* 	  for(unsigned j=0; j< Dim; j++) *\/ */
-  /* 	      /\* 	  { *\/ */
-  /* 	      /\* 	    jacobian(local_eqn_augmented,local_eqn_c) -= *\/ */
-  /* 	      /\* 	      stress_sing_unscaled[ising](d,j) * unit_normal[j] *test[l]*W;       *\/ */
-  /* 	      /\* 	  } *\/ */
-
-  /* 	      /\* 	} *\/ */
-  /* 	      /\* } *\/ */
-  /* 	    } // end Jacobian flag check */
-         
-  /* 	    // Contribution of Lagrange multiplier to bulk eqn in non-augmented region */
-  /* 	    int local_eqn_bulk = */
-  /* 	      this->external_local_eqn(External_data_index_for_non_aug_node[l], d); */
-	  
-  /* 	    if (local_eqn_bulk >= 0) */
-  /* 	    {	       */
-  /* 	      residuals[local_eqn_bulk] -= lambda[d]*test[l]*W; */
-
-  /* 	      /\* // QUEHACERES experimentally adding *\/ */
-  /* 	      /\* for(unsigned j=0; j<Dim; j++) *\/ */
-  /* 	      /\* {		 *\/ */
-  /* 	      /\* 	residuals[local_eqn_bulk] -= stress_sing_total(d,j)*unit_normal[j] * test[l]*W; *\/ */
-  /* 	      /\* } *\/ */
-	      
-  /* 	      // compute Jacobian */
-  /* 	      if (flag==1) */
-  /* 	      { */
-  /* 		for(unsigned l2=0; l2<n_node; l2++) */
-  /* 		{ */
-  /* 		  Node* node2_pt = this->node_pt(l2); */
-
-  /* 		  // get the map which gives the starting nodal index for */
-  /* 		  // the Lagrange multipliers associated with each boundary ID */
-  /* 		  std::map<unsigned, unsigned> first_index2 = *( */
-  /* 		    dynamic_cast<BoundaryNodeBase*>(node2_pt)-> */
-  /* 		    index_of_first_value_assigned_by_face_element_pt() ); */
-		  
-  /* 		  // get the nodal index of the Lagrange multiplier for this */
-  /* 		  // coordinate direction and boundary ID */
-  /* 		  unsigned lambda_index = first_index2[this->Boundary_id] + d; */
-		  
-  /* 		  int local_unknown_lambda = this->nodal_local_eqn(l2, lambda_index); */
-  /* 		  if (local_unknown_lambda>=0) */
-  /* 		  { */
-  /* 		    jacobian(local_eqn_bulk, local_unknown_lambda) -= */
-  /* 		      psi[l2]*test[l]*W; */
-  /* 		  } */
-  /* 		} */
-  /* 	      } */
-  /* 	    } */
-
-  /* 	    // QUEHACERES these lagrange multipliers also contribute to r_c if we evaluate */
-  /* 	    // r_c around the augmented region */
-  /* 	  } // end loop over the dimensions */
-  /* 	} // end loop over test functions */
-  /*     } // end loop over dimensions */
-  /*   } // end loop over integration points */
-    
-  /* } */ // end of fill_in_generic_residual_contribution_nst_sing_jump (old)
-
-
-
 
   //====================================================================
   /// Class for TractionElements in a PDE-constrained optimisation
@@ -5801,6 +4449,13 @@ namespace oomph
     typedef ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>
       SingularLineElement;
 
+    // QUEHACERES why isn't this implemented in TElement?
+    unsigned nnode_on_face() const
+    {
+      // number for a triangular face with NNODE_1D = 3
+      return 6;
+    }
+      
     // add extra values at each node and record the index of the first one.
     // These are the Lagrange multipliers which weakly enforce the Stokes momentum eqs
     void add_lagrange_multiplier_dofs(std::map<Node*,unsigned>& node_to_first_lm_index_map)
@@ -5853,7 +4508,8 @@ namespace oomph
     /// Constructor                            
   TNavierStokesElementWithSingularity() :
     Exact_non_singular_fct_pt(0), Nplot(0),
-      Is_lower_disk_element(false), Is_augmented_element(false)
+      Is_lower_disk_element(false), Is_augmented_element(false),
+      Dfunctional_du_fct_pt(0x0), Stress_fct_pt(0x0)
     { }
 
     // get the nodal index of the first LM at node n
@@ -6326,7 +4982,8 @@ namespace oomph
 	{
 	  // if no exact solution function pointer has been provided,
 	  // just output zeros to keep oomph-convert happy
-	  outfile << "0 0 0 0 ";
+	  for(unsigned i=0; i<DIM+1; i++)
+	    outfile << "0 ";
 	}
 
 	// -----------------
@@ -6336,129 +4993,85 @@ namespace oomph
 	// when the number of columns isn't the same for all elements
 	for(unsigned ising=0; ising < Nsingular_fct; ising++)
 	{	
-	  outfile << "0 0 0 0 ";
-	}
-	
-	outfile << std::endl;
-	
-	return;
+	  for(unsigned i=0; i<DIM+1; i++)
+	    outfile << "0 ";
+	}		
       }
-
-      // get the \rho,\zeta,\phi coordinates at this plot point
-      EdgeCoordinates edge_coords_at_plot =
-	this->edge_coordinate_at_plot_point(iplot);
-
-      // get the total singular contribution at this point
-      Vector<double> u_sing_total = 
-	sing_el_pt->total_singular_contribution(edge_coords_at_plot,
-						s_singular_el);
-
-      // Get exact solution at this point
-      Vector<double> exact_soln(4, 0.0);
-      if(exact_soln_pt != 0x0)
+      else
       {
-	(*exact_soln_pt)(x, exact_soln);
-      }
+	// get the \rho,\zeta,\phi coordinates at this plot point
+	EdgeCoordinates edge_coords_at_plot =
+	  this->edge_coordinate_at_plot_point(iplot);
 
-      // now subtract off the singular contributions to get the regular part of
-      // the exact solution
-      for(unsigned i=0; i<DIM+1; i++)
-      {
-	outfile << exact_soln[i] - u_sing_total[i] << " ";
-      }
-      
-      // get a list of the singular function IDs this element has
-      Vector<unsigned> sing_ids = sing_el_pt->singular_fct_ids();
+	// get the total singular contribution at this point
+	Vector<double> u_sing_total = 
+	  sing_el_pt->total_singular_contribution(edge_coords_at_plot,
+						  s_singular_el);
 
-      // now loop over the singular functions and output each contribution
-      for(unsigned ising=0; ising < sing_ids.size(); ising++)
-      {
-	// get the ID
-	unsigned sing_fct_id = sing_ids[ising];
-	
-	// singular part of the solution
-	Vector<double> u_sing = sing_el_pt->singular_fct(edge_coords_at_plot,
-							 s_singular_el,
-							 sing_fct_id);
-
-	// QUEHACERES debug
-	bool is_finite = isfinite(u_sing[0]) && isfinite(u_sing[1])
-	  && isfinite(u_sing[2]) && isfinite(u_sing[3]);
-
-	if(!is_finite)
+	// Get exact solution at this point
+	Vector<double> exact_soln(4, 0.0);
+	if(exact_soln_pt != 0x0)
 	{
-	  oomph_info << "NOT FINITE!!" << std::endl;
-	  abort();
+	  (*exact_soln_pt)(x, exact_soln);
 	}
-	
+
+	// now subtract off the singular contributions to get the regular part of
+	// the exact solution
 	for(unsigned i=0; i<DIM+1; i++)
 	{
-	  outfile << u_sing[i] << " ";
+	  outfile << exact_soln[i] - u_sing_total[i] << " ";
+	}
+      
+	// get a list of the singular function IDs this element has
+	Vector<unsigned> sing_ids = sing_el_pt->singular_fct_ids();
+
+	// now loop over the singular functions and output each contribution
+	for(unsigned ising=0; ising < sing_ids.size(); ising++)
+	{
+	  // get the ID
+	  unsigned sing_fct_id = sing_ids[ising];
+	
+	  // singular part of the solution
+	  Vector<double> u_sing = sing_el_pt->singular_fct(edge_coords_at_plot,
+							   s_singular_el,
+							   sing_fct_id);
+
+	  // QUEHACERES debug
+	  bool is_finite = isfinite(u_sing[0]) && isfinite(u_sing[1])
+	    && isfinite(u_sing[2]) && isfinite(u_sing[3]);
+
+	  if(!is_finite)
+	  {
+	    oomph_info << "NOT FINITE!!" << std::endl;
+	    abort();
+	  }
+	
+	  for(unsigned i=0; i<DIM+1; i++)
+	  {
+	    outfile << u_sing[i] << " ";
+	  }
 	}
       }
-      // QUEHACERES leave stress out for the time being
-      // FE stress and strain-rate tensors
-      /* DenseMatrix<double> stress_fe(DIM, DIM); */
-      /* DenseMatrix<double> strain_rate_fe(DIM, DIM); */
 
-      /* // singular stress and strain-rate tensors */
-      /* DenseMatrix<double> stress_sing(DIM, DIM); */
-      /* DenseMatrix<double> stress_total(DIM, DIM); */
-	
-      /* DenseMatrix<double> strain_rate_sing(DIM, DIM); */
-      /* DenseMatrix<double> strain_rate_total(DIM, DIM); */
-	
-      /* // get the strain rates */
-      /* this->strain_rate(s, strain_rate_fe); */
-	
-      /* // Get gradient of scaled singular velocity functions       */
-      /* DenseMatrix<double> dudx_sing(DIM, DIM); */
-      /* if(Navier_stokes_sing_el_pt != 0x0) */
-      /* { */
-      /* 	dudx_sing = Navier_stokes_sing_el_pt->gradient_of_singular_fct(x); */
-      /* } */
+#ifndef ALL_ELEMENTS_ARE_PDE_CONSTRAINED
+      if(!Is_augmented_element)
+      {
+	for(unsigned i=0; i<DIM+1; i++)
+	  outfile << "0 ";
+      }
+      else
+#endif      
+      {
+	Vector<double> lambda = interpolated_lambda(s);
+	double lambda_p = interpolated_lambda_p(s);
+
+	for(Vector<double>::iterator lambda_it = lambda.begin();
+	    lambda_it != lambda.end(); lambda_it++)
+	  outfile << *lambda_it << " ";
+
+	outfile << lambda_p << " ";
+      }
       
-      /* // compute the unscaled singular contribution to the strain-rate       */
-      /* for (unsigned i=0; i<DIM; i++) */
-      /* { */
-      /* 	for(unsigned j=0; j<DIM; j++) */
-      /* 	{ */
-      /* 	  strain_rate_sing(i,j)  = 0.5*(dudx_sing(i,j) + dudx_sing(j,i)); */
-      /* 	  strain_rate_total(i,j) = strain_rate_fe(i,j) + strain_rate_sing(i,j); */
-      /* 	} */
-      /* } */
-		
-      /* // extract pressure from solution */
-      /* double p_sing  = u_sing[DIM]; */
-      /* double p_fe    = u_fe[DIM];	 */
-      /* double p_total = u_fe_plus_sing[DIM]; */
-	
-      /* // compute stress from constitutive equation */
-      /* stress_sing  = (this->stress_fct_pt())(strain_rate_sing, p_sing); */
-      /* stress_fe    = (this->stress_fct_pt())(strain_rate_fe, p_fe); */
-      /* stress_total = (this->stress_fct_pt())(strain_rate_total, p_total); */
-      
-      /* for(unsigned i=0; i<DIM; i++) */
-      /* { */
-      /* 	for(unsigned j=0; j<DIM; j++) */
-      /* 	{ */
-      /* 	  outfile << stress_total(i,j) << " "; */
-      /* 	}  */
-      /* } */
-      /* for(unsigned i=0; i<DIM; i++) */
-      /* { */
-      /* 	for(unsigned j=0; j<DIM; j++) */
-      /* 	{ */
-      /* 	  outfile << stress_fe(i,j) << " "; */
-      /* 	}  */
-      /* } */
-      /* for(unsigned i=0; i<DIM; i++) */
-      /* { */
-      /* 	for(unsigned j=0; j<DIM; j++) */
-      /* 	{ */
-      /* 	  outfile << stress_sing(i,j) << " "; */
-      /* 	}  */
-      /* } */
       outfile << std::endl;
     }
     
@@ -6877,7 +5490,7 @@ namespace oomph
       return lambda_interp;
     }
 
-    Vector<double> interpolated_lambda_p(const Vector<double>& s) const
+    double interpolated_lambda_p(const Vector<double>& s) const
     {
       const unsigned npressure_basis_fn = this->npres_nst();
 	
@@ -6885,7 +5498,7 @@ namespace oomph
       Shape psip(npressure_basis_fn);
       
       // get 'em
-      this->pshape(s, psip);
+      this->pshape_nst(s, psip);
 
       double lambda_p_interp = 0.0;
        
@@ -6947,9 +5560,11 @@ namespace oomph
     /// Jacobian matrix
     inline void fill_in_contribution_to_jacobian(Vector<double>& residuals,
     						 DenseMatrix<double>& jacobian)
-    {      
+    {
+#ifndef ALL_ELEMENTS_ARE_PDE_CONSTRAINED
       if(Is_augmented_element)
       {
+#endif
 #ifdef USE_FD_JACOBIAN
 
 	FiniteElement::fill_in_contribution_to_jacobian(residuals, jacobian);
@@ -6959,6 +5574,7 @@ namespace oomph
     								  jacobian,
     								  1);
 #endif
+#ifndef ALL_ELEMENTS_ARE_PDE_CONSTRAINED
       }
       else
       {
@@ -6967,6 +5583,7 @@ namespace oomph
       							GeneralisedElement::Dummy_matrix,
       							true);
       }
+#endif
     }
 
     // pin the ith LM which enforces momentum at the nth node of this element
@@ -7120,10 +5737,6 @@ namespace oomph
 	double J = 
 	  this->dshape_and_dtest_eulerian_at_knot_nst(ipt, psif, dpsifdx, testf, dtestfdx);
 
-	// QUEHACERES delete; the derivative one gets all of them
-	/* //Call the pressure shape and test functions */
-	/* this->pshape_nst(s, psip, testp); */
-
 	// Get the the pressure shape and test functions and their derivatives
 	this->dpshape_and_dptest_eulerian_nst(s, psip, dpsipdx, testp, dtestpdx);
 	  
@@ -7221,9 +5834,14 @@ namespace oomph
 	Vector<double> dfunctional_du(DIM, 0.0);
 
 	// QUEHACERES sort this out when we have a proper mesh for this
-	/* // have we actually got a function pointer for dPi/du? */
+	/* // have we actually got a function pointer for dPi/du? */	
 	if(Dfunctional_du_fct_pt != 0x0)
 	{
+	  if(!Is_augmented_element)
+	  {
+	    // QUEHACERES how does this happen...
+	    unsigned breakpoint = 1;
+	  }
 	  dfunctional_du = Dfunctional_du_fct_pt(interpolated_u);
 	}
 
@@ -7373,6 +5991,9 @@ namespace oomph
 	    // if this dof isn't pinned
 	    if(local_eqn >= 0)
 	    {
+	      // QUEHACERES debug
+	      int global_eqn = this->eqn_number(local_eqn);
+	    
 	      //Add the functional minimisation term
 	      // QUEHACERES write-up Eqn. 1.3 term 1
 	      residuals[local_eqn] += L2_VELOCITY_PENALTY * dfunctional_du[i] * psif[k] * W;
@@ -7395,14 +6016,17 @@ namespace oomph
 		//Loop over the velocity shape functions again
 		for(unsigned l2=0; l2<n_node; l2++)
 		{
-		  local_unknown = this->nodal_local_eqn(l2, i);
-
-		  if(local_unknown >= 0)
+		  if(Is_augmented_element)
 		  {
-		    jacobian(local_eqn, local_unknown) +=
-		      L2_VELOCITY_PENALTY * psif[l2] * psif[k] * W;
+		    local_unknown = this->nodal_local_eqn(l2, i);
+
+		    if(local_unknown >= 0)
+		    {
+		      jacobian(local_eqn, local_unknown) +=
+			L2_VELOCITY_PENALTY * psif[l2] * psif[k] * W;
+		    }
 		  }
-		    
+
 		  //Loop over the velocity components again
 		  for(unsigned i2=0; i2<DIM; i2++)
 		  {
@@ -7521,314 +6145,7 @@ namespace oomph
       } // end loop over integration points
 
     } // end fill_in_generic_residual_contribution_pde_constrained_min()
-    
-    // backup
-    void fill_in_generic_residual_contribution_nst_bulk_original_from_nst_eqs(Vector<double>& residuals,
-									      DenseMatrix<double>& jacobian,
-									      DenseMatrix<double>& mass_matrix,
-									      const bool& flag = false)
-    {
-      // Return immediately if there are no dofs
-      if (this->ndof()==0) return;
-
-      //Find out how many nodes there are
-      unsigned n_node = this->nnode();
- 
-      // Get continuous time from timestepper of first node
-      double time=this->node_pt(0)->time_stepper_pt()->time_pt()->time();
-  
-      //Find out how many pressure dofs there are
-      unsigned n_pres = this->npres_nst();
-
-      //Find the indices at which the local velocities are stored
-      unsigned u_nodal_index[DIM];
-      for(unsigned i=0;i<DIM;i++) {u_nodal_index[i] = this->u_index_nst(i);}
-
-      //Set up memory for the shape and test functions
-      Shape psif(n_node), testf(n_node);
-      DShape dpsifdx(n_node,DIM), dtestfdx(n_node,DIM);
-  
-      //Set up memory for pressure shape and test functions
-      Shape psip(n_pres), testp(n_pres);
-
-      //Number of integration points
-      unsigned n_intpt = this->integral_pt()->nweight();
-   
-      //Set the Vector to hold local coordinates
-      Vector<double> s(DIM);
-
-      //Get Physical Variables from Element
-      //Reynolds number must be multiplied by the density ratio
-      double scaled_re = this->re()*this->density_ratio();
-      double scaled_re_st = this->re_st()*this->density_ratio();
-      double scaled_re_inv_fr = this->re_invfr()*this->density_ratio();
-      double visc_ratio = this->viscosity_ratio();
-      Vector<double> G = this->g();
- 
-      //Integers to store the local equations and unknowns
-      int local_eqn=0, local_unknown=0;
-
-      //Loop over the integration points
-      for(unsigned ipt=0;ipt<n_intpt;ipt++)
-      {
-	//Assign values of s
-	for(unsigned i=0;i<DIM;i++) s[i] = this->integral_pt()->knot(ipt,i);
-	//Get the integral weight
-	double w = this->integral_pt()->weight(ipt);
-   
-	//Call the derivatives of the shape and test functions
-	double J = 
-	  this->dshape_and_dtest_eulerian_at_knot_nst(ipt,psif,dpsifdx,testf,dtestfdx);
-   
-	//Call the pressure shape and test functions
-	this->pshape_nst(s,psip,testp);
-   
-	//Premultiply the weights and the Jacobian
-	double W = w*J;
-   
-	// Calculate local values of the pressure and velocity components,
-	// Lagrange multipliers and the functional to minimise
-	// Allocate
-	double interpolated_p = 0.0;
-	Vector<double> interpolated_u(DIM, 0.0);
-	Vector<double> interpolated_x(DIM, 0.0);	
-	Vector<double> mesh_velocity(DIM, 0.0);
-	Vector<double> dudt(DIM, 0.0);
-	DenseMatrix<double> interpolated_dudx(DIM, DIM, 0.0);    
-   
-	// Calculate pressure
-	for(unsigned l=0; l<n_pres; l++)
-	{
-	  interpolated_p += this->p_nst(l)*psip[l];
-	}
-   
-	//Calculate velocities and derivatives:
-
-	// Loop over nodes
-	for(unsigned l=0;l<n_node;l++) 
-	{
-	  //Loop over directions
-	  for(unsigned i=0;i<DIM;i++)
-	  {
-	    //Get the nodal value
-	    double u_value = this->raw_nodal_value(l,u_nodal_index[i]);
-	    interpolated_u[i] += u_value*psif[l];
-	    interpolated_x[i] += this->raw_nodal_position(l,i)*psif[l];
-	    dudt[i] += this->du_dt_nst(l,i)*psif[l];
-       
-	    //Loop over derivative directions
-	    for(unsigned j=0;j<DIM;j++)
-	    {                               
-	      interpolated_dudx(i,j) += u_value*dpsifdx(l,j);
-	    }
-	  }
-	}
-
-	/* if (!ALE_is_disabled) */
-	/* { */
-	/*   // Loop over nodes */
-	/*   for(unsigned l=0;l<n_node;l++)  */
-	/*   { */
-	/*     //Loop over directions */
-	/*     for(unsigned i=0;i<DIM;i++) */
-	/*     { */
-	/*       mesh_velocity[i] += this->raw_dnodal_position_dt(l,i)*psif[l]; */
-	/*     } */
-	/*   } */
-	/* } */
-   
-	//Get the user-defined body force terms
-	Vector<double> body_force(DIM);
-	this->get_body_force_nst(time, ipt, s, interpolated_x, body_force);
-   
-	//Get the user-defined source function
-	double source = this->get_source_nst(time, ipt, interpolated_x);
-
-	// QUEHACERES 
-	Vector<double> Gamma(DIM, 1.0);
-	
-	//MOMENTUM EQUATIONS
-	//------------------
-   
-	//Loop over the test functions
-	for(unsigned l=0;l<n_node;l++)
-	{
-	  //Loop over the velocity components
-	  for(unsigned i=0;i<DIM;i++)
-	  {
-	    /*IF it's not a boundary condition*/
-	    local_eqn = this->nodal_local_eqn(l, u_nodal_index[i]);
-	    if(local_eqn >= 0)
-	    {
-	      //Add the user-defined body force terms
-	      residuals[local_eqn] += 
-		body_force[i]*testf[l]*W;
-
-	      //Add the gravitational body force term
-	      residuals[local_eqn] += scaled_re_inv_fr*testf[l]*G[i]*W;
-         
-	      //Add the pressure gradient term
-	      residuals[local_eqn]  += interpolated_p*dtestfdx(l,i)*W;
-         
-	      //Add in the stress tensor terms
-	      //The viscosity ratio needs to go in here to ensure
-	      //continuity of normal stress is satisfied even in flows
-	      //with zero pressure gradient!
-	      for(unsigned k=0;k<DIM;k++)
-	      {
-		residuals[local_eqn] -= visc_ratio*
-		  (interpolated_dudx(i,k) + Gamma[i]*interpolated_dudx(k,i))
-		  *dtestfdx(l,k)*W;
-	      }
-         
-	      //Add in the inertial terms
-	      //du/dt term
-	      residuals[local_eqn] -= scaled_re_st*dudt[i]*testf[l]*W;
-         
-         
-	      //Convective terms, including mesh velocity
-	      for(unsigned k=0;k<DIM;k++)
-	      {
-		double tmp=scaled_re*interpolated_u[k];
-		/* if (!ALE_is_disabled) tmp-=scaled_re_st*mesh_velocity[k]; QUEHACERES */
-		residuals[local_eqn] -= tmp*interpolated_dudx(i,k)*testf[l]*W;
-
-	      }
-
-	      //CALCULATE THE JACOBIAN
-	      if(flag)
-	      {
-		//Loop over the velocity shape functions again
-		for(unsigned l2=0;l2<n_node;l2++)
-		{ 
-		  //Loop over the velocity components again
-		  for(unsigned i2=0;i2<DIM;i2++)
-		  {
-		    //If at a non-zero degree of freedom add in the entry
-		    local_unknown = this->nodal_local_eqn(l2,u_nodal_index[i2]);
-		    if(local_unknown >= 0)
-		    {
-		      //Add contribution to Elemental Matrix
-		      jacobian(local_eqn,local_unknown) 
-			-= visc_ratio*Gamma[i]*dpsifdx(l2,i)*dtestfdx(l,i2)*W;
-                 
-		      //Extra component if i2 = i
-		      if(i2 == i)
-		      {      
-			/*Loop over velocity components*/
-			for(unsigned k=0;k<DIM;k++)
-			{ 
-			  jacobian(local_eqn,local_unknown)
-			    -= visc_ratio*dpsifdx(l2,k)*dtestfdx(l,k)*W;
-			}
-		      }
-                 
-		      //Now add in the inertial terms
-		      jacobian(local_eqn,local_unknown)
-			-= scaled_re*psif[l2]*interpolated_dudx(i,i2)*testf[l]*W;
-                 
-		      //Extra component if i2=i
-		      if(i2 == i)
-		      {
-			//Add the mass matrix term (only diagonal entries)
-			//Note that this is positive because the mass matrix
-			//is taken to the other side of the equation when
-			//formulating the generalised eigenproblem.
-			if(flag==2)
-			{
-			  mass_matrix(local_eqn,local_unknown) +=
-			    scaled_re_st*psif[l2]*testf[l]*W;
-			}
-                   
-			//du/dt term
-			jacobian(local_eqn,local_unknown)
-			  -= scaled_re_st*
-			  this->node_pt(l2)->time_stepper_pt()->weight(1,0)*
-			  psif[l2]*testf[l]*W;  
-                   
-			//Loop over the velocity components
-			for(unsigned k=0;k<DIM;k++)
-			{
-			  double tmp=scaled_re*interpolated_u[k];
-			  /* if (!ALE_is_disabled) tmp-=scaled_re_st*mesh_velocity[k]; */
-			  jacobian(local_eqn,local_unknown) -=
-			    tmp*dpsifdx(l2,k)*testf[l]*W;
-			}
-		      }
-                 
-		    }
-		  }
-		}
-           
-		/*Now loop over pressure shape functions*/
-		/*This is the contribution from pressure gradient*/
-		for(unsigned l2=0;l2<n_pres;l2++)
-		{
-		  /*If we are at a non-zero degree of freedom in the entry*/
-		  local_unknown = this->p_local_eqn(l2);
-		  if(local_unknown >= 0)
-		  {
-		    jacobian(local_eqn,local_unknown)
-		      += psip[l2]*dtestfdx(l,i)*W;
-		  }
-		}
-	      } /*End of Jacobian calculation*/
-         
-	    } //End of if not boundary condition statement
-       
-	  } //End of loop over dimension
-	} //End of loop over shape functions
-   
-   
-   
-	//CONTINUITY EQUATION
-	//-------------------
-   
-	//Loop over the shape functions
-	for(unsigned l=0;l<n_pres;l++)
-	{
-	  local_eqn = this->p_local_eqn(l);
-	  //If not a boundary conditions
-	  if(local_eqn >= 0)
-	  {
-
-	    // Source term
-	    //residuals[local_eqn] -=source*testp[l]*W; 
-	    double aux=-source;
-
-	    //Loop over velocity components
-	    for(unsigned k=0;k<DIM;k++)
-	    {
-	      //residuals[local_eqn] += interpolated_dudx(k,k)*testp[l]*W;
-	      aux += interpolated_dudx(k,k);
-	    }
-
-	    residuals[local_eqn]+=aux*testp[l]*W;
-       
-	    /*CALCULATE THE JACOBIAN*/
-	    if(flag)
-	    {
-	      /*Loop over the velocity shape functions*/
-	      for(unsigned l2=0;l2<n_node;l2++)
-	      { 
-		/*Loop over velocity components*/
-		for(unsigned i2=0;i2<DIM;i2++)
-		{
-		  /*If we're at a non-zero degree of freedom add it in*/ 
-		  local_unknown = this->nodal_local_eqn(l2,u_nodal_index[i2]);
-		  if(local_unknown >= 0)
-		  {
-		    jacobian(local_eqn,local_unknown)
-		      += dpsifdx(l2,i2)*testp[l]*W;
-		  }
-		} /*End of loop over i2*/
-	      } /*End of loop over l2*/
-	    } /*End of Jacobian calculation*/
-       
-	  } //End of if not boundary condition
-	} //End of loop over l
-      }
-    }
+        
     
     // override to output scalar values for paraview format
     void scalar_value_fct_paraview(std::ofstream& file_out,
