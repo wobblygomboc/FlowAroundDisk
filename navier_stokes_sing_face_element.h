@@ -1002,8 +1002,8 @@ namespace oomph
     
     /// \short Constructor, takes the pointer to the "bulk" element and the 
     /// index of the face to which the element is attached. Optional final
-    /// arg is the identifier for the additional unknowns multiplier
-    NavierStokesWithSingularityFaceElement(FiniteElement* const& bulk_el_pt, 
+    /// arg is the identifier for the additional unknowns (Lagrange multipliers)
+    NavierStokesWithSingularityFaceElement(ELEMENT* const& bulk_el_pt, 
 					     const int& face_index, 
 					     const unsigned& id=0);
 
@@ -1533,7 +1533,7 @@ namespace oomph
   //===========================================================================
   template <class ELEMENT>
     NavierStokesWithSingularityFaceElement<ELEMENT>::
-    NavierStokesWithSingularityFaceElement(FiniteElement* const& bulk_el_pt, 
+    NavierStokesWithSingularityFaceElement(ELEMENT* const& bulk_el_pt, 
 					     const int& face_index, 
 					     const unsigned& id) : 
   FaceGeometry<ELEMENT>(), FaceElement(), Boundary_id(id),
@@ -1711,7 +1711,7 @@ namespace oomph
       /// \short Constructor, takes the pointer to the "bulk" element and the 
       /// index of the face to which the element is attached. Optional final
       /// arg is the identifier for the additional unknowns multiplier
-      NavierStokesWithSingularityBCFaceElement(FiniteElement* const &bulk_el_pt, 
+      NavierStokesWithSingularityBCFaceElement(ELEMENT* const &bulk_el_pt, 
 					       const int& face_index,
 					       const unsigned &id = 0); 
   
@@ -1859,7 +1859,7 @@ namespace oomph
   //===========================================================================
   template <class ELEMENT>
     NavierStokesWithSingularityBCFaceElement<ELEMENT>::
-    NavierStokesWithSingularityBCFaceElement(FiniteElement* const& bulk_el_pt, 
+    NavierStokesWithSingularityBCFaceElement(ELEMENT* const& bulk_el_pt, 
 					     const int& face_index, 
 					     const unsigned& id) : 
   NavierStokesWithSingularityFaceElement<ELEMENT>(bulk_el_pt, face_index, id)
@@ -2483,11 +2483,12 @@ namespace oomph
     /// existing_duplicate_node_pt[orig_node_pt]=new_node_pt.
     /// Optional final arg is the identifier for the lagrange multiplier
     NavierStokesWithSingularityStressJumpFaceElement(
-      FiniteElement* const& augmented_bulk_el_pt, 
+      ELEMENT* const& augmented_bulk_el_pt, 
       const int& face_index,
       ELEMENT* non_augmented_bulk_el_pt,
       std::map<Node*,Node*>& existing_duplicate_node_pt,
-      const unsigned& id = 0); 
+      const unsigned& lambda_hat_id,
+      const unsigned& lambda_hat_hat_id); 
 
     ///\short  Broken empty constructor
     NavierStokesWithSingularityStressJumpFaceElement()
@@ -2938,6 +2939,11 @@ namespace oomph
     /// this elements Jacobian because it depends on derivatives of bulk
     /// quantities (Lagrange multipliers)
     std::map<unsigned, unsigned> External_data_index_bulk_aug_node_map;
+
+    /// \short ID given to the additional nodal values added to store
+    /// the Lagrange multipliers which enforce continuity of the
+    /// Lagrange multipliers which enforce the governing momentum PDEs
+    unsigned Lambda_hat_hat_id;
   }; 
 
   //===========================================================================
@@ -2951,13 +2957,15 @@ namespace oomph
   template <class ELEMENT>
     NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>::
     NavierStokesWithSingularityStressJumpFaceElement(
-      FiniteElement* const& augmented_bulk_el_pt, 
+      ELEMENT* const& augmented_bulk_el_pt, 
       const int& face_index,
       ELEMENT* non_augmented_bulk_el_pt,
       std::map<Node*,Node*>& existing_duplicate_node_pt,
-      const unsigned& boundary_id) : 
-  NavierStokesWithSingularityFaceElement<ELEMENT>(augmented_bulk_el_pt, face_index, boundary_id),
-    Non_augmented_bulk_element_pt(non_augmented_bulk_el_pt)
+      const unsigned& lambda_hat_id,
+      const unsigned& lambda_hat_hat_id) : 
+  NavierStokesWithSingularityFaceElement<ELEMENT>(augmented_bulk_el_pt, face_index, lambda_hat_id),
+    Non_augmented_bulk_element_pt(non_augmented_bulk_el_pt),
+    Lambda_hat_hat_id(lambda_hat_hat_id)
   {   
     // Back up original nodes and make new ones
     unsigned nnod = this->nnode();
@@ -3157,13 +3165,14 @@ namespace oomph
     }
 #endif
     
-    // Make space for Dim Lagrange multipliers
+    // Make space for Dim Lagrange multipliers which enforce continuity of
+    // the solution across the augmented boundary
     Vector<unsigned> n_additional_values(nnod, this->Dim);
-    this->add_additional_values(n_additional_values, boundary_id);
+    this->add_additional_values(n_additional_values, lambda_hat_id);
 
-    // QUEHACERES and add another Dim LMs to handle the continuity of lambda
-    // QUEHACERES sort out the boundary_id if this works
-    this->add_additional_values(n_additional_values, 123);
+    // ...and add another Dim LMs to handle the continuity of the
+    // momentum-enforcing LMs
+    this->add_additional_values(n_additional_values, lambda_hat_hat_id);
     
   } // end NavierStokesWithSingularityStressJumpFaceElement constructor
 
@@ -3247,6 +3256,7 @@ namespace oomph
       // Eulerian coordinates
       Vector<double> x(Dim, 0.0);
 
+      // LM which enforces continuity of the momentum-enforcing LMs
       Vector<double> lambda_hat_hat(Dim, 0.0);
       
       // loop over the nodes and compute the above at this integration point
@@ -3275,7 +3285,7 @@ namespace oomph
 	  
 	  // get the nodal index of the Lagrange multiplier for this
 	  // coordinate direction and boundary ID
-	  unsigned lambda_hat_hat_index = first_index.at(123) + i;
+	  unsigned lambda_hat_hat_index = first_index.at(Lambda_hat_hat_id) + i;
 
 	  // interpolated lambda_hat_hat
 	  lambda_hat_hat[i] += this->nodal_value(l, lambda_hat_hat_index) * psi[l];
@@ -3421,9 +3431,8 @@ namespace oomph
       Vector<double> s_bulk_non_aug(Dim, 0.0);
 	
       GeomObject* geom_object_pt = 0x0;
-      ELEMENT* non_augmented_bulk_elem_pt = this->non_augmented_bulk_element_pt();
 	
-      non_augmented_bulk_elem_pt->locate_zeta(x, geom_object_pt, s_bulk_non_aug);
+      Non_augmented_bulk_element_pt->locate_zeta(x, geom_object_pt, s_bulk_non_aug);
 
 #ifdef PARANOID
       if (geom_object_pt == 0x0)
@@ -3442,12 +3451,12 @@ namespace oomph
       
       // now get the traction from the non-augmented bulk element
       Vector<double> traction_non_aug(Dim, 0.0);
-      non_augmented_bulk_elem_pt->get_traction(s_bulk_non_aug,
+      Non_augmented_bulk_element_pt->get_traction(s_bulk_non_aug,
 					       unit_normal,
 					       traction_non_aug);
 
       Vector<double> lambda_momentum_non_aug
-	= non_augmented_bulk_elem_pt->interpolated_lambda(s_bulk_non_aug);
+	= Non_augmented_bulk_element_pt->interpolated_lambda(s_bulk_non_aug);
       
       // and get the augmented pressure
       double interpolated_p_fe = this->interpolated_p_nst(s);
@@ -3463,14 +3472,14 @@ namespace oomph
       }
 
       // get non-augmented shape functions and derivatives 
-      Shape psi_non_aug(non_augmented_bulk_elem_pt->nnode());
-      Shape psip_non_aug(non_augmented_bulk_elem_pt->npres_nst());
-      DShape dpsidx_non_aug(non_augmented_bulk_elem_pt->nnode(), Dim);
+      Shape psi_non_aug(Non_augmented_bulk_element_pt->nnode());
+      Shape psip_non_aug(Non_augmented_bulk_element_pt->npres_nst());
+      DShape dpsidx_non_aug(Non_augmented_bulk_element_pt->nnode(), Dim);
       
-      non_augmented_bulk_elem_pt->
+      Non_augmented_bulk_element_pt->
 	dshape_eulerian(s_bulk_non_aug, psi_non_aug, dpsidx_non_aug);
 
-      non_augmented_bulk_elem_pt->pshape_nst(s_bulk_non_aug, psip_non_aug);
+      Non_augmented_bulk_element_pt->pshape_nst(s_bulk_non_aug, psip_non_aug);
       
       // ======================================================================
       // Now add to the appropriate equations
@@ -3575,8 +3584,8 @@ namespace oomph
       {
 	Node* node_pt = this->node_pt(l);
 
-	Node* nonaug_node_pt = Orig_node_pt.at(l);
-	/* non_augmented_bulk_elem_pt-> */
+	Node* nonaug_node_pt = Orig_node_pt[l];
+	/* Non_augmented_bulk_element_pt-> */
 	/*   node_pt(External_data_index_for_non_aug_node[l]); */
 		  
 	// get the bulk node number corresponding to this face element vertex node
@@ -3585,7 +3594,7 @@ namespace oomph
 	// get the node number of this node as referred to by the non-augmented
 	// bulk element (need to compute dpsi/dx from the non-aug side)
 	const int l_in_non_aug_bulk =
-	  non_augmented_bulk_elem_pt->get_node_number(nonaug_node_pt);
+	  Non_augmented_bulk_element_pt->get_node_number(nonaug_node_pt);
 	
 	// get the map which gives the starting nodal index for
 	// the Lagrange multipliers associated with each boundary ID
@@ -3699,7 +3708,7 @@ namespace oomph
 
 		// local external equation number for non-augmented nodal pressure
 		int ext_eqn_non_aug_p =
-		  this->external_local_eqn(ext_index, non_augmented_bulk_elem_pt->p_index_nst());
+		  this->external_local_eqn(ext_index, Non_augmented_bulk_element_pt->p_index_nst());
 
 		// get the right enumeration for this face vertex in the bulk element
 		unsigned l2_in_bulk = this->bulk_node_number(l2);
@@ -3716,7 +3725,7 @@ namespace oomph
 
 	      // now loop over *all* the non-augmented bulk nodes, which make
 	      // contributions to the velocity derivatives in the non-augmented traction
-	      for(unsigned l2=0; l2<non_augmented_bulk_elem_pt->nnode(); l2++)
+	      for(unsigned l2=0; l2<Non_augmented_bulk_element_pt->nnode(); l2++)
 	      {
 		// external data index for this non-augmented node
 		unsigned ext_index = External_data_index_all_non_aug_nodes[l2];
@@ -3757,7 +3766,7 @@ namespace oomph
 		  dynamic_cast<BoundaryNodeBase*>(node2_pt)->
 		  index_of_first_value_assigned_by_face_element_pt() );
 		
-		unsigned lambda_hat_hat_index = first_index2.at(123) + i;
+		unsigned lambda_hat_hat_index = first_index2.at(Lambda_hat_hat_id) + i;
 
 		// get lambda-hat-hat equation number at this node
 	      	int local_unknown = this->nodal_local_eqn(l2, lambda_hat_hat_index);
@@ -3775,7 +3784,7 @@ namespace oomph
 	  // QUEHACERES ###
 	  // Index of the bulk Lagrange multiplier which enforces momentum PDEs	    
 	  unsigned lambda_mom_non_aug_index =
-	    non_augmented_bulk_elem_pt->index_of_lagrange_multiplier(nonaug_node_pt, i);
+	    Non_augmented_bulk_element_pt->index_of_lagrange_multiplier(nonaug_node_pt, i);
 
 	  unsigned ext_index = External_data_index_for_non_aug_node[l];
 	  
@@ -3798,7 +3807,7 @@ namespace oomph
 		  dynamic_cast<BoundaryNodeBase*>(node2_pt)->
 		  index_of_first_value_assigned_by_face_element_pt() );
 		
-		unsigned lambda_hat_hat_index = first_index2.at(123) + i;
+		unsigned lambda_hat_hat_index = first_index2.at(Lambda_hat_hat_id) + i;
 
 		// get lambda-hat-hat equation number at this node
 	      	int local_unknown = this->nodal_local_eqn(l2, lambda_hat_hat_index);
@@ -3868,14 +3877,23 @@ namespace oomph
 	    } // end Jacobian flag check
 	  }
 
-	  // QUEHACERES ###
+	  // =======================================================================
+	  // Add the equation which determines lambda-hat-hat, the LMs which
+	  // enforce the continuity of the momentum-enforcing LMs
+	  // =======================================================================
 	  {
-	    unsigned lambda_hat_hat_index = first_index.at(123) + i;
+	    // get the nodal index from the map of additional values with the
+	    // dimension offset
+	    unsigned lambda_hat_hat_index = first_index.at(Lambda_hat_hat_id) + i;
 
+	    // get the equation number for this nodal dof
 	    int local_eqn_lambda_hat_hat = this->nodal_local_eqn(l, lambda_hat_hat_index);
 
+	    // is it pinned?
 	    if(local_eqn_lambda_hat_hat >= 0)
 	    {
+	      // equation is simply the difference between the momentum-enforcing LMs
+	      // evaluated either side of the augmented boundary
 	      residuals[local_eqn_lambda_hat_hat] +=
 		(lambda_momentum[i] - lambda_momentum_non_aug[i]) * psi[l] * W;
 
@@ -3889,7 +3907,7 @@ namespace oomph
 		    
 		  // Index of the bulk Lagrange multiplier which enforces momentum PDEs	    
 		  unsigned lambda_mom_non_aug2_index =
-		    non_augmented_bulk_elem_pt->index_of_lagrange_multiplier(nonaug_node2_pt, i);
+		    Non_augmented_bulk_element_pt->index_of_lagrange_multiplier(nonaug_node2_pt, i);
 
 		  unsigned ext_index = External_data_index_for_non_aug_node[l2];
 	  
@@ -4122,7 +4140,7 @@ namespace oomph
 	  if (flag == 1)	    
 	  {
 	    // loop over the non-augmented bulk nodes
-	    for(unsigned l2=0; l2<non_augmented_bulk_elem_pt->nnode(); l2++)
+	    for(unsigned l2=0; l2<Non_augmented_bulk_element_pt->nnode(); l2++)
 	    {
 	      // external data index for this non-augmented node
 	      unsigned ext_index = External_data_index_all_non_aug_nodes[l2];
@@ -4170,7 +4188,7 @@ namespace oomph
       
 #ifdef USE_SYMMETRIC_JACOBIAN   
       // loop over the non-augmented bulk nodes
-      for(unsigned l=0; l<non_augmented_bulk_elem_pt->nnode(); l++)
+      for(unsigned l=0; l<Non_augmented_bulk_element_pt->nnode(); l++)
       {
 	for(unsigned i=0; i<Dim; i++)
 	{
@@ -4290,7 +4308,7 @@ namespace oomph
     ///Constructor, which takes a "bulk" element and the value of the index
     ///and its limit - forward to parent constructor
     NavierStokesPdeConstrainedOptimisationTractionElement(
-      FiniteElement* const& element_pt, 
+      ELEMENT* const& element_pt, 
       const int& face_index,
       const bool& called_from_refineable_constructor=false) :
     NavierStokesTractionElement<ELEMENT>(element_pt, face_index,
@@ -4419,7 +4437,7 @@ namespace oomph
   /// to the FE solution. 
   //====================================================================
   template <unsigned DIM>
-    class TNavierStokesElementWithSingularity : public virtual TTaylorHoodElement<DIM> //, NNODE_1D>
+    class TNavierStokesWithSingularityPdeConstrainedMinElement : public virtual TTaylorHoodElement<DIM> //, NNODE_1D>
   {
     
   public:
@@ -4506,7 +4524,7 @@ namespace oomph
     }
     
     /// Constructor                            
-  TNavierStokesElementWithSingularity() :
+  TNavierStokesWithSingularityPdeConstrainedMinElement() :
     Exact_non_singular_fct_pt(0), Nplot(0),
       Is_lower_disk_element(false), Is_augmented_element(false),
       Dfunctional_du_fct_pt(0x0), Stress_fct_pt(0x0)
@@ -4539,13 +4557,32 @@ namespace oomph
     unsigned index_of_lagrange_multiplier(Node*& node_pt, const unsigned& i) const
     {
       for(unsigned n=0; n<this->nnode(); n++)
-      {
+      {	
 	if(this->node_pt(n) == node_pt)	  
 	  return Lambda_index[n] + i;
       }
 
+      ostringstream error_message;
+      error_message << "Error, couldn't get bulk Lagrange multiplier index "
+		    << "for the requested node " << node_pt << " (";
+      for(unsigned i=0; i<DIM; i++)
+	error_message << node_pt->x(i) << " ";
+      
+      error_message << ") as this "
+		    << "node isn't in this element!\n\n"
+		    << "Nodes in this element: \n";
+      
+      for(unsigned n=0; n<this->nnode(); n++)
+      {
+	error_message << this->node_pt(n) << " ("
+		      << this->node_pt(n)->x(0) << " "
+		      << this->node_pt(n)->x(1) << " "
+		      << this->node_pt(n)->x(2) << ")"
+		      << std::endl;
+      }
+      
       // if we didn't return in the above loop then something's gone wrong
-      throw OomphLibError("Error: coudln't find bulk Lagrange multiplier index for this node\n",
+      throw OomphLibError(error_message.str().c_str(),
 			  OOMPH_CURRENT_FUNCTION,
 			  OOMPH_EXCEPTION_LOCATION);
     }
@@ -5822,7 +5859,7 @@ namespace oomph
 	if(Stress_fct_pt == 0x0)
 	{
 	  throw OomphLibError(
-	    "This TNavierStokesElementWithSingularity has no stress function pointer.",
+	    "This TNavierStokesWithSingularityPdeConstrainedMinElement has no stress function pointer.",
 	    OOMPH_CURRENT_FUNCTION,
 	    OOMPH_EXCEPTION_LOCATION);
 	}
@@ -5837,11 +5874,6 @@ namespace oomph
 	/* // have we actually got a function pointer for dPi/du? */	
 	if(Dfunctional_du_fct_pt != 0x0)
 	{
-	  if(!Is_augmented_element)
-	  {
-	    // QUEHACERES how does this happen...
-	    unsigned breakpoint = 1;
-	  }
 	  dfunctional_du = Dfunctional_du_fct_pt(interpolated_u);
 	}
 
@@ -6092,9 +6124,12 @@ namespace oomph
 	  //If not a boundary conditions
 	  if(local_eqn >= 0)
 	  {
-	    // add the pressure penalty term from the functional to be minimised
-	    // QUEHACERES do this properly at some point, don't get it from a global variable!!
-	    residuals[local_eqn] += L2_PRESSURE_PENALTY * interpolated_p * psip[k] * W;
+	    if(Is_augmented_element)
+	    {
+	      // add the pressure penalty term from the functional to be minimised
+	      // QUEHACERES do this properly at some point, don't get it from a global variable!!
+	      residuals[local_eqn] += L2_PRESSURE_PENALTY * interpolated_p * psip[k] * W;
+	    }
 	    
 	    //Loop over velocity components
 	    for(unsigned j=0; j<DIM; j++)
@@ -6107,14 +6142,17 @@ namespace oomph
 	    /*CALCULATE THE JACOBIAN*/
 	    if(flag)
 	    {
-	      for(unsigned k2=0; k2<n_pres; k2++)
+	      if(Is_augmented_element)
 	      {
-		local_unknown = this->p_local_eqn(k2);
-
-		if(local_unknown >= 0)
+		for(unsigned k2=0; k2<n_pres; k2++)
 		{
-		  jacobian(local_eqn, local_unknown) +=
-		    L2_PRESSURE_PENALTY * psip[k2] * psip[k] * W;
+		  local_unknown = this->p_local_eqn(k2);
+
+		  if(local_unknown >= 0)
+		  {
+		    jacobian(local_eqn, local_unknown) +=
+		      L2_PRESSURE_PENALTY * psip[k2] * psip[k] * W;
+		  }
 		}
 	      }
 	      
@@ -6341,21 +6379,21 @@ namespace oomph
 
 
   //=======================================================================
-  /// Face geometry for the TNavierStokesElementWithSingularity elements: The spatial 
+  /// Face geometry for the TNavierStokesWithSingularityPdeConstrainedMinElement elements: The spatial 
   /// dimension of the face elements is one lower than that of the
   /// bulk element but they have the same number of points
   /// along their 1D edges.
   //=======================================================================
   template <unsigned DIM> // , unsigned NNODE_1D>
-    class FaceGeometry<TNavierStokesElementWithSingularity<DIM> > :
-    public virtual TElement<DIM-1,TNavierStokesElementWithSingularity<DIM>::_NNODE_1D_>
+    class FaceGeometry<TNavierStokesWithSingularityPdeConstrainedMinElement<DIM> > :
+    public virtual TElement<DIM-1,TNavierStokesWithSingularityPdeConstrainedMinElement<DIM>::_NNODE_1D_>
   {
 
   public:
  
     /// \short Constructor: Call the constructor for the
     /// appropriate lower-dimensional TElement
-  FaceGeometry() : TElement<DIM-1,TNavierStokesElementWithSingularity<DIM>::_NNODE_1D_>() {}
+  FaceGeometry() : TElement<DIM-1,TNavierStokesWithSingularityPdeConstrainedMinElement<DIM>::_NNODE_1D_>() {}
 
   };
 
@@ -6365,10 +6403,10 @@ namespace oomph
 
 
   //=======================================================================
-  /// Face geometry for the 1D TNavierStokesElementWithSingularity elements: Point elements
+  /// Face geometry for the 1D TNavierStokesWithSingularityPdeConstrainedMinElement elements: Point elements
   //=======================================================================
   template <>
-    class FaceGeometry<TNavierStokesElementWithSingularity<1> >: 
+    class FaceGeometry<TNavierStokesWithSingularityPdeConstrainedMinElement<1> >: 
     public virtual PointElement
     {
 
