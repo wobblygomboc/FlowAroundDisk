@@ -864,7 +864,10 @@ private:
   enum{ bla_hierher, Stress_jump_el_id=1, BC_el_id=1, Lambda_hat_hat_id=2 };
 
   // IDs to identify each singular function
-  enum {Sing_fct_id_broadside=100, Sing_fct_id_in_plane, Sing_fct_id_in_plane_rotation};
+  enum {Sing_fct_id_broadside=100,
+	Sing_fct_id_broadside_rotation,
+	Sing_fct_id_in_plane,
+	Sing_fct_id_in_plane_rotation};
 
   // --------------------------------------------------------------------------
   
@@ -1275,7 +1278,7 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   if(CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution"))
     Nsingular_function = 2;
   else
-    Nsingular_function = 3;
+    Nsingular_function = 4;
 
   // Create face elements that compute contribution to amplitude residual
   //---------------------------------------------------------------------
@@ -3682,33 +3685,53 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
     {
       // Broadside singular function ------------------------------------------
 
-      // QUEHACERES using the asymptotically expanded exact solution for now 11/08      
+      // QUEHACERES 14/1 taking this out and splitting the broadside rotation into 2
+      
+      // // QUEHACERES sticking in all 4 full solutions 11/08      
       sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
       	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_broadside,
       	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_broadside,
       	Sing_fct_id_broadside);
 
+      sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+      	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_broadside_rotation,
+      	&Global_Parameters::SingularFunctions::
+	gradient_of_singular_fct_exact_asymptotic_broadside_rotation,
+      	Sing_fct_id_broadside_rotation);
+
+      // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+      // 	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_broadside_rotation_az,
+      // 	&Global_Parameters::SingularFunctions::
+      // 	gradient_of_singular_fct_exact_asymptotic_broadside_rotation_az,
+      // 	Sing_fct_id_broadside_az);
+	
       // In-plane singular function -------------------------------------------
 
-      // QUEHACERES using the asymptotically expanded exact solution for now 12/08
       sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-      	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_in_plane,
-      	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_in_plane,
+      	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_in_plane_full,
+      	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_in_plane_full,
       	Sing_fct_id_in_plane);
-
-      // u_zeta velocity component for in-plane singular function ----------------
-      // QUEHACERES if this works, change the enum name for the ID
-      sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-      	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_in_plane_zeta,
-      	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_in_plane_zeta,
-      	Sing_fct_id_in_plane_rotation);
-
-      // QUEHACERES taking out the proper rotational bit for the time being
-      // // In-plane rotation singular function ----------------------------------
+	    
+      // // QUEHACERES using the asymptotically expanded exact solution for now 12/08
       // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-      // 	&Global_Parameters::SingularFunctions::singular_fct_in_plane_rotation,
-      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_in_plane_rotation,
+      // 	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_in_plane,
+      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_in_plane,
+      // 	Sing_fct_id_in_plane);
+
+      // // u_zeta velocity component for in-plane singular function ----------------
+      // // QUEHACERES if this works, change the enum name for the ID
+      // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+      // 	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_in_plane_zeta,
+      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_in_plane_zeta,
       // 	Sing_fct_id_in_plane_rotation);
+
+      // QUEHACERES back in! 15/1
+      // // QUEHACERES taking out the proper rotational bit for the time being
+      // In-plane rotation singular function ----------------------------------
+      sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+      	&Global_Parameters::SingularFunctions::singular_fct_in_plane_rotation,
+      	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_in_plane_rotation,
+      	Sing_fct_id_in_plane_rotation);
     }
 
     // set the function pointer to the function which computes dzeta/dx
@@ -4383,10 +4406,6 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
     pin_singular_function(Sing_fct_id_in_plane_rotation);
   }
 
-  // // QUEHACERES set the broadside amplitude to 1 (but don't pin)
-  // for(unsigned n=0; n<Singular_fct_element_mesh_pt->nnode(); n++)
-  //   Singular_fct_element_mesh_pt->node_pt(n)->set_value(0, 1.0);
-    
 } // end apply BCs
 
 //== start of output_submesh_pin_status ==================================
@@ -5106,7 +5125,7 @@ void FlowAroundDiskProblem<ELEMENT>::pin_singular_function(const unsigned& sing_
       dynamic_cast<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>*>(
 	Singular_fct_element_mesh_pt->element_pt(e));
 
-    Vector<double> zero_amplitude(sing_el_pt->nnode());
+    Vector<double> zero_amplitude(sing_el_pt->nnode(), 0.0);
     
     sing_el_pt->impose_singular_fct_amplitude(sing_fct_id, zero_amplitude);
   }
@@ -5885,7 +5904,7 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
     total_force_on_plate += abs(bc_el_pt->get_contribution_to_normal_stress());
   }
 
-  oomph_info << "Total absolute normal stress on plate: " << total_force_on_plate << std::endl;
+  oomph_info << "Total force on plate: " << total_force_on_plate << std::endl;
 
   // output the stress jump elements
   if (!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))      
@@ -6538,6 +6557,8 @@ int main(int argc, char* argv[])
   oomph_info << "= - Using single DoF for singular amplitude (broadside)          =\n";
 #else  
   oomph_info << "= - Using multiple spatially-varying DoFs for singular amplitude =\n";
+  oomph_info << "=    with SINGULAR_ELEMENT_NNODE_1D = "
+	     << SINGULAR_ELEMENT_NNODE_1D <<           "                          =\n";
 #endif
 
   oomph_info << "=                                                                =\n"
