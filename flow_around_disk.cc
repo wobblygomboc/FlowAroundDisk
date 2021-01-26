@@ -133,9 +133,6 @@ namespace Global_Parameters
   /// (Half)height of the box
   double Box_half_height = 0.5; //1.0;
 
-  /// Specify how to call gmsh from the command line
-  std::string Gmsh_command_line_invocation="/home/mheil/gmesh/bin/bin/gmsh";
-
   // velocity of the whole disk (rigid)
   Vector<double> u_disk_rigid_body(3, 0.0);
 
@@ -212,6 +209,29 @@ namespace Global_Parameters
 
   // brutal global finite-diff solver
   bool Use_fd_lu_solver = false;
+
+  // compute the total disk velocity u = u_trans + u_rot
+  Vector<double> disk_velocity(const Vector<double>& x)
+  {
+    // total velocity
+    Vector<double> u_disk(3, 0.0);
+
+    // velocity associated with rigid-body rotation 
+    Vector<double> u_rotational(3, 0.0);
+	
+    // u = \omega \ctimes r
+    u_rotational[0] = omega_disk[1] * x[2] - omega_disk[2] * x[1];
+    u_rotational[1] = omega_disk[2] * x[0] - omega_disk[0] * x[2];
+    u_rotational[2] = omega_disk[0] * x[1] - omega_disk[1] * x[0];
+
+    // total velocity is the sum of the velocities associated with
+    // rigid body rotation and translation
+    u_disk[0] = u_rotational[0] + u_disk_rigid_body[0];
+    u_disk[1] = u_rotational[1] + u_disk_rigid_body[1];
+    u_disk[2] = u_rotational[2] + u_disk_rigid_body[2];
+    
+    return u_disk;
+  }
   
   Vector<double> compute_singular_amplitudes_from_disk_velocity(const double& zeta)
   {
@@ -822,17 +842,9 @@ private:
   // --------------------------------------------------------------------------
   // Meshes
   // --------------------------------------------------------------------------
-#ifdef DO_TETGEN
 
   /// Bulk mesh
   RefineableTetgenMesh<ELEMENT>* Bulk_mesh_pt;
-
-#else
-
-  /// Bulk mesh
-  RefineableGmshTetMesh<ELEMENT>* Bulk_mesh_pt;
-
-#endif
 
   /// \short Face element mesh which imposes the necessary traction
   /// onto the bulk elements on the boundary of the augmented region
@@ -1163,38 +1175,10 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   // Initial element volume
   double initial_element_volume = 1.0;
 
-  // Setup parameters for gmsh
-  GmshParameters* gmsh_parameters_pt = 
-    new GmshParameters(Outer_boundary_pt,
-		       Global_Parameters::Gmsh_command_line_invocation);
-
-  // Element volume
-  gmsh_parameters_pt->element_volume() = initial_element_volume;
-
-
-  // Specify inner boundaries
-  gmsh_parameters_pt->internal_surface_pt() = Inner_boundary_pt;
-
-  // Filename for file in which target element size is stored
-  // (for disk-based operation of gmsh)
-  gmsh_parameters_pt->stem_for_filename_gmsh_size_transfer() = 
-    "target_size_on_grid";
-  gmsh_parameters_pt->counter_for_filename_gmsh_size_transfer() = 0;
-
-  // Problem is linear so we don't need to transfer the solution to the
-  // new mesh; we keep it on for self-test purposes...
-  // gmsh_parameters_pt->disable_projection();
-
-  // Redirect gmsh on-screen output
-  gmsh_parameters_pt->gmsh_onscreen_output_file_name() = 
-    "RESLT/gmsh_on_screen_output.dat";
-
   // Not needed, of course, but here to test out the handling
   // of timesteppers
   add_time_stepper_pt(new Steady<1>);
 
-#ifdef DO_TETGEN
-  
   if(Global_Parameters::Split_corner_elements)
     oomph_info << "\nSplitting corner elements to avoid locking\n\n";
   
@@ -1216,14 +1200,6 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   // Problem is linear so we don't need to transfer the solution to the
   // new mesh; we keep it on for self-test purposes...
   Bulk_mesh_pt->disable_projection();
-
-#else
-
-  // And now build it...
-  Bulk_mesh_pt = new RefineableGmshTetMesh<ELEMENT>(gmsh_parameters_pt,
-						       this->time_stepper_pt());
-
-#endif
 
   /// Mesh as geom object representation of mesh
   Mesh_as_geom_object_pt = 0x0;
@@ -1487,19 +1463,55 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   some_file.close();
   
   // use mumps, as it's much faster!
+  if(CommandLineArgs::command_line_flag_has_been_set("--use_mumps_solver"))
+  {
 #ifdef OOMPH_HAS_MUMPS
+    oomph_info << "Using MUMPS linear solver\n\n";
   
-  oomph_info << "Using MUMPS linear solver\n\n";
-  
-  MumpsSolver* mumps_linear_solver_pt = new MumpsSolver;
+    MumpsSolver* mumps_linear_solver_pt = new MumpsSolver;
 
-  mumps_linear_solver_pt->enable_suppress_warning_about_MPI_COMM_WORLD();
+    mumps_linear_solver_pt->enable_suppress_warning_about_MPI_COMM_WORLD();
   
-  // set it
-  linear_solver_pt() = mumps_linear_solver_pt;
-
+    // set it
+    linear_solver_pt() = mumps_linear_solver_pt;
 #endif
+  }
+  else if(CommandLineArgs::command_line_flag_has_been_set("--use_hypre_solver"))
+  {
+    oomph_info << "Using Hypre linear solver\n" << std::endl;
 
+    HypreSolver* hypre_linear_solver_pt = new HypreSolver;
+
+    hypre_linear_solver_pt->internal_preconditioner() = HypreSolver::ParaSails;
+
+    hypre_linear_solver_pt->max_iter() = 1000;
+    
+    linear_solver_pt() = hypre_linear_solver_pt;    
+  }
+  else if(CommandLineArgs::command_line_flag_has_been_set("--use_gmres_solver"))
+  {
+    oomph_info << "Using GMRES linear solver\n" << std::endl;
+
+    // GMRES<CRDoubleMatrix>*
+    IterativeLinearSolver* gmres_solver_pt = new GMRES<CRDoubleMatrix>;
+
+    // Create Trilinos IFPACK preconditioner as oomph-lib Preconditioner
+    Preconditioner* preconditioner_pt = new TrilinosIFPACKPreconditioner;
+    
+    // Pass pointer to preconditioner to oomph-lib IterativeLinearSolver
+    gmres_solver_pt->preconditioner_pt() = preconditioner_pt;
+
+    gmres_solver_pt->max_iter() = 10000;
+    
+    linear_solver_pt() = gmres_solver_pt;
+  }
+  else if(CommandLineArgs::command_line_flag_has_been_set("--use_bicgstab_solver"))
+  {
+    BiCGStab<CRDoubleMatrix>* bigcgstab_solver_pt = new BiCGStab<CRDoubleMatrix>;
+
+    linear_solver_pt() = bigcgstab_solver_pt;
+  }
+  
   // buckle up
   if(Global_Parameters::Use_fd_lu_solver)
   {
@@ -3235,7 +3247,7 @@ void FlowAroundDiskProblem<ELEMENT>::setup_edge_coordinates_and_singular_element
   Vector<EdgeCoordinates>& edge_coordinates_at_point,
   Vector<std::pair<GeomObject*, Vector<double> > >& line_element_and_local_coordinate,
   const bool& use_plot_points) const
-{ 
+{  
   unsigned npt = 0;
 
   if(use_plot_points)
@@ -3465,6 +3477,10 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
   // Loop over the elements to set up element-specific
   // things that cannot be handled by constructor
 
+  oomph_info << "Computing Lagrangian coordinates and corresponding singular "
+	     << "line elements for integration/plot points in augmented region..."
+	     << std::endl;
+  
   // QUEHACERES debug
   ofstream some_file;
   some_file.open("torus_region_n_nodal_dofs.txt");
@@ -3684,10 +3700,15 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
     else
     {
       // Broadside singular function ------------------------------------------
-
-      // QUEHACERES 14/1 taking this out and splitting the broadside rotation into 2
       
-      // // QUEHACERES sticking in all 4 full solutions 11/08      
+      // // QUEHACERES sticking in all 4 full solutions 11/08
+
+      // // QUEHACERES experimental - use full soln not asymptotic one! 19/01
+      // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+      // 	&Global_Parameters::SingularFunctions::singular_fct_exact_broadside,
+      // 	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_broadside,
+      // 	Sing_fct_id_broadside);
+	    
       sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
       	&Global_Parameters::SingularFunctions::singular_fct_exact_asymptotic_broadside,
       	&Global_Parameters::SingularFunctions::gradient_of_singular_fct_exact_asymptotic_broadside,
@@ -4113,7 +4134,7 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
 {
   // Identify boundary ids of pinned nodes 
   Vector<unsigned> pinned_boundary_id;
- 
+  
   for (unsigned ibound = First_lower_disk_boundary_id;
        ibound <= Last_lower_disk_boundary_id; ibound++)
   {
@@ -4170,8 +4191,18 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
 
       // get the sum of all analytic solution modes on the boundary
       Vector<double> u(4,0.0);
-      Analytic_Functions::exact_solution_flat_disk(x, u);
-
+      
+      if((ibound >= First_boundary_id_for_outer_boundary &&
+	 ibound < First_lower_disk_boundary_id) )
+      {
+	// on the outer boundary, so do analytic flat-disk solution
+	Analytic_Functions::exact_solution_flat_disk(x, u);
+      }
+      else
+      {
+	// we're on the disk, apply the prescribed motion
+	u = Global_Parameters::disk_velocity(x);
+      }
       
       // set and pin 'em
       for(unsigned i=0; i<3; i++)
@@ -4306,21 +4337,26 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
       }
 
       {
-	// shorthand
-	using namespace Global_Parameters;
+	// QUEHACERES delete
+	// // shorthand
+	// using namespace Global_Parameters;
 
-	Vector<double> u_rotational(3, 0.0);
+	// Vector<double> u_rotational(3, 0.0);
 	
-	// u = \omega \ctimes r
-	u_rotational[0] = omega_disk[1] * x[2] - omega_disk[2] * x[1];
-	u_rotational[1] = omega_disk[2] * x[0] - omega_disk[0] * x[2];
-	u_rotational[2] = omega_disk[0] * x[1] - omega_disk[1] * x[0];
-            
+	// // u = \omega \ctimes r
+	// u_rotational[0] = omega_disk[1] * x[2] - omega_disk[2] * x[1];
+	// u_rotational[1] = omega_disk[2] * x[0] - omega_disk[0] * x[2];
+	// u_rotational[2] = omega_disk[0] * x[1] - omega_disk[1] * x[0];
+
+	// total velocity is rigid body contribution + rotational contribution
+	Vector<double> u_disk = Global_Parameters::disk_velocity(x);
+	
 	// assign to the matrix of nodal values
 	for(unsigned i=0; i<Dim; i++)
 	{
 	  // total velocity is rigid body contribution + rotational contribution
-	  nodal_boundary_value(j,i) = u_disk_rigid_body[i] + u_rotational[i];
+	  nodal_boundary_value(j,i) = u_disk[i];
+	  // u_disk_rigid_body[i] + u_rotational[i];
 	}
       }
 
@@ -4383,11 +4419,11 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
     
   } // end loop over bc face elements
 
-  // QUEHACERES try pinning lambda_p in the non-aug region
-  {
-    ELEMENT* el_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->region_element_pt(0,0));
-    el_pt->pin_lagrange_multiplier_p(0, 0.0);
-  }
+  // // QUEHACERES try pinning lambda_p in the non-aug region
+  // {
+  //   ELEMENT* el_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->region_element_pt(0,0));
+  //   el_pt->pin_lagrange_multiplier_p(0, 0.0);
+  // }
   
   // oomph_info << "LM pin counter = " << nodes_with_3_lms_set.size() << std::endl;
 
@@ -4396,6 +4432,10 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
   if(CommandLineArgs::command_line_flag_has_been_set("--pin_broadside_amplitude"))
   {
     pin_singular_function(Sing_fct_id_broadside);
+  }
+  if(CommandLineArgs::command_line_flag_has_been_set("--pin_broadside_rotation_amplitude"))
+  {
+    pin_singular_function(Sing_fct_id_broadside_rotation);
   }
   if(CommandLineArgs::command_line_flag_has_been_set("--pin_in_plane_amplitude"))
   {
@@ -5150,253 +5190,6 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   ofstream face_some_file;
   ofstream coarse_some_file;
   char filename[500];
-  
-  // QUEHACERES debug @@@@@@@@
-  { 
-    sprintf(filename,"%s/dpsi_dx_debug.dat",
-  	    Doc_info.directory().c_str());
-
-    some_file.open(filename);
-
-    unsigned ntest_pts = 50;
-    unsigned ignored_pt_count = 0;
-    for(unsigned i_pt=0; i_pt<ntest_pts; i_pt++)
-    {
-      // get a random number in the range [-(1+r_torus), +(1+r_torus)] for x & y,
-      // and [-r_torus, +r_torus] for z
-      double range_xy = 2 * (1 + Global_Parameters::R_torus);
-      double range_z  = 2 * Global_Parameters::R_torus;
-
-      Vector<double> x(3, 0.0);
-      x[0] = (rand() / double(RAND_MAX) - 0.5) * range_xy;
-      x[1] = (rand() / double(RAND_MAX) - 0.5) * range_xy;    
-      x[2] = (rand() / double(RAND_MAX) - 0.5) * range_z;
- 
-      // get the edge coords & line elem of this random point
-      // ----------------------------------------------------
-      EdgeCoordinates edge_coords;
-      std::pair<GeomObject*, Vector<double> > line_el_and_local_coord;
-      
-      get_edge_coordinates_and_singular_element( 0x0, x, edge_coords,
-						 line_el_and_local_coord );
-      
-      ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>* sing_el_pt =
-	dynamic_cast<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>*>(
-	  line_el_and_local_coord.first);
-
-      Vector<double> s_sing = line_el_and_local_coord.second;
-
-
-      // get the interpolated shape functions and derivatives
-      // ------------------------------------------------
-      Shape psi_sing(SINGULAR_ELEMENT_NNODE_1D);
-      DShape dpsi_dx(SINGULAR_ELEMENT_NNODE_1D, 3);
-
-      sing_el_pt->shape(s_sing, psi_sing);
-      
-      sing_el_pt->dshape_eulerian(edge_coords,
-				  s_sing,
-				  dpsi_dx);
-
-      // now do the finite-diff version
-      // --------------------------------
-      DenseMatrix<double> dpsi_dx_fd(SINGULAR_ELEMENT_NNODE_1D, 3, 0.0);
-      
-      const double fd_dx = 1e-8;
-
-      bool ignore_point = false;
-            
-      for(unsigned i=0; i<3; i++)
-      {
-	// shifted Eulerian position
-	Vector<double> x_plus_dx = x;
-
-	// add the increments in the ith direction
-	x_plus_dx[i] += fd_dx;
-
-	EdgeCoordinates edge_coords_plus_dx;
-	std::pair<GeomObject*, Vector<double> > line_el_and_local_coord_plus_dx;
-      
-	get_edge_coordinates_and_singular_element( 0x0, x_plus_dx, edge_coords_plus_dx,
-						   line_el_and_local_coord_plus_dx );
-
-	// if the increment means we land in a different singular line elem,
-	// then ignore this point
-	if( line_el_and_local_coord.first != line_el_and_local_coord_plus_dx.first)
-	{
-	  ignore_point = true;
-	  ignored_pt_count++;
-	  break;
-	}
-
-	Vector<double> s_sing_plus_dx = line_el_and_local_coord_plus_dx.second;
-	
-	Shape psi_sing_plus_dx(SINGULAR_ELEMENT_NNODE_1D);
-	sing_el_pt->shape(s_sing_plus_dx, psi_sing_plus_dx);
-
-	for(unsigned k=0; k<SINGULAR_ELEMENT_NNODE_1D; k++)
-	{
-	  dpsi_dx_fd(k,i) = (psi_sing_plus_dx[k] - psi_sing[k]) / fd_dx;
-	}
-
-      }
-
-      if(ignore_point)
-	continue;
-
-      for(unsigned j=0; j<3; j++)
-	some_file << x[j] << " ";
-      
-      
-      for(unsigned k=0; k<SINGULAR_ELEMENT_NNODE_1D; k++)
-      {
-	for(unsigned j=0; j<3; j++)
-	{
-	  some_file << dpsi_dx(k,j) << " ";
-	}
-      }
-
-      for(unsigned k=0; k<SINGULAR_ELEMENT_NNODE_1D; k++)
-      {
-	for(unsigned j=0; j<3; j++)
-	{
-	  some_file << dpsi_dx_fd(k,j) << " ";
-	}
-      }
-
-      some_file << std::endl;      
-    }
-
-    oomph_info << "@@ Ignored point count: " << ignored_pt_count << std::endl;
-    
-    // // set a sinusoidal amplitude for testing
-    // for(unsigned n=0; n<Singular_fct_element_mesh_pt->nnode(); n++)
-    // {
-    //   Node* node_pt = Singular_fct_element_mesh_pt->node_pt(n);
-
-    //   Vector<double> x(3, 0.0);
-    //   for(unsigned i=0; i<3; i++)
-    // 	x[i] = node_pt->x(i);
-
-    //   double zeta = atan2(x[1],x[0]);
-
-    //   // random sin function
-    //   double c = 2.0 * sin(2.0*zeta) + 3.0;
-      
-    //   node_pt->set_value(0, c);
-    // }
-    
-    // for(unsigned e=0; e<Face_mesh_for_stress_jump_pt->nelement(); e++)
-    // {
-    //   NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>* elem_pt =
-    // 	dynamic_cast<NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>*>(
-    // 	  Face_mesh_for_stress_jump_pt->element_pt(e));
-	
-    //   for(unsigned ipt=0; ipt<elem_pt->integral_pt()->nweight(); ipt++)
-    //   {      
-    // 	std::pair<GeomObject*, Vector<double> > line_el_and_s = 
-    // 	  elem_pt->line_element_and_local_coordinate_at_knot(ipt);
-
-    // 	ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>* sing_el_pt =
-    // 	  dynamic_cast<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>*>(
-    // 	    line_el_and_s.first);
-
-    // 	EdgeCoordinates edge_coords = elem_pt->edge_coordinate_at_knot(ipt);
-	
-    // 	Vector<double> s_sing = line_el_and_s.second;
-	
-    // 	DShape dpsi_dx(SINGULAR_ELEMENT_NNODE_1D, 3);
-      
-    // 	sing_el_pt->dshape_eulerian(edge_coords,
-    // 				    s_sing,
-    // 				    dpsi_dx);
-
-    // 	// get the cartesians
-    // 	Vector<double> x(3, 0.0);
-    // 	CoordinateConversions::lagrangian_to_eulerian_coordinates(edge_coords, x);
-
-    // 	some_file << e << " " << ipt << " ";
-	
-    // 	for(unsigned i=0; i<3; i++)
-    // 	  some_file << x[i] << " ";
-
-    // 	Vector<double> interpolated_dc_dx(3, 0.0);
-    // 	for(unsigned n=0; n<SINGULAR_ELEMENT_NNODE_1D; n++)
-    // 	{
-    // 	  for(unsigned i=0; i<3; i++)
-    // 	  {
-    // 	    interpolated_dc_dx[i] += sing_el_pt->nodal_value(n, 0) * dpsi_dx(n,i);
-    // 	  }
-    // 	}
-	
-    // 	for(unsigned i=0; i<3; i++)
-    // 	{
-    // 	  some_file << interpolated_dc_dx[i] << " ";
-    // 	}
-
-    // 	some_file << std::endl;
-    //   }
-    // }
-
-    some_file.close();
-  }
-  // @@@@@@@@@@@@@@@@@@@
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-  // jacobian debug
-
-  // {
-  //   sprintf(filename,"%s/element-wise_jacobian_stress_jump.dat",
-  // 	    Doc_info.directory().c_str());
-  
-  //   some_file.open(filename);
-
-  //   const double threshold = 1e-10;
-    
-  //   for(unsigned e=0; e<Face_mesh_for_stress_jump_pt->nelement(); e++)
-  //   {
-  //     NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>* elem_pt =
-  // 	dynamic_cast<NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>*>(
-  // 	  Face_mesh_for_stress_jump_pt->element_pt(e));
-
-  //     unsigned ndof = elem_pt->ndof();
-  //     Vector<double> residuals(ndof, 0.0);
-  //     DenseMatrix<double> jacobian_analytic(ndof, ndof, 0.0);
-  //     DenseMatrix<double> jacobian_fd(ndof, ndof, 0.0);
-
-  //     // get the analytic jacobian
-  //     elem_pt->get_jacobian(residuals, jacobian_analytic);
-
-  //     // get it by finite diff
-  //     elem_pt->fill_in_jacobian_by_fd(residuals, jacobian_fd);
-
-  //     some_file << "ELEMENT: " << e << "\n";
-  //     for(unsigned i=0; i<ndof; i++)
-  //     {
-  // 	for(unsigned j=0; j<ndof; j++)
-  // 	{
-  // 	  // only output if we don't have all zeros
-  // 	  if(abs(jacobian_analytic(i,j)) > threshold ||
-  // 	     abs(jacobian_fd(i,j)) > threshold ||
-  // 	     abs(jacobian_fd(i,j) - jacobian_analytic(i,j)) > threshold)
-  // 	  {
-  // 	    int global_eqn = elem_pt->eqn_number(i);
-  // 	    int global_unknown = elem_pt->eqn_number(j);
-	    
-  // 	    some_file << i << " " << j << " "
-  // 		      << global_eqn << " " << global_unknown << " " 
-  // 		      << jacobian_analytic(i,j) << " "
-  // 		      << jacobian_fd(i,j) << " "
-  // 		      << jacobian_fd(i,j) - jacobian_analytic(i,j) << "\n";
-  // 	  }
-  // 	}
-  //     }
-  //     some_file << std::endl;
-  //   }
-
-  //   some_file.close();
-  // }
-
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
   
   bool do_bulk_output = true;
   if (CommandLineArgs::command_line_flag_has_been_set("--suppress_bulk_output"))
@@ -6532,7 +6325,7 @@ double FlowAroundDiskProblem<ELEMENT>::compute_jacobian_condition_number()
 /// Driver
 //========================================================================
 int main(int argc, char* argv[])
-{
+{  
   oomph_info << "\n\n=======================   Configuration:   =======================\n"  
 	     << "=                                                                =\n";
 #ifdef USE_FD_JACOBIAN  
@@ -6572,7 +6365,7 @@ int main(int argc, char* argv[])
   double t_start = TimingHelpers::timer();
   
   // Store command line arguments
-  CommandLineArgs::setup(argc,argv);
+  CommandLineArgs::setup(argc, argv);
 
   // ==========================================================================
   // Physical problem parameters
@@ -6629,6 +6422,7 @@ int main(int argc, char* argv[])
 
   // pin different singular functions to zero, for debug
   CommandLineArgs::specify_command_line_flag("--pin_broadside_amplitude");
+  CommandLineArgs::specify_command_line_flag("--pin_broadside_rotation_amplitude");
   CommandLineArgs::specify_command_line_flag("--pin_in_plane_amplitude");
   CommandLineArgs::specify_command_line_flag("--pin_in_plane_rotation_amplitude");
   
@@ -6750,24 +6544,27 @@ int main(int argc, char* argv[])
   CommandLineArgs::specify_command_line_flag("--do_eigenshizzle", &threshold_for_zero_eigenval);
   
   CommandLineArgs::specify_command_line_flag("--use_fd_lu_solver");
+
+  // ==========================================================================
+  // Solvers
+  // ==========================================================================
+  CommandLineArgs::specify_command_line_flag("--use_mumps_solver");
+  CommandLineArgs::specify_command_line_flag("--use_hypre_solver");
+  CommandLineArgs::specify_command_line_flag("--use_gmres_solver");
+  CommandLineArgs::specify_command_line_flag("--use_bicgstab_solver");
   
-#ifndef DO_TETGEN
-
-  // Gmsh command line invocation
-  CommandLineArgs::specify_command_line_flag
-    ("--gmsh_command_line",
-     &Global_Parameters::Gmsh_command_line_invocation);
-
-#endif
-
-  // Parse command line
-  CommandLineArgs::parse_and_assign();
-
+  // ==========================================================================
+  // **************************************************************************
+  // ==========================================================================
+  
   // // Note that this can make tetgen die!
   // feenableexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW);
 
   // Shut up prefix
   oomph_info.output_modifier_pt() = &default_output_modifier;
+
+  // Parse command line
+  CommandLineArgs::parse_and_assign();
   
   // Doc what has actually been specified on the command line
   CommandLineArgs::doc_specified_flags();

@@ -5078,8 +5078,26 @@ namespace oomph
 	    && isfinite(u_sing[2]) && isfinite(u_sing[3]);
 
 	  if(!is_finite)
-	  {
-	    oomph_info << "NOT FINITE!!" << std::endl;
+	  {	    
+	    oomph_info << "\n-----------------------------\n"
+		       << "Error: found infinite value at plot point\n\n"
+		       << "Singular fct ID: " << sing_fct_id << "\n"
+		       << "Plot point: " << iplot << "\n"
+		       << "Edge coordinates of plot point (\rho,\zeta,\phi): "
+		       << edge_coords_at_plot.rho << ", "
+		       << edge_coords_at_plot.zeta << ", "
+		       << edge_coords_at_plot.phi << ")\n"
+		       << "u_sing = " << u_sing[0] << ", "
+		       << u_sing[1] << ", "
+		       << u_sing[2] << ", "
+		       << u_sing[3] << "\n"
+		       << std::endl;
+
+	    // QUEHACERES for debugger
+	    sing_el_pt->singular_fct(edge_coords_at_plot,
+				     s_singular_el,
+				     sing_fct_id);
+	    
 	    abort();
 	  }
 	
