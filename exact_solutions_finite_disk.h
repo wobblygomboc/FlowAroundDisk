@@ -1,6 +1,8 @@
 #ifndef OOMPH_EXACT_SOLUTIONS_FINITE_DISK_HEADER
 #define OOMPH_EXACT_SOLUTIONS_FINITE_DISK_HEADER
 
+#include "additional_maths.h"
+
 namespace FlatDiskExactSolutions
 {  
   // shorthand
@@ -10,52 +12,7 @@ namespace FlatDiskExactSolutions
 
   // how far to shift the radius to compute "infinity"
   double dr = -1e-5;
-    
-  // inverse cotangent function
-  double acot(const double& x)
-  {
-    // catch the singular case 
-    if(x == 0)
-      return pi/2.0;
-    else
-      // arccot(x) = arctan(1/x)
-      return atan2(1,x);
-  }
-
-  // from c++11 complex header
-  template <typename _Tp>
-    std::complex<_Tp> acosh(const std::complex<_Tp>& __z)
-  {
-    // Kahan's formula.
-    return _Tp(2.0) * std::log(std::sqrt(_Tp(0.5) * (__z + _Tp(1.0)))
-  			       + std::sqrt(_Tp(0.5) * (__z - _Tp(1.0))));
-  }
-
-  // hyperbolic cosecant function
-  double csch(const double& x)
-  {
-    return 1.0/sinh(x);
-  }
-
-  // hyperbolic secant function
-  double Sech(const double& x)
-  {
-    return 1/cosh(x);
-  }
-
-  // function to compute the (lambda,zeta) oblate spheroidal coordinates
-  void oblate_spheroidal_coordinates(const double& r, const double& z,
-				     double& lambda, double& zeta)
-  {
-    std::complex<double> arg(r, z);
-    
-    double mu = std::real(acosh(arg));
-    double nu = std::imag(acosh(arg));
-
-    lambda = sinh(mu);
-    zeta   = sin(nu);
-  }
-
+ 
   Vector<double> velocity_cylindrical_to_cartesian(const double& u_r,
 						   const double& u_theta,
 						   const double& u_z,
@@ -108,16 +65,6 @@ namespace FlatDiskExactSolutions
     return x_shifted; 
   }
 
-  /* struct RigidBodyMotion */
-  /* { */
-  /* RigidBodyMotion() : U_x(0), U_z(0), Omega_z(0), Omega_minus_y(0) {} */
-    
-  /*   double U_x; */
-  /*   double U_z; */
-  /*   double Omega_z; */
-  /*   double Omega_minus_y; */
-  /* }; */
-  
   // //////////////////////////////////////////////////////////////////////////
   // //////////////////////////////////////////////////////////////////////////
   // //////////////////////////////////////////////////////////////////////////
@@ -148,19 +95,8 @@ namespace FlatDiskExactSolutions
     bool in_lower_half_space = (x[2] < 0);
     const double z = in_lower_half_space ? -x[2] : x[2];
     
-    double Pi = MathematicalConstants::Pi;
+    const double Pi = MathematicalConstants::Pi;
     
-    // Gupta plate velocity (set to unity, scaling will be done externally)
-    double V = 1;
-
-    // plate radius
-    double a = 1;
-
-    // mass?
-    double M = 1;
-    
-    double p0 = 0;
-        
     // --------------------------------------------------------
     // solution from Tanzosh & Stone (1996);
     // mu and nu are oblate spheroidal coordinates
@@ -169,11 +105,6 @@ namespace FlatDiskExactSolutions
 
     // get 'em
     oblate_spheroidal_coordinates(r, z, lambda, zeta);
-
-    // QUEHACERES delete?
-    std::complex<double> arg(r, z);
-    double mu = std::real(acosh(arg));
-    double nu = std::imag(acosh(arg));
 
     double u_r = (2.0/Pi)*sqrt((1 - zeta*zeta)/(1+lambda*lambda))*
       (lambda*lambda*zeta) / (lambda*lambda + zeta*zeta);
@@ -572,8 +503,7 @@ namespace FlatDiskExactSolutions
   // //////////////////////////////////////////////////////////////////////////
   
   // sum the total contributions of the linear combination of exact solutions
-  void total_exact_solution(const Vector<double>& x,
-			    // ### QUEHACERES delete   /* const RigidBodyMotion& rigid_body_motion, */
+  void total_exact_solution(const Vector<double>& x,			    
 			    const Vector<double>& u_disk,
 			    const Vector<double>& omega_disk,
 			    Vector<double>& u)
@@ -598,21 +528,9 @@ namespace FlatDiskExactSolutions
       // get the exact in plane velocity and pressure
       in_plane_translation_solution(x, u_temp);      
       
-      // scale and add to total // ### QUEHACERES delete: (minus sign because of moving frame)
+      // scale and add to total
       for(unsigned i=0; i<4; i++)
 	u[i] += u_temp[i] * U_in_plane;
-
-      /* // now shift to the rest frame of the disk for consistency with Moffatt solution */
-      /* u[0] += U_x; */
-
-      // QUEHACERES not doing gradients for now
-      /* for(unsigned i=0; i<3; i++) */
-      /* { */
-      /* 	for(unsigned j=0; j<3; j++) */
-      /* 	{ */
-      /* 	  du_dx(i,j) -= du_dx_temp(i,j) * U_x; */
-      /* 	} */
-      /* }       */
     }
 
     // broadside contribution
@@ -620,49 +538,27 @@ namespace FlatDiskExactSolutions
     {
       broadside_translation_solution(x, u_temp);
 
-      // scale and add to total  // ### QUEHACERES delete (minus sign because of moving frame)
+      // scale and add to total
       for(unsigned i=0; i<4; i++)
 	u[i] += u_temp[i] * U_broadside;
-
-      /* // now shift to the rest frame of the disk for consistency with Moffatt solution */
-      /* u[2] += U_broadside; */
     }
     
     if (Omega_minus_y != 0)
     {
       out_of_plane_rotation_solution(x, u_temp);
 
-      // radius and azimuth
-      const double r     = sqrt(x[0]*x[0] + x[1]*x[1]);
-      const double theta = atan2(x[1],x[0]);
-      
       // scale and add to total
       for(unsigned i=0; i<4; i++)
       	u[i] += u_temp[i] * Omega_minus_y; // no length because disk radius a=1
-
-      /* // now shift to the frame of the disk for consistency with Moffatt solution */
-      /* // \bm u = \bm \Omega \ctimes \bm r */
-      /* u[0] += -x[2] * Omega_minus_y; // u_x = -r_z * Omega_minus_y */
-      /* u[2] += -x[0] * Omega_minus_y; // u_z = -r_x * Omega_minus_y */
     }
     
     if (Omega_z != 0)
     {
       in_plane_rotation_solution(x, u_temp);
 
-      // radius and azimuth
-      const double r     = sqrt(x[0]*x[0] + x[1]*x[1]);
-      const double theta = atan2(x[1],x[0]);
-      
       // scale and add to total
       for(unsigned i=0; i<4; i++)
       	u[i] += u_temp[i] * Omega_z; // no length because disk radius a=1
-
-      // ### QUEHACERES delete
-      /* // now shift to the frame of the disk for consistency with Moffatt solution */
-      /* // \bm u = \bm \Omega \ctimes \bm r */
-      /* u[0] += -x[1] * Omega_z; // u_x = -r_y * Omega_z */
-      /* u[1] +=  x[0] * Omega_z; // u_y = +r_x * Omega_z */
     }
   }
 
