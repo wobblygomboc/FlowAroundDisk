@@ -425,30 +425,102 @@ TransformationMatrix(const TransformationMatrix& M)
   }
 };
 
-namespace Analytic_Functions
-{ 
-  // secant, for mathematica output
-  double Sec(const double& theta)
+// ============================================================================
+// ============================================================================
+
+double atan2pi(const double& y, const double& x)
+{
+  // Polar angle
+  double theta = atan2(y,x);
+
+  // prevent atan2 negative angle fuckery that causes a discontinuity at theta=pi
+  if (y < 0.0)
   {
-    return 1.0/cos(theta);
+    theta += 2.0 * MathematicalConstants::Pi;
   }
 
-  double delta(const unsigned& i, const unsigned& j)
-  {
-    return static_cast<double>(i == j);
-  }
+  return theta;
+}
 
-  // function to map any angle (+ve or -ve) to [0,2pi)
-  double map_angle_to_range_0_to_2pi(const double& signed_angle)
-  {
-    // shorthand
-    const double two_pi = 2.0 * MathematicalConstants::Pi;
+double delta(const unsigned& i, const unsigned& j)
+{
+  return static_cast<double>(i == j);
+}
 
-    // effectively implements Python modulo division
-    // (C++ would return a negative angle if we did -angle % 2pi)    
-    return signed_angle - two_pi * floor(signed_angle/two_pi);    
-  }
+// inverse cotangent function
+double acot(const double& x)
+{
+  // catch the limiting case 
+  if(x == 0)
+    return MathematicalConstants::Pi / 2.0;
+  else
+    // arccot(x) = arctan(1/x)
+    return atan2(1, x);
+}
+
+// secant, for mathematica output
+double Sec(const double& theta)
+{
+  return 1.0/cos(theta);
+}
+
+// hyperbolic cosecant function
+double csch(const double& x)
+{
+  return 1.0/sinh(x);
+}
+
+// hyperbolic secant function
+double Sech(const double& x)
+{
+  return 1/cosh(x);
+}
+
+// function to map any angle (+ve or -ve) to [0,2pi)
+double map_angle_to_range_0_to_2pi(const double& signed_angle)
+{
+  // shorthand
+  const double two_pi = 2.0 * MathematicalConstants::Pi;
+
+  // effectively implements Python modulo division
+  // (C++ would return a negative angle if we did -angle % 2pi)    
+  return signed_angle - two_pi * floor(signed_angle/two_pi);    
+}
+
+double map_angle_to_range_plus_minus_pi(const double& angle)
+{
+  // shorthand
+  const double pi = MathematicalConstants::Pi;
   
+  const double angle_zero_to_2pi = map_angle_to_range_0_to_2pi(angle);
+
+  return angle_zero_to_2pi > pi ? angle_zero_to_2pi - 2*pi : angle_zero_to_2pi;
+}
+
+// from c++11 complex header
+template <typename _Tp>
+std::complex<_Tp> acosh(const std::complex<_Tp>& __z)
+{
+  // Kahan's formula.
+  return _Tp(2.0) * std::log(std::sqrt(_Tp(0.5) * (__z + _Tp(1.0)))
+			     + std::sqrt(_Tp(0.5) * (__z - _Tp(1.0))));
+}
+
+// function to compute the (lambda,zeta) oblate spheroidal coordinates
+void oblate_spheroidal_coordinates(const double& r, const double& z,
+				   double& lambda, double& zeta)
+{
+  std::complex<double> arg(r, z);
+    
+  double mu = std::real(acosh(arg));
+  double nu = std::imag(acosh(arg));
+
+  lambda = sinh(mu);
+  zeta   = sin(nu);
+}
+
+namespace Analytic_Functions
+{
   // reflect an angle the z-axis
   double reflect_angle_wrt_z_axis(const double& theta)
   {

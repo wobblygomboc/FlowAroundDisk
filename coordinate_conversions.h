@@ -1,13 +1,10 @@
 #ifndef OOMPH_COORDINATE_CONVERSIONS
 #define OOMPH_COORDINATE_CONVERSIONS
 
+#include "additional_maths.h"
+
 namespace CoordinateConversions
 {
-  unsigned delta(const unsigned& i, const unsigned& j)
-  {
-    return i == j;
-  }
-    
   const double PI = MathematicalConstants::Pi;
 
   // QUEHACERES change this to something more generic at some point
@@ -85,7 +82,6 @@ namespace CoordinateConversions
     Vector<double> tangent(3, 0.0);
     Vector<double> normal(3, 0.0);
     Vector<double> binormal(3, 0.0);
-    unsigned b_dummy = 0;
     
     // get the triad unit vectors and disk edge at this zeta
     boundary_triad(edge_coords.zeta, x_disk_edge, tangent, normal, binormal);
@@ -218,13 +214,99 @@ namespace CoordinateConversions
     unknowns[1] = atan2pi(x[1], x[0]);             // zeta
     unknowns[2] = atan2(x[2], r0);                 // phi
 
-    // hit it with Newton's method with a finite-diff'd Jacobian
-    try
-    {
-      BlackBoxFDNewtonSolver::black_box_fd_newton_solve(
-      &eulerian_to_lagrangian_coord_residual, x, unknowns);
+    // keep track of the last good values we had
+    Vector<double> previous_converged_unknowns = unknowns;
+      
+    // back up the actual disk object
+    WarpedCircularDiskWithAnnularInternalBoundary* warped_disk_backup_pt =
+      disk_geom_obj_pt;
+
+    // disk parameters we're keeping fixed
+    const double target_epsilon = warped_disk_backup_pt->epsilon();
+    const double r_torus        = warped_disk_backup_pt->h_annulus();
+    const unsigned n            = warped_disk_backup_pt->n();
+    
+    // make a temporary copy to work with
+    disk_geom_obj_pt =
+      new WarpedCircularDiskWithAnnularInternalBoundary(r_torus,
+							target_epsilon,
+							n);
+
+    // number of sequential attempts without convergence before
+    // we give up and decide something more fundamental has gone wrong
+    const unsigned max_attempts = 4;
+
+    // tolerance on floating-point comparisons
+    const double tol = 1e-6;
+    
+    double current_epsilon = target_epsilon;
+    double d_eps = target_epsilon;
+    unsigned count = 0;
+      
+    while (true)
+    {   
+      // hit it with Newton's method with a finite-diff'd Jacobian
+      try
+      {
+	BlackBoxFDNewtonSolver::black_box_fd_newton_solve(
+	  &eulerian_to_lagrangian_coord_residual, x, unknowns);
+
+	// if we've got a converged solution at the target epsilon, we're done
+	if(abs(target_epsilon - current_epsilon) < tol)
+	  break;
+	else
+	{
+	  // reset the count
+	  count = 0;
+	  
+	  // otherwise increase the current value and go again
+	  current_epsilon += d_eps;
+
+	  // delete the previous version of the disk
+	  delete disk_geom_obj_pt;
+
+	  // create a new one with the increased epsilon
+	  disk_geom_obj_pt =
+	    new WarpedCircularDiskWithAnnularInternalBoundary(r_torus,
+							      current_epsilon,
+							      n);
+
+	  // store this solution
+	  previous_converged_unknowns = unknowns;
+	}
+      }
+      catch(OomphLibError& error) // didn't converge, initial guess was too poor
+      {
+	// I've caught the error so shut up!
+	error.disable_error_message();
+	
+	// increment the unconverged solve counter
+	count++;
+
+	// if we've hit the limit of attempts, then bail out
+	if(count == max_attempts)
+	  break;
+	
+	// otherwise reduce the current value and go again
+	d_eps *= 0.5;
+	
+	current_epsilon -= d_eps;
+
+	// delete the previous version of the disk
+	delete disk_geom_obj_pt;
+	
+	// create a new one with the increased epsilon
+	disk_geom_obj_pt =
+	  new WarpedCircularDiskWithAnnularInternalBoundary(r_torus,
+							    current_epsilon,
+							    n);
+
+	// reset the initial guess to the last converged solution
+	unknowns = previous_converged_unknowns;
+      }
     }
-    catch(const std::exception e)
+    
+    if(count == max_attempts)
     {
       std::ostringstream error_message;
       error_message << "Couldn't find zeta for the bulk point ("
@@ -235,10 +317,35 @@ namespace CoordinateConversions
 			  OOMPH_EXCEPTION_LOCATION);
     }
 
-    // interpret the solve
+    // did we get a solution with rho < 0?
+    if(unknowns[0] < 0)
+    {
+      // if so, then presumably flipping the angle by pi gives the same
+      // solution with a positive rho - lets check
+      unknowns[0] = -unknowns[0];
+      unknowns[2] += MathematicalConstants::Pi;
+
+      BlackBoxFDNewtonSolver::black_box_fd_newton_solve(
+	  &eulerian_to_lagrangian_coord_residual, x, unknowns);
+
+      if(unknowns[0] < 0)
+      {
+	// QUEHACERES useful error
+	oomph_info << "weird shit has happened\n" << std::endl;
+	abort();
+      }
+    }
+    
+    // interpret the solve and convert angles to the appropriate range;
+    // we're using [0,2pi] for zeta but [-pi:pi] for phi as the +/- jump
+    // is a useful identifier for the top/bottom surface of the plate
     edge_coords.rho  = unknowns[0];
-    edge_coords.zeta = unknowns[1];
-    edge_coords.phi  = unknowns[2];
+    edge_coords.zeta = map_angle_to_range_0_to_2pi(unknowns[1]);
+    edge_coords.phi  = map_angle_to_range_plus_minus_pi(unknowns[2]);
+
+    // clean up and reset the disk pointer
+    delete disk_geom_obj_pt;
+    disk_geom_obj_pt = warped_disk_backup_pt;
   }
 
   // ==========================================================================
