@@ -442,6 +442,12 @@ double atan2pi(const double& y, const double& x)
   return theta;
 }
 
+template <typename T>
+int sgn(T val) {
+  return (T(0) < val) - (val < T(0));
+}
+
+
 double delta(const unsigned& i, const unsigned& j)
 {
   return static_cast<double>(i == j);
@@ -497,6 +503,7 @@ double map_angle_to_range_plus_minus_pi(const double& angle)
   return angle_zero_to_2pi > pi ? angle_zero_to_2pi - 2*pi : angle_zero_to_2pi;
 }
 
+#if __cplusplus == 199711L
 // from c++11 complex header
 template <typename _Tp>
 std::complex<_Tp> acosh(const std::complex<_Tp>& __z)
@@ -505,6 +512,8 @@ std::complex<_Tp> acosh(const std::complex<_Tp>& __z)
   return _Tp(2.0) * std::log(std::sqrt(_Tp(0.5) * (__z + _Tp(1.0)))
 			     + std::sqrt(_Tp(0.5) * (__z - _Tp(1.0))));
 }
+
+#endif
 
 // function to compute the (lambda,zeta) oblate spheroidal coordinates
 void oblate_spheroidal_coordinates(const double& r, const double& z,

@@ -11,7 +11,7 @@ namespace CoordinateConversions
   // pointer to a geometric object which provides things like
   // boundary triad vectors and their derivatives
   WarpedCircularDiskWithAnnularInternalBoundary* disk_geom_obj_pt = 0x0;
-  
+    
   // ==========================================================================
   // Function which returns a cartesian unit vector in the i direction
   // ==========================================================================
@@ -225,12 +225,6 @@ namespace CoordinateConversions
     const double target_epsilon = warped_disk_backup_pt->epsilon();
     const double r_torus        = warped_disk_backup_pt->h_annulus();
     const unsigned n            = warped_disk_backup_pt->n();
-    
-    // make a temporary copy to work with
-    disk_geom_obj_pt =
-      new WarpedCircularDiskWithAnnularInternalBoundary(r_torus,
-							target_epsilon,
-							n);
 
     // number of sequential attempts without convergence before
     // we give up and decide something more fundamental has gone wrong
@@ -244,7 +238,17 @@ namespace CoordinateConversions
     unsigned count = 0;
       
     while (true)
-    {   
+    {
+      // make a temporary copy to work with
+      std::unique_ptr<WarpedCircularDiskWithAnnularInternalBoundary> temp_disk_pt =
+	std::make_unique<WarpedCircularDiskWithAnnularInternalBoundary>(r_torus, 
+									current_epsilon,
+									n);
+
+      // slightly hacky, but grab the and assign the raw pointer, since the
+      // black-box residual fct uses the raw disk_geom_obj_pt pointer
+      disk_geom_obj_pt = temp_disk_pt.get();
+	
       // hit it with Newton's method with a finite-diff'd Jacobian
       try
       {
@@ -261,15 +265,6 @@ namespace CoordinateConversions
 	  
 	  // otherwise increase the current value and go again
 	  current_epsilon += d_eps;
-
-	  // delete the previous version of the disk
-	  delete disk_geom_obj_pt;
-
-	  // create a new one with the increased epsilon
-	  disk_geom_obj_pt =
-	    new WarpedCircularDiskWithAnnularInternalBoundary(r_torus,
-							      current_epsilon,
-							      n);
 
 	  // store this solution
 	  previous_converged_unknowns = unknowns;
@@ -292,15 +287,6 @@ namespace CoordinateConversions
 	
 	current_epsilon -= d_eps;
 
-	// delete the previous version of the disk
-	delete disk_geom_obj_pt;
-	
-	// create a new one with the increased epsilon
-	disk_geom_obj_pt =
-	  new WarpedCircularDiskWithAnnularInternalBoundary(r_torus,
-							    current_epsilon,
-							    n);
-
 	// reset the initial guess to the last converged solution
 	unknowns = previous_converged_unknowns;
       }
@@ -320,6 +306,16 @@ namespace CoordinateConversions
     // did we get a solution with rho < 0?
     if(unknowns[0] < 0)
     {
+      // make a temporary copy to work with
+      std::unique_ptr<WarpedCircularDiskWithAnnularInternalBoundary> temp_disk_pt =
+	std::make_unique<WarpedCircularDiskWithAnnularInternalBoundary>(r_torus, 
+									current_epsilon,
+									n);
+
+      // slightly hacky, but grab the and assign the raw pointer, since the
+      // black-box residual fct uses the raw disk_geom_obj_pt pointer
+      disk_geom_obj_pt = temp_disk_pt.get();
+      
       // if so, then presumably flipping the angle by pi gives the same
       // solution with a positive rho - lets check
       unknowns[0] = -unknowns[0];
@@ -330,9 +326,19 @@ namespace CoordinateConversions
 
       if(unknowns[0] < 0)
       {
-	// QUEHACERES useful error
-	oomph_info << "weird shit has happened\n" << std::endl;
-	abort();
+	// reset the raw disk pointer
+	disk_geom_obj_pt = warped_disk_backup_pt;
+	
+	std::ostringstream error_message;
+	error_message << "Something weird has happened - the initial Lagrangian "
+		      << "coordinate solve returned a negative radial coordinate, "
+		      << "so flipping the sign and reflecting the elevation angle "
+		      << "should have resulted in a valid solution, but it didn't "
+		      << "converge.\n\n";
+
+	throw OomphLibError(error_message.str(),
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
       }
     }
     
@@ -343,8 +349,7 @@ namespace CoordinateConversions
     edge_coords.zeta = map_angle_to_range_0_to_2pi(unknowns[1]);
     edge_coords.phi  = map_angle_to_range_plus_minus_pi(unknowns[2]);
 
-    // clean up and reset the disk pointer
-    delete disk_geom_obj_pt;
+    // reset the raw disk pointer
     disk_geom_obj_pt = warped_disk_backup_pt;
   }
 

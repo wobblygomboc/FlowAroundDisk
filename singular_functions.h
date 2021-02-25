@@ -60,6 +60,9 @@ namespace SingularFunctions
 
     /* // compute dzeta/dx at this Lagrangian point */
     /* Vector<double> dzeta_dx = compute_dzeta_dx(edge_coords); */
+
+    // get the sign of the elevation angle; +ve => upper disk, -ve => lower disk
+    int sign_of_phi = sgn(edge_coords.phi);
     
     // now compute the solution at a small increment in each Cartesian direction
     for(unsigned j=0; j<3; j++)
@@ -71,16 +74,35 @@ namespace SingularFunctions
       x_plus_dx[j] += fd_dx;
 
       // convert the incremented position into Lagrangian coords
-      EdgeCoordinates edge_coords_plus_dx;
+      EdgeCoordinates edge_coords_plus_dx;      
       CoordinateConversions::eulerian_to_lagrangian_coordinates(
 	x_plus_dx, edge_coords_plus_dx);
 
+      // get the sign of phi after the dx shift
+      int sign_of_phi_at_dx = sgn(edge_coords_plus_dx.phi);
+
+      // direction of the increment w.r.t. the +ve coordinate axis
+      int direction = 1;
+
+      // did the dx increment move the point to the other side of the disk?
+      if (sign_of_phi != sign_of_phi_at_dx)
+      {
+	// if it did, flip the direction sign
+	direction = -1;
+
+	// take the FD step in the opposite direction instead
+	x_plus_dx[j] -= 2 * fd_dx;
+
+	CoordinateConversions::eulerian_to_lagrangian_coordinates(
+	x_plus_dx, edge_coords_plus_dx);
+      }
+      
       // get the solution at the incremented position
       Vector<double> u_plus_dx = (*sing_fct_pt)(edge_coords_plus_dx);
 	
       // now do the finite diff to get the velocity gradients
       for(unsigned i=0; i<3; i++)
-    	du_dx(i,j) = (u_plus_dx[i] - u0[i]) / fd_dx;
+    	du_dx(i,j) = double(direction) * (u_plus_dx[i] - u0[i]) / fd_dx;
     }
   }
   
@@ -1315,8 +1337,8 @@ namespace SingularFunctions
 
     // in-plane motion, uz = 0
     Vector<double> u_disk(3, 0.0);
-    u_disk[0] = Global_Parameters::u_disk_rigid_body[0];
-    u_disk[1] = Global_Parameters::u_disk_rigid_body[1];
+    u_disk[0] = Global_Parameters::u_disk_rigid_translation[0];
+    u_disk[1] = Global_Parameters::u_disk_rigid_translation[1];
     
     Vector<double> omega_disk(3, 0.0);
     
@@ -1334,8 +1356,8 @@ namespace SingularFunctions
 
     // in-plane motion
     Vector<double> u_disk(3, 0.0);
-    u_disk[0] = Global_Parameters::u_disk_rigid_body[0];
-    u_disk[1] = Global_Parameters::u_disk_rigid_body[1];
+    u_disk[0] = Global_Parameters::u_disk_rigid_translation[0];
+    u_disk[1] = Global_Parameters::u_disk_rigid_translation[1];
 
     Vector<double> omega_disk(3, 0.0);
     
@@ -1444,8 +1466,8 @@ namespace SingularFunctions
 
     // constant amplitudes, just to be able to switch off the ones
     // we're not using
-    double c_broadside = Global_Parameters::u_disk_rigid_body[2];
-    double c_in_plane  = Global_Parameters::u_disk_rigid_body[0];
+    double c_broadside = Global_Parameters::u_disk_rigid_translation[2];
+    double c_in_plane  = Global_Parameters::u_disk_rigid_translation[0];
     
     // add 'em up
     stokes_residual_cyl[0] = c_broadside * stokes_residual_cyl_broadside[0] +
@@ -1533,8 +1555,8 @@ namespace SingularFunctions
 
     // constant amplitudes, just to be able to switch off the ones
     // we're not using
-    double c_broadside = Global_Parameters::u_disk_rigid_body[2];
-    double c_in_plane  = Global_Parameters::u_disk_rigid_body[0];
+    double c_broadside = Global_Parameters::u_disk_rigid_translation[2];
+    double c_in_plane  = Global_Parameters::u_disk_rigid_translation[0];
     
     double divergence_total = -c_broadside * divergence_broadside -
       c_in_plane * divergence_in_plane;

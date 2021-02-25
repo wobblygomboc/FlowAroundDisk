@@ -28,31 +28,16 @@
 //LIC// 
 //LIC//====================================================================
 
-#include <fenv.h>
-
-// needed to reset the FPU control word which Triangle messes around with
-#include <fpu_control.h>
-
-//Generic routines
-#include "generic.h"
-
-#include "external_src/oomph_superlu_4.3/slu_ddefs.h"
-
 // ============================================================================
 // custom defines
 // ============================================================================
-
-// NNODE_1D for the singular line elements - may affect stability of the scheme
-#define SINGULAR_ELEMENT_NNODE_1D 3
- 
-#define xUSE_FD_JACOBIAN
 
 #define xPRINT_SINGULAR_JACOBIAN
 
 #define xCOMPUTE_INITIAL_JACOBIAN_EIGENFUNCTIONS
 
 // do we want to duplicate the edge nodes (for better output)?
-#define xDUPLICATE_EDGE_NODES
+#define DUPLICATE_EDGE_NODES
 
 // wraps the problem.newton_solve() in a try/catch block and prints jacobian
 // (but cocks up output of other exceptions)
@@ -66,10 +51,25 @@
 const double lower_plate_z_shift = -0.987e-8;
 #endif
 
-double TetMeshBase::Tolerance_for_boundary_finding = 1.0e-8;
-bool TetMeshBase::Shut_up_about_nonplanar_boundary_nodes = true;
+// NNODE_1D for the singular line elements - may affect stability of the scheme
+#define SINGULAR_ELEMENT_NNODE_1D 3
+ 
+#define xUSE_FD_JACOBIAN
 
 // ============================================================================
+// Includes
+// ============================================================================
+
+#include <fenv.h>
+
+// needed to reset the FPU control word which Triangle messes around with
+#include <fpu_control.h>
+
+//Generic routines
+#include "generic.h"
+
+#include "external_src/oomph_superlu_4.3/slu_ddefs.h"
+
 // singular elements
 #include "navier_stokes_sing_face_element.h"
 
@@ -105,8 +105,12 @@ bool TetMeshBase::Shut_up_about_nonplanar_boundary_nodes = true;
 
 using namespace oomph;
 
-// double TetMeshBase::Tolerance_for_boundary_finding = 1.0e-8;
-// bool TetMeshBase::Shut_up_about_nonplanar_boundary_nodes = true;
+// ============================================================================
+// Globals
+// ============================================================================
+
+double TetMeshBase::Tolerance_for_boundary_finding = 1.0e-8;
+bool TetMeshBase::Shut_up_about_nonplanar_boundary_nodes = true;
 
 ///////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
@@ -117,6 +121,9 @@ using namespace oomph;
 //=============================================================
 namespace Global_Parameters
 {
+  // QUEHACERES hacky, but makes life easier for the hacky FSI fixed-point loop
+  Problem* Problem = nullptr;
+  
   // QUEHACERES delete after debug
   double broadside_amplitude_pin          = 0.0;
   double broadside_rotation_amplitude_pin = 0.0;
@@ -132,10 +139,14 @@ namespace Global_Parameters
   double Box_half_height = 0.5; //1.0;
 
   // velocity of the whole disk (rigid)
-  Vector<double> u_disk_rigid_body(3, 0.0);
+  Vector<double> u_disk_rigid_translation(3, 0.0);
 
   // angular velocity of whole disk about positive Cartesian axes
   Vector<double> omega_disk(3, 0.0);
+
+  // do we want to enforce no-slip (and on top boundary, zero-traction)?
+  // if this is false then we're doing exact flat disk BCs
+  bool No_slip_boundaries = false;
   
   // amplitude and wavenumber of the warped disk
   double Epsilon = 0;
@@ -144,6 +155,15 @@ namespace Global_Parameters
   // amount of pressure regularisation to add to the functional which we're
   // minimising in the torus region
   double Pressure_regularisation_factor = 0.1;
+
+  double Velocity_regularisation_factor = 1.0;
+  
+  // Convergence tolerance for the outer FSI Newton solve
+  double FSI_convergence_tol = 1e-6;
+
+  // Finite-diff step size for outer FSI solve (problem is linear, so
+  // let's default to a nice big step to avoid noise)
+  double FSI_FD_step = 1e-2;
   
   // QUEHACERES pressure zero-level for debug (this is constant for broadside, will
   // need to vary (probably?) for in-plane)
@@ -164,6 +184,16 @@ namespace Global_Parameters
   // singular amplitudes.
   // Default: same number of elements as on the edge of the disk
   unsigned Nsingular_line_element = Half_nsegment_disk * 4 - 1;
+
+  // relative density difference between the fluid and the elastic sheet,
+  // i.e. (rho_s - rho_f) / rho_f
+  double Relative_density_difference = 0.0;
+
+  // Balance of (buoyancy-reduced) gravity vs viscosity
+  double Archimedes_number = 0.0;
+
+  // Non-dimensional mass of the disk
+  double Mass = 1.0;
   
   unsigned Nplot_for_bulk = 5;
 
@@ -188,30 +218,34 @@ namespace Global_Parameters
   // split corner elements which have all their nodes pinned on the outer boundary
   bool Split_corner_elements = true; 
 
-  // ### QUEHACERES delete
-  // // wrapper which combines the above four parameters
-  // FlatDiskExactSolutions::RigidBodyMotion rigid_body_motion;
-  
   // do the disk-on-disk plots (expensive so default off)
   bool Do_disk_on_disk_plots = false;
   
-  // offset for boundary ID numbering, essentially the newly created upper
-  // disk boundaries will be numbered as the corresponding lower disk boundary
-  // plus this offset. The offset will be determined during the duplication
-  // of plate nodes.
-  unsigned upper_disk_boundary_offset = 0;
-  
   // store the warped disk object so that we can use it to get
   // surface normals
-  WarpedCircularDiskWithAnnularInternalBoundary* Warped_disk_with_boundary_pt;
+  WarpedCircularDiskWithAnnularInternalBoundary* Warped_disk_with_boundary_pt = nullptr;
 
-  MeshAsGeomObject* mesh_as_geom_object_pt;
+  MeshAsGeomObject* mesh_as_geom_object_pt = nullptr;
 
   bool Only_subtract_first_singular_term = false;
 
   // brutal global finite-diff solver
   bool Use_fd_lu_solver = false;
 
+  // --------------------------------------------------------------------------
+
+  // function to compute the body force, which is the reduced gravity
+  // (gravity scaled by the relative difference in densities between the
+  // fluid and solid)
+  void reduced_gravity(const Vector<double>& x, Vector<double>& body_force)
+  {
+    body_force.resize(3, 0.0);
+
+    body_force[0] = 0.0;
+    body_force[1] = 0.0;
+    body_force[2] = -Relative_density_difference;
+  }
+  
   // compute the total disk velocity u = u_trans + u_rot
   Vector<double> disk_velocity(const Vector<double>& x)
   {
@@ -228,9 +262,9 @@ namespace Global_Parameters
 
     // total velocity is the sum of the velocities associated with
     // rigid body rotation and translation
-    u_disk[0] = u_rotational[0] + u_disk_rigid_body[0];
-    u_disk[1] = u_rotational[1] + u_disk_rigid_body[1];
-    u_disk[2] = u_rotational[2] + u_disk_rigid_body[2];
+    u_disk[0] = u_rotational[0] + u_disk_rigid_translation[0];
+    u_disk[1] = u_rotational[1] + u_disk_rigid_translation[1];
+    u_disk[2] = u_rotational[2] + u_disk_rigid_translation[2];
     
     return u_disk;
   }
@@ -239,15 +273,15 @@ namespace Global_Parameters
   {
   
     // broadside speed is the z-velocity component
-    double u_broadside =  u_disk_rigid_body[2];
+    double u_broadside =  u_disk_rigid_translation[2];
     
     // in-plane speed is the magnitude of the x-y velocity
-    double u_in_plane = sqrt( pow(u_disk_rigid_body[0], 2) +
-			      pow(u_disk_rigid_body[1], 2) );
+    double u_in_plane = sqrt( pow(u_disk_rigid_translation[0], 2) +
+			      pow(u_disk_rigid_translation[1], 2) );
 
     // azimuthal angle of the in-plane translation vector
-    double zeta_translation = atan2pi(u_disk_rigid_body[1],
-				      u_disk_rigid_body[0]);
+    double zeta_translation = atan2pi(u_disk_rigid_translation[1],
+				      u_disk_rigid_translation[0]);
   
     // azimuthal angle of the out-of-plane rotation vector
     double zeta_rotation = atan2pi(omega_disk[1],
@@ -323,7 +357,7 @@ namespace Analytic_Functions
 
     // forward
     FlatDiskExactSolutions::total_exact_solution(x,
-						 Global_Parameters::u_disk_rigid_body,
+						 Global_Parameters::u_disk_rigid_translation,
 						 Global_Parameters::omega_disk,
 						 u_exact);
   }
@@ -337,7 +371,7 @@ namespace Analytic_Functions
    
     // forward
     FlatDiskExactSolutions::total_exact_velocity_gradient(x,
-    							  Global_Parameters::u_disk_rigid_body,
+    							  Global_Parameters::u_disk_rigid_translation,
     							  Global_Parameters::omega_disk,
     							  dudx);    
   }
@@ -350,6 +384,17 @@ namespace Analytic_Functions
 			   const Vector<double>& outer_unit_normal,
 			   Vector<double>& traction)
   {
+    // make sure we've got enough space
+    traction.resize(3,0);
+
+    // zero out the traction
+    std::fill(traction.begin(), traction.end(), 0.0);
+
+    // if we're doing the no-slip problem, then we're enforcing
+    // zero traction on the top surface, so leave the traction empty
+    if(Global_Parameters::No_slip_boundaries)
+      return;
+     
     Vector<double> u(4,0);
     DenseMatrix<double> du_dx(3,3,0);
 
@@ -367,12 +412,6 @@ namespace Analytic_Functions
     
     // compute the stress from the strain rate
     DenseMatrix<double> total_stress = stress(total_strain_rate, p);
-
-    // make sure we've got enough space
-    traction.resize(3,0);
-
-    // zero out the traction
-    std::fill(traction.begin(), traction.end(), 0.0);
 
     // compute the traction t_i = tau_ij n_j
     for(unsigned i=0; i<3; i++)
@@ -394,7 +433,7 @@ namespace Analytic_Functions
 // to output values (to check boundary conditions)
 //=============================================================================
 template <class ELEMENT>
-class NavierStokesFaceElement : public virtual FaceGeometry<ELEMENT>, 
+class RigidDiskFaceElement : public virtual FaceGeometry<ELEMENT>, 
 				public virtual FaceElement
 {
  
@@ -402,7 +441,7 @@ public:
 
   ///Constructor, which takes a "bulk" element and the value of the index
   ///and its limit
-  NavierStokesFaceElement(FiniteElement* const& element_pt, 
+  RigidDiskFaceElement(FiniteElement* const& element_pt, 
 			  const int& face_index) : 
     FaceGeometry<ELEMENT>(), FaceElement()
     { 
@@ -412,8 +451,26 @@ public:
       
       //Set the dimension from the dimension of the first node
       Dim = node_pt(0)->ndim();
+
+      // flip the sign of the normal, since outer_unit_normal() gives the normal
+      // which points out of the bulk element we're attached to, but since
+      // we're attached to the disk we want to point into the bulk element,
+      // i.e. if we're on the top surface of the disk the bulk element is above
+      // and so the default is for the normal to point downwards, but the upper
+      // disk normal points upwards
+      normal_sign() = -normal_sign();
     }
 
+  RigidDiskFaceElement(const RigidDiskFaceElement&)
+    {
+      BrokenCopy::broken_copy("RigidDiskFaceElement");
+    }
+
+  void operator=(const RigidDiskFaceElement&)
+    {
+      BrokenCopy::broken_assign("RigidDiskFaceElement");
+    }
+  
   /// \short Output function:  
   ///  Output x, y, u, v, p, theta at Nplot^DIM plot points
   // Start of output function
@@ -539,7 +596,7 @@ public:
       return bulk_el_pt->strain_rate(s_bulk, _strain_rate);
     }
   
-  double get_contribution_to_normal_stress() const
+  Vector<double> get_contribution_to_normal_stress() const
     {
       //Find out how many nodes there are
       const unsigned n_node = this->nnode();
@@ -557,7 +614,7 @@ public:
       Vector<double> s(Dim-1);
 
       // Saves result of integration
-      double normal_stress_integral = 0.0;
+      Vector<double> total_force(Dim, 0.0);
       
       //Loop over the integration points
       for(unsigned ipt=0; ipt<n_intpt; ipt++)
@@ -596,21 +653,22 @@ public:
 
 	stress = Analytic_Functions::stress(strain_rate_fe, p);
 
-	// now add the weighted contribution to the normal stress
+	// now add the weighted traction to the total force
 	for(unsigned i=0; i<Dim; i++)
 	{
 	  for(unsigned j=0; j<Dim; j++)
-	  {	      
-	    normal_stress_integral += stress(i,j) * unit_normal[j] * W;
+	  {
+	    total_force[i] += stress(i,j) * unit_normal[j] * W;
 	  }
 	}
       } // end loop over integration points
 
-      return normal_stress_integral;
+      return total_force;
     }
    
       
 private:
+  
   unsigned Dim;
 };
 
@@ -638,7 +696,7 @@ public:
       {
 	delete Inner_boundary_pt[h];
       }
-      delete Outer_boundary_pt;     
+      delete Outer_boundary_pt;
     }
   
   /// Actions before adapt (empty)
@@ -696,15 +754,24 @@ public:
   double compute_jacobian_condition_number();
 
   void compute_and_assign_smallest_eigensolution(const double& threshold=1e-12);
+
+  void hacky_fixed_point_fsi_solve();
+
+  void fsi_residual_sweep();
+  
+  /// QUEHACERES good comment here
+  void get_total_disk_force_and_moment_residuals(
+    const Vector<double>& centre_of_rotation,
+    Vector<double>& residuals);
+
+  /// Helper function to apply boundary conditions
+  void apply_boundary_conditions();
   
 private:
  
   /// Apply BCs and make elements functional
   void complete_problem_setup();
  
-  /// Helper function to apply boundary conditions
-  void apply_boundary_conditions();
-
   void delete_face_elements()
     {
       // Loop over the flux elements
@@ -792,9 +859,9 @@ private:
   // function which takes a boundary element in the augmented region
   // and finds the corresponding boundary element in the bulk region
   void find_corresponding_element_on_bulk_side_of_augmented_boundary(
-    ELEMENT*& augmented_elem_pt,
+    ELEMENT* const& augmented_elem_pt,
     const int& face_index,
-    ELEMENT*& corresponding_elem_pt);
+    ELEMENT*& corresponding_elem_pt) const;
   
   /// \short function to populate a map which maps each node in the mesh to
   /// a set of all the elements it is associated with
@@ -805,7 +872,7 @@ private:
   /// coordinates are computed for the elements plot points, otherwise it is
   /// for their knots (integration points).
   void setup_edge_coordinates_and_singular_element(
-    const FiniteElement* elem_pt,
+    FiniteElement* const& elem_pt,
     Vector<EdgeCoordinates>& edge_coordinates_at_knot_pt,
     Vector<std::pair<GeomObject*, Vector<double> > >& line_element_and_local_coordinate,
     const bool& use_plot_points = false) const;
@@ -814,7 +881,7 @@ private:
   /// element and local coordinates in the singular line mesh
   /// (which computes the appropriate amplitude) from Eulerian coordinates
   void get_edge_coordinates_and_singular_element(
-    const FiniteElement* elem_pt,
+    FiniteElement* const& elem_pt,
     const Vector<double>& x,
     EdgeCoordinates& edge_coordinates_at_point,
     std::pair<GeomObject*, Vector<double> >& line_element_and_local_coordinate) const;
@@ -1013,6 +1080,8 @@ private:
   unsigned Dim;
   
   DocInfo Doc_info;
+
+  unsigned Fsi_iteration_counter;
 };
 
 
@@ -1021,7 +1090,13 @@ private:
 /// Constructor
 //========================================================================
 template <class ELEMENT>
-FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
+FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem() :
+  Bulk_mesh_pt(nullptr), Face_mesh_for_stress_jump_pt(nullptr),
+  Face_mesh_for_singularity_integral_pt(nullptr), Traction_boundary_condition_mesh_pt(nullptr),
+  Singular_fct_element_mesh_upper_pt(nullptr), Singular_fct_element_mesh_lower_pt(nullptr),
+  Singular_fct_element_mesh_pt(nullptr), Face_mesh_for_bc_pt(nullptr), Torus_region_mesh_pt(nullptr),
+  Mesh_as_geom_object_pt(nullptr), Face_mesh_as_geom_object_pt(nullptr),
+  Singular_line_mesh_as_geom_object_pt(nullptr), Outer_boundary_pt(nullptr)
 { 
 #ifdef OOMPH_HAS_MPI
   std::cout << "This code has been compiled with mpi support \n " 
@@ -1038,6 +1113,9 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   // set the number of dimensions
   Dim = 3;
 
+  // initialise the FSI iteration counter to zero
+  Fsi_iteration_counter = 0;
+    
   // OUTER BOUNDARY
   //===============
 
@@ -1187,7 +1265,7 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   Bulk_mesh_pt->disable_projection();
 
   /// Mesh as geom object representation of mesh
-  Mesh_as_geom_object_pt = 0x0;
+  Mesh_as_geom_object_pt = nullptr;
 
   // Make new geom object
   Mesh_as_geom_object_pt = new MeshAsGeomObject(Bulk_mesh_pt);
@@ -1294,113 +1372,13 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
   // Complete problem setup
   complete_problem_setup();
 
-  // QUEHACERES debug @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-  ofstream some_file;
-  ostringstream filename;
-  
-  // output the global mesh nodes
-  // ----------------------------------------------------------
-  filename << Doc_info.directory() << "/debug_global_mesh_nodes.dat";
-  some_file.open(filename.str().c_str());
-  
-  unsigned nnode = mesh_pt()->nnode();
-  for(unsigned j=0; j<nnode; j++)
+    // buckle up
+  if(Global_Parameters::Use_fd_lu_solver)
   {
-    Node* node_pt = mesh_pt()->node_pt(j);
-
-    for(unsigned i=0; i<3; i++)
-      some_file << node_pt->x(i) << " ";
-
-    some_file << node_pt->nvalue() << " "
-	      << node_pt << std::endl;
+    linear_solver_pt() = new FD_LU;
   }
-  some_file.close();
-
-  // output the bulk mesh nodes
-  // ----------------------------------------------------------
-  filename.str("");
-  filename << Doc_info.directory() << "/debug_bulk_mesh_nodes.dat";
-  some_file.open(filename.str().c_str());
-  
-  nnode = Bulk_mesh_pt->nnode();
-  for(unsigned j=0; j<nnode; j++)
+  else
   {
-    Node* node_pt = Bulk_mesh_pt->node_pt(j);
-
-    for(unsigned i=0; i<3; i++)
-      some_file << node_pt->x(i) << " ";
-    
-    some_file << node_pt << std::endl;
-  }
-  some_file.close();
-
-  // output the stress jump mesh nodes
-  // ----------------------------------------------------------
-  filename.str("");
-  filename << Doc_info.directory() << "/debug_stress_jump_mesh_nodes.dat";
-  some_file.open(filename.str().c_str());
-  
-  nnode = Face_mesh_for_stress_jump_pt->nnode();
-  for(unsigned j=0; j<nnode; j++)
-  {
-    Node* node_pt = Face_mesh_for_stress_jump_pt->node_pt(j);
-
-    for(unsigned i=0; i<3; i++)
-      some_file << node_pt->x(i) << " ";
-    
-    some_file << node_pt << std::endl;
-  }
-  some_file.close();
-
-  // output the BC mesh nodes
-  // ----------------------------------------------------------
-  filename.str("");
-  filename << Doc_info.directory() << "/debug_bc_mesh_nodes_from_elems.dat";
-  some_file.open(filename.str().c_str());
-  
-  // nnode = Face_mesh_for_bc_pt->nnode();
-  unsigned nel = Face_mesh_for_bc_pt->nelement();
-  for(unsigned e=0; e<nel; e++)
-  {
-    FiniteElement* el_pt = dynamic_cast<FiniteElement*>(
-      Face_mesh_for_bc_pt->element_pt(e) );
-
-    for(unsigned j=0; j<el_pt->nnode(); j++)
-    {
-      Node* node_pt = el_pt->node_pt(j);
-
-      for(unsigned i=0; i<3; i++)
-	some_file << node_pt->x(i) << " ";
-    
-      some_file << node_pt << std::endl;
-    }
-  }
-  some_file.close();
-
-  filename.str("");
-  filename << Doc_info.directory() << "/debug_non_aug_bulk_nodes.dat";
-  some_file.open(filename.str().c_str());
-  unsigned region_id = 0;
-  unsigned n_el = Bulk_mesh_pt->nregion_element(region_id);
-  for (unsigned e=0; e<n_el; e++)
-  {
-    // get a pointer to the torus-region element
-    ELEMENT* el_pt =
-      dynamic_cast<ELEMENT*>(Bulk_mesh_pt->region_element_pt(region_id, e));
-
-    for(unsigned n=0; n<el_pt->nnode(); n++)
-    {
-      Node* node_pt = el_pt->node_pt(n);
-
-      for(unsigned i=0; i<3; i++)
-	some_file << node_pt->x(i) << " ";
-      
-      some_file << node_pt->nvalue() << " "
-		<< node_pt << std::endl;
-    }
-  }
-  some_file.close();
-
 #ifdef OOMPH_HAS_MUMPS
     oomph_info << "Using MUMPS linear solver\n\n";
   
@@ -1411,85 +1389,6 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem()
     // set it
     linear_solver_pt() = mumps_linear_solver_pt;
 #endif
-     
-  // buckle up
-  if(Global_Parameters::Use_fd_lu_solver)
-  {
-    linear_solver_pt() = new FD_LU;
-  }
-
-  {
-    std::map<Node*, Node*> aug_to_nonaug_node_lookup;
-    for(std::map<Node*, Node*>::iterator it = Stress_jump_duplicate_node_map.begin();
-	it != Stress_jump_duplicate_node_map.end(); it++)
-    {
-      aug_to_nonaug_node_lookup[it->second] = it->first;
-    }
-    
-    unsigned region_id = Torus_region_id;
-    for (unsigned b = First_torus_boundary_id;
-	 b <= Last_torus_boundary_id; b++)
-    {
-      unsigned nel = Bulk_mesh_pt->nboundary_element_in_region(b, region_id);
-      for (unsigned e=0; e<nel; e++)
-      {
-	ELEMENT* augmented_elem_pt = dynamic_cast<ELEMENT*>(
-	  Bulk_mesh_pt->boundary_element_in_region_pt(b, region_id, e));
-        
-	// What is the index of the face of the bulk element at the boundary
-	int face_index = Bulk_mesh_pt->
-	  face_index_at_boundary_in_region(b, region_id, e);
-
-	// QUEHACERES debug check
-	NavierStokesTractionElement<ELEMENT>* face_elem_pt =
-	  new NavierStokesTractionElement<ELEMENT>(augmented_elem_pt, face_index);
-
-	ELEMENT* corresponding_elem_pt =
-	  Torus_boundary_aug_to_non_aug_by_face_index_map.at(augmented_elem_pt).at(face_index);
-	// Torus_boundary_element_augmented_to_bulk_map.at(augmented_elem_pt);
-	  
-	for(unsigned j=0; j < face_elem_pt->nnode(); j++)
-	{
-	  Node* nonaug_node_pt =
-	    aug_to_nonaug_node_lookup.at(face_elem_pt->node_pt(j));
-	  
-	  bool found_aug_node_in_non_aug_elem = false;
-	  for(unsigned j_nonaug = 0; j_nonaug < corresponding_elem_pt->nnode(); j_nonaug++)
-	  {
-	    if(nonaug_node_pt == corresponding_elem_pt->node_pt(j_nonaug))
-	    {
-	      found_aug_node_in_non_aug_elem = true;
-	      break;
-	    }
-	  }
-
-	  if(!found_aug_node_in_non_aug_elem)
-	  {
-	    oomph_info << "well shiiii'..." << std::endl;
-	    oomph_info << "Didn't find non-aug node " << nonaug_node_pt << " ("
-		       << nonaug_node_pt->x(0) << ", "
-		       << nonaug_node_pt->x(1) << ", "
-		       << nonaug_node_pt->x(2) << ") from augmented element "
-		       << augmented_elem_pt
-		       << " in non-aug element "
-		       << corresponding_elem_pt << ":\n";
-
-	    for(unsigned n=0; n < corresponding_elem_pt->nnode(); n++)
-	    {
-	      Node* node_pt = corresponding_elem_pt->node_pt(n);
-
-	      oomph_info << node_pt << " ("
-			 << node_pt->x(0) << ", "
-			 << node_pt->x(1) << ", "
-			 << node_pt->x(2) << ")\n";
-	    }
-	      
-	    abort();
-	  }
-	}
-	delete face_elem_pt;
-      }
-    }
   }
   
   // moved assign eqns to main body since we may still be pinning tingz
@@ -1532,7 +1431,7 @@ build_map_from_augmented_to_bulk_region_torus_boundary_elements()
       // this face, but in the bulk region (so we can output things like
       // traction on both sides of the region boundary)
       // ---------------------------------------------------------------
-      ELEMENT* corresponding_elem_pt = 0x0;
+      ELEMENT* corresponding_elem_pt = nullptr;
       find_corresponding_element_on_bulk_side_of_augmented_boundary(augmented_elem_pt,
 								    face_index,
 								    corresponding_elem_pt);
@@ -1547,10 +1446,6 @@ build_map_from_augmented_to_bulk_region_torus_boundary_elements()
       // now put the amended map back in 
       Torus_boundary_aug_to_non_aug_by_face_index_map[augmented_elem_pt] =
 	face_index_to_non_aug_elem_map;
-
-      // QUEHACERES delete
-      // Torus_boundary_element_augmented_to_bulk_map[augmented_elem_pt] =
-      // 	corresponding_elem_pt;
     }
   }
 }
@@ -1630,15 +1525,15 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
       int face_index = Bulk_mesh_pt->face_index_at_boundary(ibound,e);
 
       // Build the corresponding face element
-      NavierStokesFaceElement<ELEMENT>* surface_element_pt =
-      	new NavierStokesFaceElement<ELEMENT>(el_pt, face_index);
+      auto surface_element_pt =
+	std::make_unique<RigidDiskFaceElement<ELEMENT>>(el_pt, face_index);
 
-      Vector<double> unit_normal(3);
+      Vector<double> unit_normal(3, 0.0);
       surface_element_pt->outer_unit_normal(0, unit_normal);
 
-      // if the z component of the boundary surface normal is negative,
+      // if the z component of the surface normal is positive,
       // then the element is sat on the top surface of the disk
-      if(unit_normal[2] < 0)
+      if(unit_normal[2] > 0.0)
       {
 	// add to our list of upper surface elements
 	Elements_on_upper_disk_surface_pt.insert(el_pt);
@@ -1662,13 +1557,7 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
       {
 	// otherwise, it must be below
 	Elements_on_lower_disk_surface_pt.insert(el_pt);
-
-	// clean up (only if this is a lower element, don't want to delete the
-	// surface element if it's an upper element since we're keeping them for
-	// output
-	delete surface_element_pt;
       }
-      
     }
   }
   
@@ -1685,10 +1574,9 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
   sprintf(filename, "%s/elements_on_upper_disk_surface.dat", Doc_info.directory().c_str());
   some_file.open(filename);
   
-  for(typename std::set<ELEMENT*>::iterator it = Elements_on_upper_disk_surface_pt.begin();
-      it != Elements_on_upper_disk_surface_pt.end(); it++)
+  for(ELEMENT* el_pt : Elements_on_upper_disk_surface_pt)
   {
-    (*it)->output(some_file, nplot);
+    el_pt->output(some_file, nplot);
   }
 
   some_file.close();
@@ -1696,10 +1584,9 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
   sprintf(filename, "%s/elements_on_lower_disk_surface.dat", Doc_info.directory().c_str());
   some_file.open(filename);
   
-  for(typename std::set<ELEMENT*>::iterator it = Elements_on_lower_disk_surface_pt.begin();
-      it != Elements_on_lower_disk_surface_pt.end(); it++)
+  for(ELEMENT* el_pt : Elements_on_lower_disk_surface_pt)
   {
-    (*it)->output(some_file, nplot);
+    el_pt->output(some_file, nplot);  
   }
 
   some_file.close();
@@ -1727,7 +1614,7 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
   //   at this nodal location.
   // - We theb check at the distance to the other nodes in this element in the
   //   direction of the outer unit normal.
-  //   We'll do a majority vote, so if most of the other nodes have a negative
+  //   We'll do a majority vote, so if most of the other nodes have a positive
   //   distance in the normal direction, then this element is above the disk,
   //   otherwise its below the disk. The reason to majority vote is that the
   //   element may have an edge on the disk, i.e. 3 TaylorHood nodes,
@@ -1772,7 +1659,7 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 #endif
       
       // vector to store the outer unit normal for the upper surface at this node
-      Vector<double> unit_normal(3);
+      Vector<double> unit_normal(3, 0.0);
            
       // get the number of elements on this boundary
       unsigned nel = Bulk_mesh_pt->nboundary_element(ibound);
@@ -1804,8 +1691,8 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 	  int face_index = Bulk_mesh_pt->face_index_at_boundary(ibound, e);
 
 	  // Build the corresponding face element
-	  NavierStokesFaceElement<ELEMENT>* surface_element_pt =
-	    new NavierStokesFaceElement<ELEMENT>(el_pt, face_index);
+	  auto surface_element_pt =
+	    std::make_unique<RigidDiskFaceElement<ELEMENT>>(el_pt, face_index);
 
 	  // find the index which corresponds to this node
 	  int nodal_index = -1;
@@ -1820,16 +1707,18 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 
 	  // check if we found it
 	  if(nodal_index == -1)
-	  {
+	  {	    
 	    // if we didn't, lets look in the next element on this boundary
 	    continue;
 	  }
 	  
+	  // get the local coordinates of this node
+	  Vector<double> s_node(dim-1, 0.0);
+	  surface_element_pt->local_coordinate_of_node(nodal_index, s_node); 
+
 	  // get the outer unit normal
-	  surface_element_pt->outer_unit_normal(nodal_index, unit_normal);
-
-	  delete surface_element_pt;
-
+	  surface_element_pt->outer_unit_normal(s_node, unit_normal);
+	  	  
 	  // now we've found the element and got the outer unit normal, we
 	  // can stop searching the other elements on this boundary
 	  break;
@@ -1859,14 +1748,10 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
       // our list
 
       // get the set of elements associated with this node
-      std::set<ELEMENT*> element_set = Node_to_element_map[node_of_interest_pt];
+      std::set<ELEMENT*> element_set = Node_to_element_map.at(node_of_interest_pt);
       
-      for(typename std::set<ELEMENT*>::iterator element_iter =
-	    element_set.begin(); element_iter != element_set.end();
-	  element_iter++)
+      for(ELEMENT* el_pt : element_set)
       {
-	ELEMENT* el_pt = *element_iter;// dynamic_cast<ELEMENT*>(Bulk_mesh_pt->element_pt(e));
-
 	// now check if this element is already in our lists of
 	// upper and lower elements
 	typename std::set<ELEMENT*>::iterator it_upper =
@@ -1921,20 +1806,15 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 	  }
 
 	  nodal_distance.push_back(normal_distance);
-	  
-	  // add to the counters (N.B. a zero distance would contribute to
-	  // the negative count, which is ok since negative means upper surface)
-	  if(normal_distance > 0)
+
+	  // add to the counters
+	  if(normal_distance >= 0)
 	    npositive++;
 	  else
 	    nnegative++;
 	}
 
-	// since the unit normal is in the outward direction, a negative
-	// distance in the normal direction indicates the other nodes are
-	// on the upper side of the disk (since the outer unit normal we
-	// got was for the upper surface).
-	bool element_is_on_upper_surface = nnegative > npositive;
+	bool element_is_on_upper_surface = npositive > nnegative;
 		  
 	if(element_is_on_upper_surface)
 	{
@@ -1945,7 +1825,7 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 	  // positive distance from the boundary node of interest in the outer
 	  // normal direction... if this has happened then something weird has
 	  // gone wrong, throw an error
-	  if(npositive > 2)
+	  if(nnegative > 2)
 	  {
 	    // add this element to our list of dodgy ones so we can output later
 	    dodgy_upper_element_pt.push_back(el_pt);
@@ -1969,10 +1849,10 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 	  // disk surface (if it had a face it would be considered a normal
 	  // boundary element), so for a Taylor Hood element (NNODE_1D=3) on
 	  // the lower surface, this means no more than 2 nodes can have a
-	  // negative distance from the boundary node of interest in the outer
+	  // positive distance from the boundary node of interest in the outer
 	  // normal direction... if this has happened then something weird has
-	  // gone wrong, throw an error	  if(npositive > 2)
-	  if(nnegative > 2)
+	  // gone wrong, throw an error
+	  if(npositive > 2)
 	  {	    
 	    // add this element to our list of dodgy ones so we can output later
 	    dodgy_lower_element_pt.push_back(el_pt);
@@ -2003,12 +1883,8 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 
   // we can now fill in the entry into our map which gives the set of
   // elements and associated nodal indices for each boundary node
-  for(typename std::set<ELEMENT*>::iterator it =
-	Nonboundary_elements_with_node_on_upper_disk_surface_pt.begin();
-      it != Nonboundary_elements_with_node_on_upper_disk_surface_pt.end(); it++)
+  for(ELEMENT* el_pt : Nonboundary_elements_with_node_on_upper_disk_surface_pt)
   {
-    ELEMENT* el_pt = *it;
-
     for(unsigned j=0; j<el_pt->nnode(); j++)
     {
       Node* node_pt = el_pt->node_pt(j);
@@ -2028,16 +1904,13 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
   // output the dodgy stuff
   // -------------------------------------------------------------
   if(!dodgy_upper_element_pt.empty())
-  {
-
-    
+  { 
     sprintf(filename, "%s/dodgy_upper_elements.dat", Doc_info.directory().c_str());
     some_file.open(filename);
    
-    for(typename Vector<ELEMENT*>::iterator dodgy_it = dodgy_upper_element_pt.begin();
-	dodgy_it != dodgy_upper_element_pt.end(); dodgy_it++)
+    for(ELEMENT* dodgy_el_pt : dodgy_upper_element_pt)
     {
-      (*dodgy_it)->output(some_file, nplot);
+      dodgy_el_pt->output(some_file, nplot);
     }
     some_file.close();
 
@@ -2067,26 +1940,20 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
     some_file.open(filename);
     
   
-    for(typename Vector<ELEMENT*>::iterator dodgy_it = dodgy_lower_element_pt.begin();
-	dodgy_it != dodgy_lower_element_pt.end(); dodgy_it++)
+    for(ELEMENT* dodgy_el_pt : dodgy_lower_element_pt)
     {
-      (*dodgy_it)->output(some_file, nplot);
+      dodgy_el_pt->output(some_file, nplot);
     }
     some_file.close();
 
     sprintf(filename, "%s/dodgy_lower_element_nodal_distances.dat", Doc_info.directory().c_str());
     some_file.open(filename);
    
-    for(Vector<Vector<double> >::iterator dodgy_it = dodgy_lower_element_nodal_distance.begin();
-	dodgy_it != dodgy_lower_element_nodal_distance.end(); dodgy_it++)
+    for(Vector<double> distances : dodgy_lower_element_nodal_distance)
     {
-      // get the vector of distances
-      Vector<double> distances = *dodgy_it;
-
-      for(Vector<double>::iterator it = distances.begin();
-	  it != distances.end(); it++)
+      for(double distance : distances)
       {
-	some_file << *it << std::endl;
+	some_file << distance << std::endl;
       }
 
       some_file << std::endl;
@@ -2349,12 +2216,8 @@ void FlowAroundDiskProblem<ELEMENT>::duplicate_plate_nodes_and_add_boundaries()
       // loop over these and only add the new node to them if it is a boundary
       // for which there is an upper disk element on the boundary which shares
       // this node but not a lower disk boundary.
-      for(std::set<unsigned>::iterator boundary_it =
-	    original_node_boundaries.begin();
-	  boundary_it != original_node_boundaries.end(); boundary_it++)
-      {
-	unsigned ibound = *boundary_it;
-	
+      for(unsigned ibound : original_node_boundaries)
+      {	
 	// is the current boundary one of the lower disk boundaries?
 	bool is_lower_disk_boundary = (ibound <= Last_lower_disk_boundary_id) &&
 	  (ibound >= First_lower_disk_boundary_id);
@@ -2705,7 +2568,7 @@ void FlowAroundDiskProblem<ELEMENT>::duplicate_plate_nodes_and_add_boundaries()
 //========================================================================
 template <class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::get_edge_coordinates_and_singular_element(
-  const FiniteElement* elem_pt,
+  FiniteElement* const& elem_pt,
   const Vector<double>& x,
   EdgeCoordinates& edge_coordinates_at_point,
   std::pair<GeomObject*, Vector<double> >& line_element_and_local_coordinate) const
@@ -2765,7 +2628,7 @@ void FlowAroundDiskProblem<ELEMENT>::get_edge_coordinates_and_singular_element(
   Vector<double> zeta_vec(1, 0.0);
   zeta_vec[0] = edge_coordinates_at_point.zeta;
 
-  GeomObject* geom_obj_pt = 0x0;
+  GeomObject* geom_obj_pt = nullptr;
 
   Singular_line_mesh_as_geom_object_pt->locate_zeta(zeta_vec,
 						    geom_obj_pt,
@@ -2787,8 +2650,6 @@ void FlowAroundDiskProblem<ELEMENT>::get_edge_coordinates_and_singular_element(
   // combine the geometric object representation of the line element pointer
   // and its local coordinate which represent this zeta
   line_element_and_local_coordinate = std::make_pair(geom_obj_pt, s_line);
-
-  edge_coordinates_at_point.p0 = Global_Parameters::p0;
 }
 
 //========================================================================
@@ -2799,7 +2660,7 @@ void FlowAroundDiskProblem<ELEMENT>::get_edge_coordinates_and_singular_element(
 //========================================================================
 template <class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::setup_edge_coordinates_and_singular_element(
-  const FiniteElement* elem_pt,
+  FiniteElement* const& elem_pt,
   Vector<EdgeCoordinates>& edge_coordinates_at_point,
   Vector<std::pair<GeomObject*, Vector<double> > >& line_element_and_local_coordinate,
   const bool& use_plot_points) const
@@ -2938,7 +2799,7 @@ void FlowAroundDiskProblem<ELEMENT>::setup_disk_on_disk_plots()
   Vector<double> x(3);     
   Vector<double> s(3);  
   Vector<double> rho_and_phi(2);
-  GeomObject* geom_object_pt = 0x0;
+  GeomObject* geom_object_pt = nullptr;
   
   for (unsigned k=0; k < Ndisk_on_disk_plot; k++)
   {
@@ -3014,6 +2875,11 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
 
     // constitutive relation
     elem_pt->stress_fct_pt() = &Analytic_Functions::stress;
+
+    // QUEHACERES removing, effectively absorbing the hydrostatic pressure
+    // into the pressure gradient term
+    // // body force acting on fluid due to reduced gravity
+    // elem_pt->body_force_fct_pt() = &Global_Parameters::reduced_gravity;
   }
   
   // Loop over the elements to set up element-specific
@@ -3040,6 +2906,10 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
     torus_region_el_pt->set_pressure_regularisation_factor(
       Global_Parameters::Pressure_regularisation_factor);
 
+    // QUEHACERES 
+    torus_region_el_pt->set_velocity_regularisation_factor(
+      Global_Parameters::Velocity_regularisation_factor);
+    
     // tell the element it's augmented, so that it uses the PDE-constrained min
     // residuals rather than standard Stokes
     torus_region_el_pt->set_augmented_element();
@@ -3065,9 +2935,10 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
     
     // get the coordinates
     setup_edge_coordinates_and_singular_element(torus_region_el_pt,
-      edge_coordinates_at_plot_point,
-      line_element_and_local_coordinates,
-      use_plot_points);
+						edge_coordinates_at_plot_point,
+						line_element_and_local_coordinates,
+						use_plot_points);
+    
     // now tell the element about them
     torus_region_el_pt->set_edge_coordinates_at_plot_point(edge_coordinates_at_plot_point);	
 
@@ -3288,26 +3159,12 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
     Bulk_mesh_pt->region_element_pt(Torus_region_id, e));
     
     Torus_region_mesh_pt->add_element_pt(el_pt);
-    
-    // tell the augmented elements about the function which computes the
-    // body force which arises from the 2D asymptotic solutions not satisfying the
-    // 3D Stokes equations
-    if(!CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution") &&
-       CommandLineArgs::command_line_flag_has_been_set("--subtract_source_and_body_force"))
-    {
-      el_pt->body_force_fct_pt() =
-      	&Global_Parameters::SingularFunctions::asymptotic_total_body_force;
-
-      el_pt->source_fct_pt() =
-	&Global_Parameters::SingularFunctions::asymptotic_total_source_term;
-    }
   }
 
   // tell the elements on the lower side of the disk that they're on the lower disk
-  for(typename std::set<ELEMENT*>::iterator it = Elements_on_lower_disk_surface_pt.begin();
-    it != Elements_on_lower_disk_surface_pt.end(); it++)
+  for(ELEMENT* el_pt : Elements_on_lower_disk_surface_pt)
   {
-    (*it)->set_lower_disk_element();
+    el_pt->set_lower_disk_element();
   }
   
   // Apply bcs  
@@ -3320,14 +3177,15 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
 //========================================================================
 template <class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::
-find_corresponding_element_on_bulk_side_of_augmented_boundary(ELEMENT*& augmented_elem_pt,
+find_corresponding_element_on_bulk_side_of_augmented_boundary(ELEMENT* const& augmented_elem_pt,
 							      const int& face_index,
-							      ELEMENT*& corresponding_elem_pt)
+							      ELEMENT*& corresponding_elem_pt) const
 {
   // First, build a temporary face element onto this
-  // augmented region bulk element  
-  NavierStokesFaceElement<ELEMENT>* face_el_pt =
-    new NavierStokesFaceElement<ELEMENT>(augmented_elem_pt, face_index);
+  // augmented region bulk element
+  // (using TractionElements as a random face element since we only want the nodes)
+  auto face_el_pt =
+    std::make_unique<NavierStokesTractionElement<ELEMENT>>(augmented_elem_pt, face_index);
   
   // assemble a list of this elements nodes
   Vector<Node*> face_el_nodes;
@@ -3336,29 +3194,25 @@ find_corresponding_element_on_bulk_side_of_augmented_boundary(ELEMENT*& augmente
     face_el_nodes.push_back(face_el_pt->node_pt(j));
   }
 
-  // done with this face element, clean up
-  delete face_el_pt;
-  face_el_pt = 0x0;
-
   // initialise pointer which will store the bulk region element we're looking for
-  corresponding_elem_pt = 0x0;
+  corresponding_elem_pt = nullptr;
 
   // now get the elements associated with the first node in this face element
   std::set<ELEMENT*> element_pt_set = Node_to_element_map.at(face_el_nodes[0]);
 
   // now look through each of these elements and check which one contains all the
   // face nodes
-  for(typename std::set<ELEMENT*>::iterator it = element_pt_set.begin();
-      it != element_pt_set.end(); it++)
+  for(ELEMENT* elem_pt : element_pt_set)
   {
     // don't want to find the same element!
-    if((*it) == augmented_elem_pt)
+    if(elem_pt == augmented_elem_pt)
       continue;
     
     unsigned matching_node_count = 0;
-    for(unsigned k=0; k<(*it)->nnode(); k++)
+    for(unsigned k=0; k<elem_pt->nnode(); k++)
     {
-      Node* node_pt = (*it)->node_pt(k);
+      Node* node_pt = elem_pt->node_pt(k);
+      
       if(std::find(face_el_nodes.begin(), face_el_nodes.end(), node_pt)
 	 != face_el_nodes.end() )
 	matching_node_count++;
@@ -3368,12 +3222,12 @@ find_corresponding_element_on_bulk_side_of_augmented_boundary(ELEMENT*& augmente
     // bulk region bulk element which shares the face we're interested in, so we're done
     if(matching_node_count == face_el_nodes.size())
     {
-      corresponding_elem_pt = (*it);
+      corresponding_elem_pt = elem_pt;
       break;
     }
   }
 
-  if(corresponding_elem_pt == 0x0)
+  if(corresponding_elem_pt == nullptr)
   {
     std::ostringstream error_message;
     error_message << "Error: couldn't find a bulk element which shares a face with "
@@ -3459,8 +3313,8 @@ void FlowAroundDiskProblem<ELEMENT>::create_face_elements()
     for (std::map<Node*,Node*>::iterator it = Stress_jump_duplicate_node_map.begin();
 	 it != Stress_jump_duplicate_node_map.end(); it++)
     {
-      Node* original_node_pt = (*it).first;
-      Node* new_node_pt = (*it).second;
+      Node* original_node_pt = it->first;
+      Node* new_node_pt = it->second;
 
       // add the new one to the stress jump mesh
       Face_mesh_for_stress_jump_pt->add_node_pt(new_node_pt);
@@ -3558,8 +3412,8 @@ void FlowAroundDiskProblem<ELEMENT>::create_face_elements()
     int face_index = Bulk_mesh_pt->face_index_at_boundary(ibound,0);
 
     // Build the corresponding face element
-    NavierStokesFaceElement<ELEMENT>* surface_element_pt =
-      new NavierStokesFaceElement<ELEMENT>(el_pt, face_index);
+    NavierStokesTractionElement<ELEMENT>* surface_element_pt =
+      new NavierStokesTractionElement<ELEMENT>(el_pt, face_index);
 
     // get the outer unit normal
     Vector<double> outer_unit_normal(3);
@@ -3567,8 +3421,9 @@ void FlowAroundDiskProblem<ELEMENT>::create_face_elements()
 
     // clean up
     delete surface_element_pt;
+    surface_element_pt = nullptr;
     
-    // // check if we've got the top face, i.e. with n = (0,0,1)
+    // check if we've got the top face, i.e. with n = (0,0,1)
     double tol = 1e-6;
 
     if(abs(outer_unit_normal[0])   > tol ||
@@ -3669,13 +3524,18 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
       x[2] = node_pt->x(2);
 
       // get the sum of all analytic solution modes on the boundary
-      Vector<double> u(4,0.0);
+      Vector<double> u(4, 0.0);
       
       if((ibound >= First_boundary_id_for_outer_boundary &&
 	 ibound < First_lower_disk_boundary_id) )
       {
-	// on the outer boundary, so do analytic flat-disk solution
-	Analytic_Functions::exact_solution_flat_disk(x, u);
+	// if we're doing no-slip on the outer boundaries then
+	// just leave u_i = 0, otherwise assign the exact
+	// flat-disk solution
+	if(!Global_Parameters::No_slip_boundaries)
+	{
+	  Analytic_Functions::exact_solution_flat_disk(x, u);
+	}
       }
       else
       {
@@ -4089,53 +3949,6 @@ void FlowAroundDiskProblem<ELEMENT>::set_values_to_singular_solution(
   }
 
   outfile.close();
-  
-  // oomph_info << "Setting initial conditions to singular "
-  // 	     << ((broadside) ? "broadside " : "in-plane ")
-  // 	     << "solution...\n";    
-  
-  // // get the number of nodes in the mesh
-  // unsigned nel = Bulk_mesh_pt->nelement();
-  //   // Bulk_mesh_pt->nregion_element(Torus_region_id);
-
-  // for(unsigned e=0; e<nel; e++)
-  // {
-  //   FiniteElement* el_pt = dynamic_cast<FiniteElement*>(Bulk_mesh_pt->element_pt(e));
-  //     // Bulk_mesh_pt->region_element_pt(Torus_region_id,e);
-
-  //   unsigned nnode = el_pt->nnode();
-    
-  //   for(unsigned i=0; i<nnode; i++)
-  //   {
-  //     // get a pointer to this node
-  //     Node* node_pt = el_pt->node_pt(i);
-
-  //     // get the position of this node
-  //     Vector<double> x(3, 0.0);
-  //     x[0] = node_pt->x(0);
-  //     x[1] = node_pt->x(1);
-  //     x[2] = node_pt->x(2);
-    
-  //     // get the singular solution at this point
-  //     Vector<double> u(4, 0.0);
-
-  //     if(broadside)
-  // 	u = Global_Parameters::SingularFunctions::singular_fct_broadside(x);
-  //     // else
-  //     // 	u = Analytic_Functions::singular_fct_in_plane(x); // QUEHACERES needs to be EdgeCoordinates
-      
-  //     // assign the velocities
-  //     node_pt->set_value(0, u[0]);
-  //     node_pt->set_value(1, u[1]);
-  //     node_pt->set_value(2, u[2]);
-      
-  //     // catch Lagrange multiplier cases
-  //     if(node_pt->nvalue() == 4 || node_pt->nvalue() == 7 || node_pt->nvalue() == 10)
-  //     {
-  // 	node_pt->set_value(3, u[3]);
-  //     }
-  //   }
-  // }
 }
 
 
@@ -4147,7 +3960,6 @@ template <class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::set_values_to_exact_non_singular_solution() const
 {
   oomph_info << "Setting initial values to exact non-singular solution...\n"
-	     << "---------------------------------------------------------\n"
 	     << std::endl;
   
   // do elements in the bulk region
@@ -4171,7 +3983,7 @@ void FlowAroundDiskProblem<ELEMENT>::set_values_to_exact_non_singular_solution()
       // get the total solution at this point (in the bulk, so
       // the FE solution is the total solution)
       Vector<double> u(4, 0.0);
-      FlatDiskExactSolutions::total_exact_solution(x, Global_Parameters::u_disk_rigid_body, 
+      FlatDiskExactSolutions::total_exact_solution(x, Global_Parameters::u_disk_rigid_translation, 
 						   Global_Parameters::omega_disk,
 						   u);
       // set the velocities
@@ -4179,7 +3991,7 @@ void FlowAroundDiskProblem<ELEMENT>::set_values_to_exact_non_singular_solution()
 	node_pt->set_value(i, u[i]);
 
       // set the pressure if it's there
-      if(node_pt->nvalue() == 4)
+      if(j<4)
 	node_pt->set_value(3, u[3]);
     }
   }
@@ -4205,7 +4017,7 @@ void FlowAroundDiskProblem<ELEMENT>::set_values_to_exact_non_singular_solution()
       // get the total solution at this point (in the bulk, so
       // the FE solution is the total solution)
       Vector<double> u_total(4, 0.0);
-      FlatDiskExactSolutions::total_exact_solution(x, Global_Parameters::u_disk_rigid_body, 
+      FlatDiskExactSolutions::total_exact_solution(x, Global_Parameters::u_disk_rigid_translation, 
 						   Global_Parameters::omega_disk,
 						   u_total);
 
@@ -4246,7 +4058,7 @@ void FlowAroundDiskProblem<ELEMENT>::set_values_to_exact_non_singular_solution()
 	if(edge_coords.rho < 1e-8)
 	{
 	  double infinity = 10;
-	  node_pt->set_value(3, infinity); //  * cos(edge_coords.zeta));
+	  node_pt->set_value(3, 0.0); // infinity); //  * cos(edge_coords.zeta));
 	}
 	else
 	{
@@ -4604,6 +4416,8 @@ void FlowAroundDiskProblem<ELEMENT>::pin_singular_function(const unsigned& sing_
 template <class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 {
+  oomph_info << "Documenting solution...\n"
+	     << "------------------------\n" << std::endl;
   ofstream some_file;
   ofstream some_file2;
   ofstream face_some_file;
@@ -4827,17 +4641,14 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 	face_index_at_boundary_in_region(b,region_id,e);
 
       // Build the corresponding face element
-      NavierStokesFaceElement<ELEMENT>* surface_element_pt =
-      	new NavierStokesFaceElement<ELEMENT>(el_pt,face_index);
+      auto surface_element_pt =
+	std::make_unique<RigidDiskFaceElement<ELEMENT>>(el_pt, face_index);
      
       // Get surface area
       torus_surface_area += surface_element_pt->size();
      
       // Output
       surface_element_pt->output(some_file, nplot);
-
-      // ...and we're done!
-      delete surface_element_pt;
     }
   }
   
@@ -4845,31 +4656,41 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 
   oomph_info << "Torus surface area: " <<  torus_surface_area << std::endl;
 
-  if(Doc_info.number() > 0)
-  {
-    sprintf(filename, "%s/augmented_boundary_traction_and_lms%i.csv",
-	    Doc_info.directory().c_str(), Doc_info.number());
+  // if(Doc_info.number() > 0)
+  // {
+  //   sprintf(filename, "%s/augmented_boundary_traction_and_lms%i.csv",
+  // 	    Doc_info.directory().c_str(), Doc_info.number());
 
-    some_file.open(filename);
+  //   some_file.open(filename);
 
-    // write the header
-    some_file << "x,y,z,t_aug_x,t_aug_y,t_aug_z,t_bulk_x,t_bulk_y,t_bulk_z,"
-	      << "lambda_x,lambda_y,lambda_z" << std::endl;
+  //   // write the header
+  //   some_file << "x,y,z,t_aug_x,t_aug_y,t_aug_z,t_bulk_x,t_bulk_y,t_bulk_z,"
+  // 	      << "lambda_x,lambda_y,lambda_z" << std::endl;
     
-    unsigned n_element = Face_mesh_for_stress_jump_pt->nelement();
-    for(unsigned e=0; e<n_element; e++)
-    {
-      // Upcast from GeneralisedElement to the present element
-      NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>* stress_jump_el_pt =
-	dynamic_cast<NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>*>(
-	  Face_mesh_for_stress_jump_pt->element_pt(e));
+  //   unsigned n_element = Face_mesh_for_stress_jump_pt->nelement();
+  //   for(unsigned e=0; e<n_element; e++)
+  //   {
+  //     // Upcast from GeneralisedElement to the present element
+  //     NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>* stress_jump_el_pt =
+  // 	dynamic_cast<NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>*>(
+  // 	  Face_mesh_for_stress_jump_pt->element_pt(e));
 
-      stress_jump_el_pt->output_traction_and_lagrange_multipliers(some_file);
-    }
+  //     stress_jump_el_pt->output_traction_and_lagrange_multipliers(some_file);
+  //   }
 
-    some_file.close();
+  //   some_file.close();
     
-  }
+  // }
+
+  // ==========================================================================
+  // compute the total force on the disk and surface area
+  // ==========================================================================
+
+  Vector<double> total_force_on_plate(3, 0.0);
+
+  double disk_in_torus_surface_area      = 0.0;
+  double disk_outside_torus_surface_area = 0.0;
+  double disk_surface_area               = 0.0;
   
   // Attach face elements to part of disk inside torus
   //--------------------------------------------------
@@ -4877,38 +4698,69 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 	  Doc_info.directory().c_str(),
 	  Doc_info.number());
   some_file.open(filename);
-  double disk_in_torus_surface_area = 0.0;
-  region_id = Torus_region_id;
-  unsigned nb = One_based_boundary_id_for_disk_within_torus.size();
-  for (unsigned i=0; i<nb; i++)
-  {
-    unsigned b = One_based_boundary_id_for_disk_within_torus[i]-1;
-    unsigned nel = Bulk_mesh_pt->nboundary_element_in_region(b,region_id);
-    for (unsigned e=0; e<nel; e++)
-    {
-      FiniteElement* el_pt = 
-	Bulk_mesh_pt->boundary_element_in_region_pt(b,region_id,e);
-     
-      // What is the index of the face of the bulk element at the boundary
-      int face_index = Bulk_mesh_pt->
-	face_index_at_boundary_in_region(b,region_id,e);
+  
+  
 
-      // Build the corresponding surface power element
-      NavierStokesFaceElement<ELEMENT>* surface_element_pt =
-      	new NavierStokesFaceElement<ELEMENT>(el_pt, face_index);
-     
-      // Get surface area
-      disk_in_torus_surface_area += surface_element_pt->size();
-     
-      // Output
-      surface_element_pt->output(some_file, nplot);
-     
-      // ...and we're done!
-      delete surface_element_pt;
-    }
+  // Loop over the BC face elements, which sit on the upper and lower
+  // disk within the torus region
+  for(unsigned e=0; e<Face_mesh_for_bc_pt->nelement(); e++)
+  {
+    // get a pointer to the face element
+    NavierStokesWithSingularityBCFaceElement<ELEMENT>* bc_el_pt =
+      dynamic_cast<NavierStokesWithSingularityBCFaceElement<ELEMENT>*>(
+  	Face_mesh_for_bc_pt->element_pt(e));
+
+    // compute the integrated traction on this element
+    Vector<double> force_on_element =
+      bc_el_pt->get_contribution_to_normal_stress();
+
+    // and add to the total
+    for(unsigned i=0; i<3; i++)
+      // minus sign accounts for the BC Face element being attached to a
+      // bulk element on the other side of the plate
+      total_force_on_plate[i] -= force_on_element[i];
+
+    double surface_area = bc_el_pt->size();
+
+    bc_el_pt->output(some_file, nplot);
+    
+    disk_surface_area += surface_area;
+    disk_in_torus_surface_area += surface_area;
   }
+
+  // QUEHACERES delete
+  // region_id = Torus_region_id;
+  // unsigned nb = One_based_boundary_id_for_disk_within_torus.size();
+  // for (unsigned i=0; i<nb; i++)
+  // {
+  //   unsigned b = One_based_boundary_id_for_disk_within_torus[i]-1;
+  //   unsigned nel = Bulk_mesh_pt->nboundary_element_in_region(b,region_id);
+  //   for (unsigned e=0; e<nel; e++)
+  //   {
+  //     FiniteElement* el_pt = 
+  // 	Bulk_mesh_pt->boundary_element_in_region_pt(b,region_id,e);
+     
+  //     // What is the index of the face of the bulk element at the boundary
+  //     int face_index = Bulk_mesh_pt->
+  // 	face_index_at_boundary_in_region(b,region_id,e);
+
+  //     // Build the corresponding surface power element
+  //     RigidDiskFaceElement<ELEMENT>* surface_element_pt =
+  //     	new RigidDiskFaceElement<ELEMENT>(el_pt, face_index);
+     
+  //     // Get surface area
+  //     disk_in_torus_surface_area += surface_element_pt->size();
+      
+  //     // Output
+  //     surface_element_pt->output(some_file, nplot);
+     
+  //     // ...and we're done!
+  //     delete surface_element_pt;
+  //     surface_element_pt = nullptr;
+  //   }
+  // }
   some_file.close();
-  oomph_info << "Disk in torus surface area: "
+  oomph_info << "\nDisk in torus surface area: "
 	     <<  disk_in_torus_surface_area << std::endl;
 
  
@@ -4918,9 +4770,9 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 	  Doc_info.directory().c_str(),
 	  Doc_info.number());
   some_file.open(filename);
-  double disk_outside_torus_surface_area = 0.0;
+  
   region_id = 0; 
-  nb = One_based_boundary_id_for_disk_outside_torus.size();
+  unsigned nb = One_based_boundary_id_for_disk_outside_torus.size();
   for (unsigned i=0; i<nb; i++)
   {
     unsigned b = One_based_boundary_id_for_disk_outside_torus[i]-1;
@@ -4935,26 +4787,33 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 	face_index_at_boundary_in_region(b,region_id,e);
       
       // Build the corresponding face element
-      NavierStokesFaceElement<ELEMENT>* surface_element_pt =
-      	new NavierStokesFaceElement<ELEMENT>(el_pt, face_index);
+      auto surface_element_pt =
+	std::make_unique<RigidDiskFaceElement<ELEMENT>>(el_pt, face_index);
      
       // Get surface area
       disk_outside_torus_surface_area += surface_element_pt->size();
-     
+      disk_surface_area += surface_element_pt->size();
+      
       // Output      
       surface_element_pt->output(some_file, nplot);
-     
-      // ...and we're done!
-      delete surface_element_pt;
+
+      // compute the integrated traction on this element
+      Vector<double> force_on_element =
+  	surface_element_pt->get_contribution_to_normal_stress();
+
+      // and add to the total
+      for(unsigned i=0; i<3; i++)
+	total_force_on_plate[i] += force_on_element[i];
     }
   }
   some_file.close();
+  
   oomph_info << "Disk outside torus surface area: "
 	     <<  disk_outside_torus_surface_area << std::endl;
 
-  oomph_info << "Total surface area of disk: "
-	     <<  disk_in_torus_surface_area + disk_outside_torus_surface_area 
-	     << std::endl;
+  oomph_info << "Total surface area of disk: ";
+  printf("%.03fpi", disk_surface_area / MathematicalConstants::Pi);
+  oomph_info << std::endl;
 
   // Attach face elements to lower disk boundaries
   //--------------------------------------------------
@@ -4976,27 +4835,42 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 	face_index_at_boundary(b,e);
 
       // Build the corresponding surface element
-      NavierStokesFaceElement<ELEMENT>* surface_element_pt =
-      	new NavierStokesFaceElement<ELEMENT>(el_pt, face_index);
+      auto surface_element_pt =
+	std::make_unique<RigidDiskFaceElement<ELEMENT>>(el_pt, face_index);
      
       // Output
       surface_element_pt->output(some_file, nplot);
-     
-      // ...and we're done!
-      delete surface_element_pt;
     }
   }
   some_file.close();
 
-  // don't need this if we have the extended output
-  // // Output solution
-  // //----------------
-  // oomph_info << "Outputting computed solution..." << std::endl;
-  // sprintf(filename,"%s/soln%i.dat",Doc_info.directory().c_str(),
-  // 	  Doc_info.number());
-  // some_file.open(filename);
-  // if (do_bulk_output) Bulk_mesh_pt->output_paraview(some_file,nplot);
-  // some_file.close();
+  oomph_info << "Total force on plate: "
+	     << total_force_on_plate[0] << ", "
+	     << total_force_on_plate[1] << ", "
+	     << total_force_on_plate[2] << "\n" << std::endl;
+  
+  // output the stress jump elements
+  if (!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))      
+  {   
+    std::ostringstream filename;
+    filename << Doc_info.directory() << "/stress_jump_elements"
+	     << Doc_info.number() << ".dat";
+
+    some_file.open(filename.str().c_str());
+
+    unsigned nel = Face_mesh_for_stress_jump_pt->nelement();
+    for (unsigned e=0; e<nel; e++)
+    {
+      NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>* 
+	stress_jump_element_pt 
+	= dynamic_cast<NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>*>(
+	  Face_mesh_for_stress_jump_pt->element_pt(e));
+		
+      stress_jump_element_pt->output(some_file);
+    }
+    
+    some_file.close();
+  }
 
   // Output solution showing element outlines
   //-----------------------------------------
@@ -5020,104 +4894,6 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
     
     some_file.close();
   }
-  
-  // ------------------------------------------------
-  // compute the total force on the disk 
-  double total_force_on_plate = 0;
-
-  // Part 1/3: loop over the lower elments outside the torus
-  for(Vector<unsigned>::iterator it = One_based_boundary_id_for_disk_outside_torus.begin();
-      it != One_based_boundary_id_for_disk_outside_torus.end(); it++)  
-  {
-    // get the zero-based boundary ID
-    unsigned ibound = *it - 1;
-    
-    unsigned nel = Bulk_mesh_pt->nboundary_element(ibound);
-    for(unsigned e=0; e<nel; e++)
-    { 
-      ELEMENT* el_pt =
-  	dynamic_cast<ELEMENT*>(Bulk_mesh_pt->boundary_element_pt(ibound,e));
-
-      // What is the index of the face of the bulk element at the boundary
-      int face_index = Bulk_mesh_pt->face_index_at_boundary(ibound,e);
-
-      // Build the corresponding face element
-      NavierStokesFaceElement<ELEMENT>* surface_element_pt =
-      	new NavierStokesFaceElement<ELEMENT>(el_pt, face_index);
-
-      // compute the zz stress contribution
-      total_force_on_plate += abs(surface_element_pt->get_contribution_to_normal_stress());
-      
-      // clean up
-      delete surface_element_pt;
-    }
-  }
-
-  // Part 2/3: loop over the upper elments outside the torus
-  for(Vector<unsigned>::iterator it = Boundary_id_for_upper_disk_outside_torus.begin();
-      it != Boundary_id_for_upper_disk_outside_torus.end(); it++)  
-  {
-    // get the zero-based boundary ID
-    unsigned ibound = *it;
-    
-    unsigned nel = Bulk_mesh_pt->nboundary_element(ibound);
-    for(unsigned e=0; e<nel; e++)
-    { 
-      ELEMENT* el_pt =
-  	dynamic_cast<ELEMENT*>(Bulk_mesh_pt->boundary_element_pt(ibound,e));
-
-      // What is the index of the face of the bulk element at the boundary
-      int face_index = Bulk_mesh_pt->face_index_at_boundary(ibound,e);
-
-      // Build the corresponding face element
-      NavierStokesFaceElement<ELEMENT>* surface_element_pt =
-      	new NavierStokesFaceElement<ELEMENT>(el_pt, face_index);
-
-      // compute the normal stress contribution
-      total_force_on_plate += abs(surface_element_pt->get_contribution_to_normal_stress());
-      
-      // clean up
-      delete surface_element_pt;
-    }
-  }
-
-  // Part 3/3: loop over the BC face elements, which sit on the upper and lower
-  //           disk within the torus region
-  for(unsigned e=0; e<Face_mesh_for_bc_pt->nelement(); e++)
-  {
-    // get a pointer to the face element
-    NavierStokesWithSingularityBCFaceElement<ELEMENT>* bc_el_pt =
-      dynamic_cast<NavierStokesWithSingularityBCFaceElement<ELEMENT>*>(
-  	Face_mesh_for_bc_pt->element_pt(e));
-
-    total_force_on_plate += abs(bc_el_pt->get_contribution_to_normal_stress());
-  }
-
-  oomph_info << "Total force on plate: " << total_force_on_plate << std::endl;
-
-  // output the stress jump elements
-  if (!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity"))      
-  {   
-    std::ostringstream filename;
-    filename << Doc_info.directory() << "/stress_jump_elements"
-	     << Doc_info.number() << ".dat";
-
-    some_file.open(filename.str().c_str());
-
-    unsigned nel = Face_mesh_for_stress_jump_pt->nelement();
-    for (unsigned e=0; e<nel; e++)
-    {
-      NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>* 
-	stress_jump_element_pt 
-	= dynamic_cast<NavierStokesWithSingularityStressJumpFaceElement<ELEMENT>*>(
-	  Face_mesh_for_stress_jump_pt->element_pt(e));
-		
-      stress_jump_element_pt->output(some_file);
-    }
-    
-    some_file.close();
-  }
-  
 
   // // Get norm of solution
   // //---------------------
@@ -5490,7 +5266,7 @@ void FlowAroundDiskProblem<ELEMENT>::validate_exact_solution_divergence() const
   
       // get the exact velocity derivatives
       FlatDiskExactSolutions::total_exact_velocity_gradient(x,
-							    Global_Parameters::u_disk_rigid_body,
+							    Global_Parameters::u_disk_rigid_translation,
 							    Global_Parameters::omega_disk,
 							    du_dx);
 
@@ -5651,7 +5427,7 @@ double FlowAroundDiskProblem<ELEMENT>::compute_jacobian_condition_number()
   oomph_info << "Jacobian inf-norm: " << jac_norm << std::endl;
   
   // create a SuperLU solver 
-  SuperLUSolver* linear_solver_pt = new SuperLUSolver;
+  std::unique_ptr<SuperLUSolver> linear_solver_pt = std::make_unique<SuperLUSolver>();
    
   // do the LU factorisation
   linear_solver_pt->factorise(&jac);
@@ -5672,18 +5448,281 @@ double FlowAroundDiskProblem<ELEMENT>::compute_jacobian_condition_number()
   double reciprocal_condition_number = 0.0;
   dgscon(norm, f_factors->L, f_factors->U, jac_norm, &reciprocal_condition_number, &stat, &info);
 
-  // clean up
-  delete linear_solver_pt;
-  linear_solver_pt = 0x0;
-  
   return 1.0/reciprocal_condition_number;
+}
+
+template <class ELEMENT>
+void FlowAroundDiskProblem<ELEMENT>::get_total_disk_force_and_moment_residuals(
+  const Vector<double>& centre_of_rotation,
+  Vector<double>& residuals)
+{
+  // save the iteration count, since the blackbox solver is used again during
+  // the fluid solve to compute dudx
+  unsigned fsi_iter_count = BlackBoxFDNewtonSolver::N_iter_taken;
+  
+  // and reset the tolerance temporarily
+  BlackBoxFDNewtonSolver::Tol = 1e-8;
+  BlackBoxFDNewtonSolver::FD_step = 1e-8;
+  
+  // Integral of forces and torques over the disk
+  Vector<double> total_force(3, 0.0);
+  Vector<double> total_moment(3, 0.0);
+
+  // list of the non-augmented disk boundary IDs
+  Vector<unsigned> non_aug_disk_boundary_ids;
+  
+  // add the lower (One-based!) boundary IDs
+  for(unsigned ibound : One_based_boundary_id_for_disk_outside_torus)
+    non_aug_disk_boundary_ids.push_back(ibound - 1);
+
+  // add the upper (zero-based) boundary IDs
+  for(unsigned ibound : Boundary_id_for_upper_disk_outside_torus)
+    non_aug_disk_boundary_ids.push_back(ibound);
+  
+  // Part 1/2: loop over the elments outside the torus
+  for(unsigned ibound : non_aug_disk_boundary_ids)  
+  {    
+    unsigned nel = Bulk_mesh_pt->nboundary_element(ibound);
+    for(unsigned e=0; e<nel; e++)
+    { 
+      ELEMENT* el_pt =
+  	dynamic_cast<ELEMENT*>(Bulk_mesh_pt->boundary_element_pt(ibound, e));
+
+      // What is the index of the face of the bulk element at the boundary
+      int face_index = Bulk_mesh_pt->face_index_at_boundary(ibound, e);
+
+      // Build the corresponding face element
+      // (N.B. we're going for the WithSingularity version despite this being
+      // the non-augmented region simply to reuse the machinery for
+      // integrating forces and torques)
+      auto surface_element_pt =
+      	std::make_unique<NavierStokesWithSingularityFaceElement<ELEMENT>>
+	(el_pt, face_index);
+
+      // integrate the forces and moments on the element
+      Vector<double> total_force_on_element(Dim, 0.0);
+      Vector<double> total_moment_on_element(Dim, 0.0);
+      
+      surface_element_pt->integrated_force_and_moment(centre_of_rotation,
+						      total_force_on_element,
+						      total_moment_on_element);
+      // add to totals
+      for(unsigned i=0; i<3; i++)
+      {
+	// QUEHACERES experimental, changing to -ve as the
+	// normal direction will be wrong
+	total_force[i]  -= total_force_on_element[i];
+	total_moment[i] -= total_moment_on_element[i];
+      }
+    }
+  }
+ 
+  // Part 2/2: loop over the BC face elements, which sit on the upper and lower
+  //           disk within the torus region
+  for(unsigned e=0; e<Face_mesh_for_bc_pt->nelement(); e++)
+  {
+    // get a pointer to the face element
+    NavierStokesWithSingularityBCFaceElement<ELEMENT>* surface_element_pt =
+      dynamic_cast<NavierStokesWithSingularityBCFaceElement<ELEMENT>*>(
+  	Face_mesh_for_bc_pt->element_pt(e));
+
+    // integrate the forces and moments on the element
+    Vector<double> total_force_on_element(Dim, 0.0);
+    Vector<double> total_moment_on_element(Dim, 0.0);
+    
+    surface_element_pt->integrated_force_and_moment(centre_of_rotation,
+						    total_force_on_element,
+						    total_moment_on_element);
+    // add to totals
+    for(unsigned i=0; i<3; i++)
+    {
+      total_force[i]  += total_force_on_element[i];
+      total_moment[i] += total_moment_on_element[i];
+    }    
+  }
+
+  total_force[2] -= Global_Parameters::Mass * sqrt(Global_Parameters::Archimedes_number);
+    
+  // // get the body force 
+  // Vector<double> x_dummy(3, 0.0);
+  // Vector<double> body_force(3, 0.0);
+  // Global_Parameters::reduced_gravity(x_dummy, body_force);
+  
+   // for(unsigned i=0; i<3; i++)
+   //   total_force[i] -= body_force[i] * 2 * MathematicalConstants::Pi;
+  
+  // fill in residuals - for equilibrum we require the sum of the forces to be zero
+  // and the sum of the torques to be zero, so these form our 6 residuals
+  // QUEHACERES changing to just 3 translations
+  residuals.resize(1, 0.0); // 6
+
+  residuals[0] = total_force[2];
+  
+  // for(unsigned i=0; i<3; i++)
+  // {
+  //   residuals[i]   = total_force[i];
+  //   // residuals[3+i] = total_moment[i]; 
+  // }
+
+  // reset
+  BlackBoxFDNewtonSolver::N_iter_taken = fsi_iter_count;
+  BlackBoxFDNewtonSolver::Tol = Global_Parameters::FSI_convergence_tol;
+  BlackBoxFDNewtonSolver::FD_step = Global_Parameters::FSI_FD_step;
+  
+  oomph_info << "FSI iteration " << BlackBoxFDNewtonSolver::N_iter_taken
+	     << "\n-----------------\n";
+
+  for(double res : residuals)
+    oomph_info << res << "\n";
+
+  oomph_info << std::endl;
+}
+
+
+void hacky_fixed_point_fsi_residual(
+  const Vector<double>& centre_of_rotation,
+  const Vector<double>& translation_and_rotation_rates,
+  Vector<double>& residuals)
+{
+  // update the disks rigid body parameters with the current guess
+  // Global_Parameters::u_disk_rigid_translation[0] = translation_and_rotation_rates[0];
+  // Global_Parameters::u_disk_rigid_translation[1] = translation_and_rotation_rates[1];
+  Global_Parameters::u_disk_rigid_translation[2] = translation_and_rotation_rates[0];
+
+  // QUEHACERES
+  // Global_Parameters::omega_disk[0] = translation_and_rotation_rates[3];
+  // Global_Parameters::omega_disk[1] = translation_and_rotation_rates[4];
+  // Global_Parameters::omega_disk[2] = translation_and_rotation_rates[5];
+
+  typedef ProjectableTaylorHoodElement<
+    TNavierStokesWithSingularityPdeConstrainedMinElement<3> > ELEMENT;
+  
+  FlowAroundDiskProblem <ELEMENT>* flow_problem =
+    dynamic_cast<FlowAroundDiskProblem<ELEMENT>*>(Global_Parameters::Problem);
+  
+  // apply new BCs, i.e. updated place velocities above
+  flow_problem->apply_boundary_conditions();
+
+  // save the iteration count, since the blackbox solver is used again during
+  // the fluid solve to compute dudx
+  unsigned fsi_iter_count = BlackBoxFDNewtonSolver::N_iter_taken;
+
+  // and reset the tolerance temporarily
+  BlackBoxFDNewtonSolver::Tol = 1e-8;
+  BlackBoxFDNewtonSolver::FD_step = 1e-8;
+  
+  // do the solve  
+  flow_problem->newton_solve();
+
+  BlackBoxFDNewtonSolver::N_iter_taken = fsi_iter_count;
+  BlackBoxFDNewtonSolver::Tol = Global_Parameters::FSI_convergence_tol;
+  BlackBoxFDNewtonSolver::FD_step = Global_Parameters::FSI_FD_step;
+  
+  // get the residuals
+  flow_problem->
+    get_total_disk_force_and_moment_residuals(centre_of_rotation, residuals);  
+}
+
+template <class ELEMENT>
+void FlowAroundDiskProblem<ELEMENT>::hacky_fixed_point_fsi_solve()
+{
+  oomph_info << "\nDoing FSI fixed-point solve (tol = "
+	     << Global_Parameters::FSI_convergence_tol 
+	     << ")...\n\n" << std::endl;
+
+  // QUEHACERES make things faster for debug
+  BlackBoxFDNewtonSolver::Tol = Global_Parameters::FSI_convergence_tol;
+
+  // avoids issues with noise
+  BlackBoxFDNewtonSolver::FD_step = Global_Parameters::FSI_FD_step;
+  
+  // vector of unknowns - 3 linear translational velocities and
+  // 3 rotation rates which characterise full 3D rigid body motion
+  // [0] = u_x
+  // [1] = u_y
+  // [2] = u_z
+  // [3] = omega_x
+  // [4] = omega_y
+  // [5] = omega_z
+  Vector<double> unknown_translation_and_rotation_rates(1, 0.0); // 6
+
+  // initial guess
+  unknown_translation_and_rotation_rates[0] = Global_Parameters::u_disk_rigid_translation[2];
+    
+  // Centre of rotation is the parameter for this rigid problem
+  Vector<double> centre_of_rotation(3, 0.0);
+
+  // solve the bastard!
+  try
+  {    
+    BlackBoxFDNewtonSolver::black_box_fd_newton_solve(
+      &hacky_fixed_point_fsi_residual,
+      centre_of_rotation, unknown_translation_and_rotation_rates);
+
+    oomph_info << "\n===========================================\n"
+	       << "FSI fixed-point iteration scheme converged\n"
+	       << "===========================================\n\n"
+	       // << "u_x     = " << unknown_translation_and_rotation_rates[0] << "\n"
+	       // << "u_y     = " << unknown_translation_and_rotation_rates[1] << "\n"
+	       << "u_z     = " << unknown_translation_and_rotation_rates[0] << "\n"
+	       // << "omega_x = " << unknown_translation_and_rotation_rates[3] << "\n"
+	       // << "omega_y = " << unknown_translation_and_rotation_rates[4] << "\n"
+	       // << "omega_z = " << unknown_translation_and_rotation_rates[5] << "\n"
+	       << "===========================================\n" << std::endl;
+  }
+  catch (OomphLibError& error)
+  {
+    throw OomphLibError("FSI fixed-point iteration scheme didn't converge\n",
+			OOMPH_CURRENT_FUNCTION,
+			OOMPH_EXCEPTION_LOCATION);
+  }
+}
+
+template <class ELEMENT>
+void FlowAroundDiskProblem<ELEMENT>::fsi_residual_sweep()
+{
+  const unsigned n=10;
+
+  Vector<double> u_z;
+  Vector<double> res;
+  
+  for(unsigned i=0; i<n; i++)
+  {
+    // set u_z
+    double uz_i = -(double)(i) / (n-1);
+
+    u_z.push_back(uz_i);
+    
+    Global_Parameters::u_disk_rigid_translation[2] = uz_i;
+    
+    apply_boundary_conditions();
+    
+    newton_solve();
+
+    Vector<double> centre_of_rotation_dummy(3, 0.0);
+    Vector<double> residuals;
+    get_total_disk_force_and_moment_residuals(centre_of_rotation_dummy,
+					      residuals);
+
+    res.push_back(residuals[0]);
+  }
+
+  oomph_info << "Uz residuals\n" << "--------------" << std::endl;
+  for(unsigned i=0; i<n; i++)
+  {
+    oomph_info << u_z[i] << " " << res[i] << std::endl;
+  }
+  oomph_info << "--------------" << std::endl;
 }
 
 //========================================================================
 /// Driver
 //========================================================================
 int main(int argc, char* argv[])
-{  
+{
+  // set up the multi-processor interface
+  MPI_Helpers::init(argc,argv);
+  
   oomph_info << "\n\n=======================   Configuration:   =======================\n"  
 	     << "=                                                                =\n";
 #ifdef USE_FD_JACOBIAN  
@@ -5699,9 +5738,6 @@ int main(int argc, char* argv[])
   oomph_info << "=                                                                =\n"
 	     << "==================================================================\n"
 	     << std::endl;  
-
-  // set up the multi-processor interface
-  MPI_Helpers::init(argc,argv);
   
   // keep track of total program runtime
   double t_start = TimingHelpers::timer();
@@ -5712,14 +5748,25 @@ int main(int argc, char* argv[])
   // ==========================================================================
   // Physical problem parameters
   // ==========================================================================
+
+  CommandLineArgs::specify_command_line_flag("--no_slip_boundaries");
+
+  // do a fixed-point iteration FSI solve, using any velocities
+  // / rotation rates specified below as initial conditions
+  CommandLineArgs::specify_command_line_flag("--rigid_fsi_solve");
   
+  CommandLineArgs::specify_command_line_flag("--fsi_convergence_tol",
+					     &Global_Parameters::FSI_convergence_tol);
+
+  CommandLineArgs::specify_command_line_flag("--fsi_residual_sweep");
+    
   // rigid body velocity of the plate
   CommandLineArgs::specify_command_line_flag("--velocity_x",
-					     &Global_Parameters::u_disk_rigid_body[0]);
+					     &Global_Parameters::u_disk_rigid_translation[0]);
   CommandLineArgs::specify_command_line_flag("--velocity_y",
-					     &Global_Parameters::u_disk_rigid_body[1]);
+					     &Global_Parameters::u_disk_rigid_translation[1]);
   CommandLineArgs::specify_command_line_flag("--velocity_z",
-					     &Global_Parameters::u_disk_rigid_body[2]);
+					     &Global_Parameters::u_disk_rigid_translation[2]);
 
    // rigid body angular velocities of the plate
   CommandLineArgs::specify_command_line_flag("--angular_velocity_x",
@@ -5748,6 +5795,16 @@ int main(int argc, char* argv[])
   CommandLineArgs::specify_command_line_flag("--n",
 					     &Global_Parameters::n);
 
+  // Non-dimensional mass of the disk
+  CommandLineArgs::specify_command_line_flag("--mass", &Global_Parameters::Mass);
+
+  // Archimedes number 
+  CommandLineArgs::specify_command_line_flag("--Ar", &Global_Parameters::Archimedes_number);
+  
+  // specify the relative difference in densities between the solid and fluid
+  CommandLineArgs::specify_command_line_flag("--relative_density_difference",
+					     &Global_Parameters::Relative_density_difference);
+  
   // ==========================================================================
   // Singularity stuff and pinning
   // ==========================================================================
@@ -5808,6 +5865,9 @@ int main(int argc, char* argv[])
   CommandLineArgs::specify_command_line_flag("--pressure_regularisation_factor",
 					     &Global_Parameters::Pressure_regularisation_factor);
 
+  CommandLineArgs::specify_command_line_flag("--velocity_regularisation_factor",
+					     &Global_Parameters::Velocity_regularisation_factor);
+  
   // ==========================================================================
   // Meshing parameters
   // ==========================================================================
@@ -5930,11 +5990,35 @@ int main(int argc, char* argv[])
     Global_Parameters::Use_fd_lu_solver = true;
     oomph_info << "Get comfy, we're using the FD_LU solver...\n" << std::endl;
   }
+
+  if(CommandLineArgs::command_line_flag_has_been_set("--no_slip_boundaries"))
+  {
+    Global_Parameters::No_slip_boundaries = true;
+  }
   
   // FlowAroundDiskProblem <ProjectableTaylorHoodElement<
   //   TNavierStokesElementWithSingularity<3,3> > > problem; // TTaylorHoodElement<3>::NNODE_1D>
   FlowAroundDiskProblem <ProjectableTaylorHoodElement<
 			   TNavierStokesWithSingularityPdeConstrainedMinElement<3> > > problem;
+
+  EdgeCoordinates edge_coords(1e-3, 0, -MathematicalConstants::Pi);
+
+  DenseMatrix<double> grad_sing = Global_Parameters::SingularFunctions::
+    __gradient_of_singular_fct_exact_broadside_translation(edge_coords);
+
+  for(unsigned i=0; i<3; i++)
+  {
+    for(unsigned j=0; j<3; j++)
+    {
+      oomph_info << grad_sing(i,j) << " ";
+    }
+    oomph_info << std::endl;
+  }
+
+  // return 0;
+  
+  // hacky, set the global problem pointer
+  Global_Parameters::Problem = &problem;
   
   if(!CommandLineArgs::command_line_flag_has_been_set("--dont_subtract_singularity") &&
      (CommandLineArgs::command_line_flag_has_been_set("--impose_exact_singular_amplitude") ||
@@ -6032,7 +6116,21 @@ int main(int argc, char* argv[])
   {
     problem.doc_info().number()++;
   }
-    
+
+  if(CommandLineArgs::command_line_flag_has_been_set("--fsi_residual_sweep"))
+  {
+    problem.fsi_residual_sweep();
+
+    return 0;
+  }
+  else if(CommandLineArgs::command_line_flag_has_been_set("--rigid_fsi_solve"))
+  {
+    problem.hacky_fixed_point_fsi_solve();
+    problem.doc_solution(nplot);
+
+    return 0;
+  }
+  
   unsigned max_adapt = 0; 
   for (unsigned i=0; i<=max_adapt; i++)
   {
