@@ -240,10 +240,10 @@ namespace CoordinateConversions
     while (true)
     {
       // make a temporary copy to work with
-      std::unique_ptr<WarpedCircularDiskWithAnnularInternalBoundary> temp_disk_pt =
-	std::make_unique<WarpedCircularDiskWithAnnularInternalBoundary>(r_torus, 
-									current_epsilon,
-									n);
+      auto temp_disk_pt = std::make_unique<
+	WarpedCircularDiskWithAnnularInternalBoundary>(r_torus, 
+						       current_epsilon,
+						       n);
 
       // slightly hacky, but grab the and assign the raw pointer, since the
       // black-box residual fct uses the raw disk_geom_obj_pt pointer
@@ -307,11 +307,11 @@ namespace CoordinateConversions
     if(unknowns[0] < 0)
     {
       // make a temporary copy to work with
-      std::unique_ptr<WarpedCircularDiskWithAnnularInternalBoundary> temp_disk_pt =
-	std::make_unique<WarpedCircularDiskWithAnnularInternalBoundary>(r_torus, 
-									current_epsilon,
-									n);
-
+      auto temp_disk_pt = std::make_unique<
+	WarpedCircularDiskWithAnnularInternalBoundary>(r_torus, 
+						       current_epsilon,
+						       n);
+      
       // slightly hacky, but grab the and assign the raw pointer, since the
       // black-box residual fct uses the raw disk_geom_obj_pt pointer
       disk_geom_obj_pt = temp_disk_pt.get();

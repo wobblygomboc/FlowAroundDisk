@@ -117,16 +117,17 @@ namespace SingularFunctions
     // how far to shift the radius to compute "infinity" when the actual
     // radius is zero
     const double dr = Global_Parameters::Drho_for_infinity;
-    
-    // tolerance for some floating-point comparisons
-    const double tol = 1e-7;
+
+    // QUEHACERES delete?
+    /* // tolerance for some floating-point comparisons */
+    /* const double tol = 1e-7; */
 
     // shorthand
     double rho  = edge_coords.rho;    
     double phi  = edge_coords.phi;
     
     // catch the case where we're sat exactly at the singularity
-    if(rho < tol)
+    if(rho < dr) // tol)
       rho = dr;
 
     // cylindrical coordinates (r,zeta,z)
@@ -203,16 +204,17 @@ namespace SingularFunctions
     // how far to shift the radius to compute "infinity" when the actual
     // radius is zero
     const double dr = Global_Parameters::Drho_for_infinity;
-    
-    // tolerance for some floating-point comparisons
-    const double tol = 1e-7;
+
+    // QUEHACERES delete?
+    /* // tolerance for some floating-point comparisons */
+    /* const double tol = 1e-7; */
 
     // shorthand
     double rho  = edge_coords.rho;    
     double phi  = edge_coords.phi;
     
     // catch the case where we're sat exactly at the singularity
-    if(rho < tol)
+    if(rho < dr)
       rho = dr;
 
     // the radial coordinate of the flat tangent disk on which the solution is based
@@ -294,16 +296,17 @@ namespace SingularFunctions
     // how far to shift the radius to compute "infinity" when the actual
     // radius is zero
     const double dr = Global_Parameters::Drho_for_infinity;
-    
-    // tolerance for some floating-point comparisons
-    const double tol = 1e-7;
+
+    // QUEHACERES delete?
+    /* // tolerance for some floating-point comparisons */
+    /* const double tol = 1e-7; */
  
     // shorthand
     double rho  = edge_coords.rho;    
     double phi  = edge_coords.phi;
     
     // catch the case where we're sat exactly at the singularity
-    if(rho < tol)
+    if(rho < dr) // tol)
       rho = dr;
 
     double zeta = PI/4.;
@@ -341,16 +344,17 @@ namespace SingularFunctions
     // how far to shift the radius to compute "infinity" when the actual
     // radius is zero
     const double dr = Global_Parameters::Drho_for_infinity;
-    
-    // tolerance for some floating-point comparisons
-    const double tol = 1e-7;
+
+    // QUEHACERES delete?
+    /* // tolerance for some floating-point comparisons */
+    /* const double tol = 1e-7; */
 
     // shorthand
     double rho  = edge_coords.rho;    
     double phi  = edge_coords.phi;
     
     // catch the case where we're sat exactly at the singularity
-    if(rho < tol)
+    if(rho < dr) //  tol)
       rho = dr;
 
     // the radial coordinate of the flat tangent disk on which the solution is based

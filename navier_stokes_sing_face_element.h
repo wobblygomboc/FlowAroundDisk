@@ -616,11 +616,9 @@ namespace oomph
 	
 	outfile << std::endl;
       }
-
       
       // Write tecplot footer (e.g. FE connectivity lists)
-      this->write_tecplot_zone_footer(outfile, nplot);
-   
+      this->write_tecplot_zone_footer(outfile, nplot);   
     }
 
     /// Call this to bypass the correct computation of the
@@ -1740,8 +1738,9 @@ namespace oomph
       /// index of the face to which the element is attached. Optional final
       /// arg is the identifier for the additional unknowns multiplier
       NavierStokesWithSingularityBCFaceElement(ELEMENT* const& bulk_el_pt, 
-					       const int& face_index,
-					       const unsigned& id = 0); 
+					       const int& face_index,					       
+					       const unsigned& id = 0,
+					       const bool& is_on_upper_disk_surface = false); 
   
       ///\short  Broken empty constructor
       NavierStokesWithSingularityBCFaceElement()
@@ -1832,6 +1831,9 @@ namespace oomph
 	  
 	  outfile << this->interpolated_p_nst(s) << std::endl;
 	}
+
+	// Write tecplot footer (e.g. FE connectivity lists)
+	this->write_tecplot_zone_footer(outfile, nplot);
       }
 
       /// \short Provide nodal values of desired boundary values.
@@ -1873,7 +1875,17 @@ namespace oomph
       // function to get the total normal stress acting on this element
       // (useful for convergence studies of total force, etc.)
       Vector<double> get_contribution_to_normal_stress() const;
-      
+
+      bool is_on_upper_disk_surface() const
+      {
+	return Is_on_upper_disk_surface;
+      }
+
+      void set_upper_disk_surface()
+      {
+	Is_on_upper_disk_surface = true;
+      }
+	
     private:
 
       /// \short Add the element's contribution to its residual vector.
@@ -1885,8 +1897,11 @@ namespace oomph
 
       /// Desired boundary values at nodes
       DenseMatrix<double> Nodal_boundary_value;
-	
-    }; // end of NavierStokesWithSingularityBCFaceElement class 
+
+      /// are we attached to the upper or lower surface?
+      bool Is_on_upper_disk_surface;
+      
+  }; // end of NavierStokesWithSingularityBCFaceElement class 
 
   //////////////////////////////////////////////////////////////////////
   //////////////////////////////////////////////////////////////////////
@@ -1902,9 +1917,11 @@ namespace oomph
   template <class ELEMENT>
     NavierStokesWithSingularityBCFaceElement<ELEMENT>::
     NavierStokesWithSingularityBCFaceElement(ELEMENT* const& bulk_el_pt, 
-					     const int& face_index, 
-					     const unsigned& id) : 
-  NavierStokesWithSingularityFaceElement<ELEMENT>(bulk_el_pt, face_index, id)
+					     const int& face_index,					     
+					     const unsigned& id,
+					     const bool& is_on_upper_disk_surface) : 
+  NavierStokesWithSingularityFaceElement<ELEMENT>(bulk_el_pt, face_index, id),
+    Is_on_upper_disk_surface(is_on_upper_disk_surface)
   { 
     unsigned n_node = this->nnode();
 
@@ -1921,7 +1938,7 @@ namespace oomph
     // i.e. if we're on the top surface of the disk the bulk element is above
     // and so the default is for the normal to point downwards, but the upper
     // disk normal points upwards
-    this->normal_sign() = -1;
+    this->normal_sign() = -this->normal_sign();
     
   } // end NavierStokesWithSingularityBCFaceElement constructor
 

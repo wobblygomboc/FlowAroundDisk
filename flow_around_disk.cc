@@ -495,7 +495,7 @@ public:
       outfile << this->tecplot_zone_string(nplot);
 
       // Loop over plot points
-      unsigned num_plot_points=this->nplot_points(nplot);
+      unsigned num_plot_points = this->nplot_points(nplot);
       for (unsigned iplot=0; iplot<num_plot_points; iplot++)
       {
 	// Get local coordinates of plot point
@@ -771,7 +771,7 @@ private:
  
   /// Apply BCs and make elements functional
   void complete_problem_setup();
- 
+
   void delete_face_elements()
     {
       // Loop over the flux elements
@@ -885,6 +885,11 @@ private:
     const Vector<double>& x,
     EdgeCoordinates& edge_coordinates_at_point,
     std::pair<GeomObject*, Vector<double> >& line_element_and_local_coordinate) const;
+
+  /// \short check that we don't have any inconsistencies between the sign of the
+  /// elevation angle phi and the direction of the unit normal for upper/lower surfaces
+  Vector<std::pair<NavierStokesWithSingularityBCFaceElement<ELEMENT>*, unsigned>>
+    sanity_check_edge_coords_on_disk() const;    
   
   /// \short Helper to generate the 1D line mesh which runs around the outside of the
   /// disk and provides the amplitude of the singularity as a function of the
@@ -1013,6 +1018,11 @@ private:
   std::set<ELEMENT*> Nonboundary_elements_with_node_on_upper_disk_surface_pt;
   std::set<ELEMENT*> Nonboundary_elements_with_node_on_lower_disk_surface_pt;
 
+  // lists of the bulk elements and their corresponding face indices which touch
+  // the upper and lower surfaces of the disk
+  Vector<std::pair<ELEMENT*, unsigned>> Bulk_element_and_face_index_for_upper_disk_in_torus;
+  Vector<std::pair<ELEMENT*, unsigned>> Bulk_element_and_face_index_for_lower_disk_in_torus;
+  
   /// \short a map which takes a node on a disk boundary and returns a set of
   /// the elements on the upper surface which share this node, and the index
   /// of this node within that element
@@ -1495,13 +1505,56 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
 
   // get the node to element look-up
   generate_node_to_element_map();
-
-  // ---------------------------------------------------------------------------
-  
+	
   // clear vectors (for mesh adaption)
   Elements_on_upper_disk_surface_pt.clear();
   Elements_on_lower_disk_surface_pt.clear();
 
+  Bulk_element_and_face_index_for_upper_disk_in_torus.clear();
+  Bulk_element_and_face_index_for_lower_disk_in_torus.clear();
+  
+  // ---------------------------------------------------------------------------
+  // Step 0: populate list of elements on the upper and lower disk surfaces
+  //         in the torus region
+    
+  for(unsigned one_based_id : One_based_boundary_id_for_disk_within_torus)
+  {
+    const unsigned b = one_based_id - 1;
+    const unsigned n_element = Bulk_mesh_pt->nboundary_element(b);
+
+    // Loop over the bulk elements adjacent to boundary b
+    for(unsigned e=0; e<n_element; e++)
+    {
+      // Get pointer to the bulk element that is adjacent to boundary b
+      ELEMENT* bulk_elem_pt = dynamic_cast<ELEMENT*>(
+	Bulk_mesh_pt->boundary_element_pt(b,e));
+        
+      // Find the index of the face of element e along boundary b 
+      int face_index = Bulk_mesh_pt->face_index_at_boundary(b, e);
+       
+      // Build the corresponding face element
+      auto surface_element_pt =
+	std::make_unique<RigidDiskFaceElement<ELEMENT>>(bulk_elem_pt, face_index);
+
+      Vector<double> unit_normal(3, 0.0);
+      surface_element_pt->outer_unit_normal(0, unit_normal);
+
+      // if the unit normal points up we're on the upper surface
+      if(unit_normal[2] > 0.0)
+      {
+	Bulk_element_and_face_index_for_upper_disk_in_torus.push_back(
+	  std::make_pair(bulk_elem_pt, face_index));
+      }
+      else // otherwise we're on the lower surface
+      {
+	Bulk_element_and_face_index_for_lower_disk_in_torus.push_back(
+	  std::make_pair(bulk_elem_pt, face_index));
+      }
+    }
+  }
+  
+
+  // ---------------------------------------------------------------------------
   // Step 1:
   // populate the vectors of elements which specify the elements which are on
   // the upper and lower surfaces of the disk. The strategy is to loop over
@@ -1537,7 +1590,7 @@ void FlowAroundDiskProblem<ELEMENT>::identify_elements_on_upper_and_lower_disk_s
       {
 	// add to our list of upper surface elements
 	Elements_on_upper_disk_surface_pt.insert(el_pt);
-
+	  
 	// also add entries for all of its nodes which are on the boundary,
 	// with the corresponding index of the node.
 	for(unsigned j=0; j<el_pt->nnode(); j++)
@@ -2452,8 +2505,10 @@ void FlowAroundDiskProblem<ELEMENT>::duplicate_plate_nodes_and_add_boundaries()
 	     << nlower_disk_nodes + nupper_disk_nodes << "\n\n";
 
   // and finally, update this since we've fiddled the nodes on the plate
-  // boundaries. N.B. this doesn't update element-in-region info, so new
-  // boundaries aren't "in" the torus region
+  // boundaries. N.B. this doesn't update boundary element-in-region info, so new
+  // boundaries aren't "in" the torus region, and the elements which are now
+  // on the upper disk surface will still be part of the boundary element-in-region
+  // lookup for lower disk boundaries
   Bulk_mesh_pt->setup_boundary_element_info();
 
   // combine the upper and lower boundary IDs because nodes have been duplicated
@@ -2574,24 +2629,53 @@ void FlowAroundDiskProblem<ELEMENT>::get_edge_coordinates_and_singular_element(
   std::pair<GeomObject*, Vector<double> >& line_element_and_local_coordinate) const
 {
   // tolerance on point away from the x-axis
-  const double tol = 1e-8;
+  const double tol = 1e-6;
   
   // ------------------------------------------
   // Step 1: Compute the (\rho,\zeta,\phi) coordinates
   // ------------------------------------------
 
   CoordinateConversions::eulerian_to_lagrangian_coordinates(x, edge_coordinates_at_point);
-  
+
+  // try and cast this element to see if we have a bulk or a face element
+  ELEMENT* bulk_el_pt = const_cast<ELEMENT*>(dynamic_cast<ELEMENT*>(elem_pt));
+
+  // if this is a face element, check if it's a BC element sitting on the disk
+  if(bulk_el_pt == nullptr)
+  {
+    auto bc_face_el_pt =
+      dynamic_cast<NavierStokesWithSingularityBCFaceElement<ELEMENT>*>(elem_pt);
+
+    // if this is a BC face element, then set the bulk element pointer to the
+    // face element's bulk element to figure out if it's a face element on the
+    // upper or lower surface
+    if(bc_face_el_pt != nullptr)
+    {
+      const double disk_tol = 1e-4;
+      
+      // if it's an upper disk element but phi = -pi, change it to +pi
+      if(bc_face_el_pt->is_on_upper_disk_surface() &&
+	 (abs(edge_coordinates_at_point.phi + MathematicalConstants::Pi) < disk_tol))
+      {
+	edge_coordinates_at_point.phi = MathematicalConstants::Pi;
+      }
+      // otherwise if it's on the lower surface but phi = +pi, change to -pi
+      else if(!bc_face_el_pt->is_on_upper_disk_surface() &&
+	 (abs(edge_coordinates_at_point.phi - MathematicalConstants::Pi) < disk_tol))
+      {
+	edge_coordinates_at_point.phi = -MathematicalConstants::Pi;
+      }
+      // bulk_el_pt = dynamic_cast<ELEMENT*>(bc_face_el_pt->bulk_element_pt() );
+    }
+  }
+    
   // if this point as an angle of pi but is on the lower side of the disk
   // rather than the upper, set it's angle to -pi to get the pressure jump right.
   // N.B. this will only matter for plot points where the output is done at the
   // nodes; integration points are always within the element
   if(abs(edge_coordinates_at_point.phi - MathematicalConstants::Pi) < tol)
-  {
-    // try and cast this element just to make sure we don't have a face element
-    const ELEMENT* bulk_el_pt = dynamic_cast<const ELEMENT*>(elem_pt);
-
-    if(bulk_el_pt != 0)
+  { 
+    if(bulk_el_pt != nullptr)
     {
       // now search for it in the list of lower disk elements
       if(Elements_on_lower_disk_surface_pt.find(const_cast<ELEMENT*>(bulk_el_pt)) !=
@@ -2604,12 +2688,9 @@ void FlowAroundDiskProblem<ELEMENT>::get_edge_coordinates_and_singular_element(
   // equally if the angle is -pi but is on the top surface, change it to +pi
   else if(abs(edge_coordinates_at_point.phi + MathematicalConstants::Pi) < tol)
   {
-    // try and cast this element just to make sure we don't have a face element
-    const ELEMENT* bulk_el_pt = dynamic_cast<const ELEMENT*>(elem_pt);
-
-    if(bulk_el_pt != 0)
+    if(bulk_el_pt != nullptr)
     {
-      // now search for it in the list of lower disk elements
+      // now search for it in the list of upper disk elements
       if(Elements_on_upper_disk_surface_pt.find(const_cast<ELEMENT*>(bulk_el_pt)) !=
 	 Elements_on_upper_disk_surface_pt.end())
       {	  
@@ -2719,6 +2800,44 @@ void FlowAroundDiskProblem<ELEMENT>::setup_edge_coordinates_and_singular_element
   }    
 }
 
+// function to check consistency between the sign of phi on the disk
+// and the outer unit normal
+template <class ELEMENT>
+Vector<std::pair<NavierStokesWithSingularityBCFaceElement<ELEMENT>*, unsigned>>
+  FlowAroundDiskProblem<ELEMENT>::sanity_check_edge_coords_on_disk() const
+{
+  // keep track of element-knot pairs which have inconsistent
+  // phi coordinate and outer normal
+  Vector<std::pair<NavierStokesWithSingularityBCFaceElement<ELEMENT>*, unsigned>>
+    invalid_elem_and_knot;
+  
+  for(unsigned e=0; e<Face_mesh_for_bc_pt->nelement(); e++)
+  {
+    auto bc_face_el_pt =
+      dynamic_cast<NavierStokesWithSingularityBCFaceElement<ELEMENT>*>(
+	Face_mesh_for_bc_pt->element_pt(e));
+
+    const unsigned n_intpt = bc_face_el_pt->integral_pt()->nweight();
+
+    for(unsigned ipt=0; ipt< n_intpt; ipt++)
+    {
+      // get the outer unit normal at this integration point
+      Vector<double> unit_normal(3, 0.0);     
+      bc_face_el_pt->outer_unit_normal(ipt, unit_normal);
+
+      // now get the edge coordinates at this integration point
+      EdgeCoordinates edge_coords_at_knot = bc_face_el_pt->edge_coordinate_at_knot(ipt);
+      
+      if( sgn(edge_coords_at_knot.phi) != sgn(unit_normal[2]) )
+      {
+	// add it to our list
+	invalid_elem_and_knot.push_back(std::make_pair(bc_face_el_pt, ipt));
+      }
+    }
+  }
+
+  return invalid_elem_and_knot;
+}
 
 /// \Short Helper function which creates the line mesh of 1D elements which sit
 /// on the outer edge of the disk and provide the amplitude of the sinuglar
@@ -2938,7 +3057,43 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
 						edge_coordinates_at_plot_point,
 						line_element_and_local_coordinates,
 						use_plot_points);
-    
+
+    // is this element touching the upper disk surface?
+    if(std::find(Elements_on_upper_disk_surface_pt.begin(),
+		 Elements_on_upper_disk_surface_pt.end(), torus_region_el_pt)
+       != Elements_on_upper_disk_surface_pt.end() )        
+    {
+      // check if any of the rho coordinates for this elements plot points
+      // are ~zero
+      for(EdgeCoordinates& edge_coords : edge_coordinates_at_plot_point)
+      {
+	if(edge_coords.rho < Global_Parameters::Drho_for_infinity)
+	{
+	  // if so, the elevation angle is degenerate, so set it to +pi for
+	  // output purposes (phi=0 produces p=0 instead of +inf so gives
+	  // strange interpolation results)
+	  edge_coords.phi = MathematicalConstants::Pi;
+	}
+      }
+    }
+    // if not, is it on the lower surface?
+    else if(std::find(Elements_on_lower_disk_surface_pt.begin(),
+		      Elements_on_lower_disk_surface_pt.end(), torus_region_el_pt)
+	    != Elements_on_lower_disk_surface_pt.end() )
+    {
+      // check if any of the rho coordinates for this elements plot points
+      // are ~zero
+      for(EdgeCoordinates& edge_coords : edge_coordinates_at_plot_point)
+      {
+	// is the point on the very edge of the disk?
+	if(edge_coords.rho < Global_Parameters::Drho_for_infinity)
+	{
+	  // similarly for the lower disk
+	  edge_coords.phi = -MathematicalConstants::Pi;
+	}
+      }
+    }
+     
     // now tell the element about them
     torus_region_el_pt->set_edge_coordinates_at_plot_point(edge_coordinates_at_plot_point);	
 
@@ -3169,6 +3324,50 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
   
   // Apply bcs  
   apply_boundary_conditions();
+
+  Vector<std::pair<NavierStokesWithSingularityBCFaceElement<ELEMENT>*, unsigned>>
+    invalid_face_elem_and_knot = sanity_check_edge_coords_on_disk();
+
+  if(invalid_face_elem_and_knot.size() > 0)
+  {
+    ofstream some_file;
+    std::ostringstream filename;
+
+    filename << Doc_info.directory() << "/face_elems_with_invalid_edge_coords.dat";
+    
+    some_file.open(filename.str().c_str());
+    
+    for(auto face_elem_and_knot : invalid_face_elem_and_knot)
+    {
+      face_elem_and_knot.first->output(some_file, 2);
+
+      Vector<double> unit_normal(3, 0.0);
+      face_elem_and_knot.first->outer_unit_normal(face_elem_and_knot.second,
+						  unit_normal);
+
+      EdgeCoordinates edge_coords_at_knot =
+	face_elem_and_knot.first->edge_coordinate_at_knot(face_elem_and_knot.second);
+      
+      oomph_info << face_elem_and_knot.first << ", knot: "
+		 << face_elem_and_knot.second << ", "
+		 << "face_elem->Is_on_upper_disk_surface: "
+		 << face_elem_and_knot.first->is_on_upper_disk_surface() << ", "
+		 << "sign of unit_normal[2]: "
+		 << sgn(unit_normal[2]) << ","
+		 << "phi: " << edge_coords_at_knot.phi << std::endl;
+    }
+
+    some_file.close();
+
+    std::ostringstream error_message;
+    error_message << "Error: some face elements on the disk have inconsistent "
+		  << "edge coordinates. These have been output to: "
+		  << filename.str() << "\n" << std::endl;
+    
+    throw OomphLibError(error_message.str(),
+    			OOMPH_CURRENT_FUNCTION,
+    			OOMPH_EXCEPTION_LOCATION);
+  }
 }
 
 //==start_of_find_corresponding_element_on_bulk_side_of_augmented_boundary==
@@ -3370,34 +3569,94 @@ void FlowAroundDiskProblem<ELEMENT>::create_face_elements()
 
     // BC elements live on disk inside torus
     //--------------------------------------
-          
-    // now add BC face elements to the disk boundaries
-    for (unsigned i=0; i<Disk_boundary_ids_in_torus.size(); i++)
+
+    // add BC face elements to the upper disk surface...
+    for(std::pair<ELEMENT*, unsigned>& bulk_elem_and_face_index :
+	  Bulk_element_and_face_index_for_upper_disk_in_torus)
     {
-      unsigned b = Disk_boundary_ids_in_torus[i];
-      unsigned n_element = Bulk_mesh_pt->nboundary_element(b);
+      // Build the corresponding bc element
+      NavierStokesWithSingularityBCFaceElement<ELEMENT>* bc_element_pt =
+	new NavierStokesWithSingularityBCFaceElement<ELEMENT>
+	(bulk_elem_and_face_index.first,
+	 bulk_elem_and_face_index.second,
+	 BC_el_id,
+	 true); // extra flag for upper disk surface
+
+      // Add the bc element to the surface mesh
+      Face_mesh_for_bc_pt->add_element_pt(bc_element_pt);
+    }
+
+    // ...and to the lower disk surface
+    for(std::pair<ELEMENT*, unsigned>& bulk_elem_and_face_index :
+	  Bulk_element_and_face_index_for_lower_disk_in_torus)
+    {
+      // Build the corresponding bc element
+      NavierStokesWithSingularityBCFaceElement<ELEMENT>* bc_element_pt =
+	new NavierStokesWithSingularityBCFaceElement<ELEMENT>
+	(bulk_elem_and_face_index.first,
+	 bulk_elem_and_face_index.second, BC_el_id);
+
+      // Add the bc element to the surface mesh
+      Face_mesh_for_bc_pt->add_element_pt(bc_element_pt);
+    }
+    
+    // // now add BC face elements to the disk boundaries
+    // for (unsigned i=0; i<Disk_boundary_ids_in_torus.size(); i++)
+    // {
+    //   const unsigned b = Disk_boundary_ids_in_torus[i];
+    //   const unsigned n_element = Bulk_mesh_pt->nboundary_element(b);
       
-      // Loop over the bulk elements adjacent to boundary b
-      for(unsigned e=0; e<n_element; e++)
-      {
-	// Get pointer to the bulk element that is adjacent to boundary b
-	ELEMENT* bulk_elem_pt = dynamic_cast<ELEMENT*>(
-	  Bulk_mesh_pt->boundary_element_pt(b,e));
+    //   // Loop over the bulk elements adjacent to boundary b
+    //   for(unsigned e=0; e<n_element; e++)
+    //   {
+    // 	// Get pointer to the bulk element that is adjacent to boundary b
+    // 	ELEMENT* bulk_elem_pt = dynamic_cast<ELEMENT*>(
+    // 	  Bulk_mesh_pt->boundary_element_pt(b,e));
         
-	//Find the index of the face of element e along boundary b 
-	int face_index = Bulk_mesh_pt->face_index_at_boundary(b,e);
+    // 	// Find the index of the face of element e along boundary b 
+    // 	int face_index = Bulk_mesh_pt->face_index_at_boundary(b,e);
         
-	// Build the corresponding bc element
-	NavierStokesWithSingularityBCFaceElement<ELEMENT>* bc_element_pt =
-	  new NavierStokesWithSingularityBCFaceElement<ELEMENT>
-	  (bulk_elem_pt,face_index, BC_el_id);
+    // 	// Build the corresponding bc element
+    // 	NavierStokesWithSingularityBCFaceElement<ELEMENT>* bc_element_pt =
+    // 	  new NavierStokesWithSingularityBCFaceElement<ELEMENT>
+    // 	  (bulk_elem_pt,face_index, BC_el_id);
         
-	//Add the bc element to the surface mesh
-	Face_mesh_for_bc_pt->add_element_pt(bc_element_pt);
-      }
-    }    
+    // 	// Add the bc element to the surface mesh
+    // 	Face_mesh_for_bc_pt->add_element_pt(bc_element_pt);
+
+    // 	// get the outer unit normal and see which way it points; if it
+    // 	// points downwards then this face element is on the upper disk surface
+    // 	Vector<double> unit_normal(3, 0.0);
+    // 	bc_element_pt->outer_unit_normal(0, unit_normal);
+	
+    // 	if(unit_normal[2] < 0.0)
+    // 	{
+    // 	  bc_element_pt->set_upper_disk_surface();
+    // 	  nupper_disk_elems++;
+    // 	}
+    // 	else
+    // 	{
+    // 	  nlower_disk_elems++;
+    // 	}
+    //   }
+    // }
+
+    oomph_info << "@@@@\nFace_mesh_for_bc_pt->nelement() = "
+	       << Face_mesh_for_bc_pt->nelement() << "\n"
+	       << "One_based_boundary_id_for_disk_within_torus.size() = "
+	       << One_based_boundary_id_for_disk_within_torus.size() << "\n"
+	       << "Boundary_id_for_upper_disk_within_torus.size() = "
+	       << Boundary_id_for_upper_disk_within_torus.size() << "\n"
+	       << "Disk_boundary_ids_in_torus.size() = "
+	       << Disk_boundary_ids_in_torus.size() << "\n"
+	       << "nupper_disk_elems = " << Bulk_element_and_face_index_for_upper_disk_in_torus.size()
+	       << "\nlower_disk_elems = " << Bulk_element_and_face_index_for_lower_disk_in_torus.size()
+	       << "\n@@@@\n" << std::endl;
+    
   } // end if(! --dont_subtract_singularity)
-   
+
+  
+    
   // ========================================================================
   // Now find the upper outer boundary and stick traction elements on it
   
@@ -3977,8 +4236,9 @@ void FlowAroundDiskProblem<ELEMENT>::set_values_to_exact_non_singular_solution()
       Node* node_pt = elem_pt->node_pt(j);
       
       // get the nodal coordinates
-      Vector<double> x(3, 0.0);     
-      node_pt->position(0,x);
+      Vector<double> x(3, 0.0);
+      for(unsigned i=0; i<3; i++)
+	x[i] = node_pt->x(i);
       
       // get the total solution at this point (in the bulk, so
       // the FE solution is the total solution)
@@ -4718,7 +4978,7 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
     for(unsigned i=0; i<3; i++)
       // minus sign accounts for the BC Face element being attached to a
       // bulk element on the other side of the plate
-      total_force_on_plate[i] -= force_on_element[i];
+      total_force_on_plate[i] += force_on_element[i];
 
     double surface_area = bc_el_pt->size();
 
@@ -4728,43 +4988,12 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
     disk_in_torus_surface_area += surface_area;
   }
 
-  // QUEHACERES delete
-  // region_id = Torus_region_id;
-  // unsigned nb = One_based_boundary_id_for_disk_within_torus.size();
-  // for (unsigned i=0; i<nb; i++)
-  // {
-  //   unsigned b = One_based_boundary_id_for_disk_within_torus[i]-1;
-  //   unsigned nel = Bulk_mesh_pt->nboundary_element_in_region(b,region_id);
-  //   for (unsigned e=0; e<nel; e++)
-  //   {
-  //     FiniteElement* el_pt = 
-  // 	Bulk_mesh_pt->boundary_element_in_region_pt(b,region_id,e);
-     
-  //     // What is the index of the face of the bulk element at the boundary
-  //     int face_index = Bulk_mesh_pt->
-  // 	face_index_at_boundary_in_region(b,region_id,e);
-
-  //     // Build the corresponding surface power element
-  //     RigidDiskFaceElement<ELEMENT>* surface_element_pt =
-  //     	new RigidDiskFaceElement<ELEMENT>(el_pt, face_index);
-     
-  //     // Get surface area
-  //     disk_in_torus_surface_area += surface_element_pt->size();
-      
-  //     // Output
-  //     surface_element_pt->output(some_file, nplot);
-     
-  //     // ...and we're done!
-  //     delete surface_element_pt;
-  //     surface_element_pt = nullptr;
-  //   }
-  // }
   some_file.close();
   oomph_info << "\nDisk in torus surface area: "
 	     <<  disk_in_torus_surface_area << std::endl;
 
  
-  // Attach face elements to part of disk outside torus
+  // Attach face elements to part of lower disk outside torus
   //--------------------------------------------------
   sprintf(filename,"%s/face_elements_on_disk_outside_torus%i.dat",
 	  Doc_info.directory().c_str(),
@@ -4940,8 +5169,8 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
     if (!(el_pt->is_halo()))
 #endif
     {
-    el_pt->compute_error(dummy_ofstream, &Analytic_Functions::exact_solution_flat_disk,
-			 el_v_error, el_p_error, el_norm);
+      el_pt->compute_error(dummy_ofstream, &Analytic_Functions::exact_solution_flat_disk,
+			   el_v_error, el_p_error, el_norm);
     }
     
     //Add each elemental error to the global error
@@ -5136,6 +5365,15 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
     oomph_info << "Output description of nodes to " << filename << std::endl;
   }
 
+  // QUEHACERES debug
+  GeomObject* edge_elem_geom_obj_pt = nullptr;
+  Vector<double> x_edge(3, 0.0);
+  Vector<double> s(3, 0.0);
+  x_edge[0] = 1.0;
+  Mesh_as_geom_object_pt->locate_zeta(x_edge, edge_elem_geom_obj_pt, s);
+
+  ELEMENT* edge_elem_pt = dynamic_cast<ELEMENT*>(edge_elem_geom_obj_pt);
+    
   oomph_info << "Outputting extended solution..." << std::endl;
   
   // Plot "extended solution" showing contributions

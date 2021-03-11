@@ -40,6 +40,7 @@
 //oomph-lib headers
 #include "geom_objects.h"
 
+#include "geom_obj_with_boundary.h"
 
 namespace oomph
 {
