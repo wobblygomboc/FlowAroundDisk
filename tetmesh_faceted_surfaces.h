@@ -422,7 +422,7 @@ namespace oomph
    
       // Combine to curvilinear boundary and define the
       // outer boundary
-      TriangleMeshClosedCurve* closed_curve_pt=
+      TriangleMeshClosedCurve* closed_curve_pt =
 	new TriangleMeshClosedCurve(outer_curvilinear_boundary_pt);
 
       // Use the TriangleMeshParameters object for helping on the manage of the

@@ -2,6 +2,7 @@
 #define OOMPH_COORDINATE_CONVERSIONS
 
 #include "additional_maths.h"
+#include "warped_disk_with_torus_geom_obj.h"
 
 namespace CoordinateConversions
 {
@@ -10,7 +11,7 @@ namespace CoordinateConversions
   // QUEHACERES change this to something more generic at some point
   // pointer to a geometric object which provides things like
   // boundary triad vectors and their derivatives
-  WarpedCircularDiskWithAnnularInternalBoundary* disk_geom_obj_pt = 0x0;
+  CylindricallyWarpedCircularDiskWithAnnularInternalBoundary* disk_geom_obj_pt = nullptr;
     
   // ==========================================================================
   // Function which returns a cartesian unit vector in the i direction
@@ -23,149 +24,221 @@ namespace CoordinateConversions
     return e;
   }
 
-  // ==========================================================================
-  // wrapper function, so we can easily switch over all the calls to the disk-like
-  // GeomObject once we have the actual disk elements in there
-  // ==========================================================================
-  void boundary_triad(const double& zeta,
-		      Vector<double>& x_disk_edge,
-		      Vector<double>& tangent,
-		      Vector<double>& normal,
-		      Vector<double>& binormal)
-  {
-    // get the unit normals from the disk-like geometric object at this zeta
-    disk_geom_obj_pt->
-      boundary_triad(0, zeta, x_disk_edge, tangent, normal, binormal);
-  }
+  // ### QUEHACERES delete
+  /* // ========================================================================== */
+  /* // wrapper function, so we can easily switch over all the calls to the disk-like */
+  /* // GeomObject once we have the actual disk elements in there */
+  /* // ========================================================================== */
+  /* void boundary_triad(const double& zeta, */
+  /* 		      Vector<double>& x_disk_edge, */
+  /* 		      Vector<double>& tangent, */
+  /* 		      Vector<double>& normal, */
+  /* 		      Vector<double>& binormal) */
+  /* { */
+  /*   // get the unit normals from the disk-like geometric object at this zeta */
+  /*   disk_geom_obj_pt-> */
+  /*     boundary_triad(0, zeta, x_disk_edge, tangent, normal, binormal); */
+  /* } */
 
-  // ==========================================================================
-  // wrapper function, so we can easily switch over all the calls to the disk-like
-  // GeomObject once we have the actual disk elements in there
-  // ==========================================================================
-  void dboundary_triad_dzeta(double& zeta,
-			     Vector<double>& dr_disk_edge_dzeta,
-			     Vector<double>& dtangent_dzeta,
-			     Vector<double>& dnormal_dzeta,
-			     Vector<double>& dbinormal_dzeta)
-  {
-    disk_geom_obj_pt->dboundary_triad_dzeta(0, zeta, dr_disk_edge_dzeta,
-					    dtangent_dzeta, dnormal_dzeta,
-					    dbinormal_dzeta);
-  }
-  
-  // ==========================================================================
-  // wrapper function to get the radius of the disk at a given zeta
-  // ==========================================================================
-  double r_disk(const double& zeta)
-  {
-    // QUEHACERES for now, it's always 1, will need to change once
-    // we've actually got the disk elements in there
-    return 1.0;
-  }
-  
-  // ==========================================================================
-  // get the Lagrangian triad unit vectors \hat\rho, \hat\zeta and \hat\phi
-  // ==========================================================================
-  void lagrangian_triad_and_x_disk_edge(const EdgeCoordinates& edge_coords,
-					Vector<double>& rho_hat,
-					Vector<double>& zeta_hat,
-					Vector<double>& phi_hat,
-					Vector<double>& x_disk_edge)
-  {
-    // make enough space
-    rho_hat.resize(3);
-    zeta_hat.resize(3);
-    phi_hat.resize(3);
-    x_disk_edge.resize(3);
+  // ### QUEHACERES delete
+  /* // ========================================================================== */
+  /* // wrapper function, so we can easily switch over all the calls to the disk-like */
+  /* // GeomObject once we have the actual disk elements in there */
+  /* // ========================================================================== */
+  /* void dboundary_triad_dzeta(double& zeta, */
+  /* 			     Vector<double>& dr_disk_edge_dzeta, */
+  /* 			     Vector<double>& dtangent_dzeta, */
+  /* 			     Vector<double>& dnormal_dzeta, */
+  /* 			     Vector<double>& dbinormal_dzeta) */
+  /* { */
+  /*   disk_geom_obj_pt->dboundary_triad_dzeta(0, zeta, dr_disk_edge_dzeta, */
+  /* 					    dtangent_dzeta, dnormal_dzeta, */
+  /* 					    dbinormal_dzeta); */
+  /* } */
 
-    // boundary triad (functions of \zeta) in Cartesian coordinates
-    Vector<double> tangent(3, 0.0);
-    Vector<double> normal(3, 0.0);
-    Vector<double> binormal(3, 0.0);
-    
-    // get the triad unit vectors and disk edge at this zeta
-    boundary_triad(edge_coords.zeta, x_disk_edge, tangent, normal, binormal);
-    
-    // unit vector in the rho direction    
-    for(unsigned i=0; i<3; i++)
-      rho_hat[i] = normal[i] * cos(edge_coords.phi) + binormal[i] * sin(edge_coords.phi);
+  // ### QUEHACERES delete
+  /* // ========================================================================== */
+  /* // wrapper function to get the radius of the disk at a given zeta */
+  /* // ========================================================================== */
+  /* double r_disk(const double& zeta) */
+  /* { */
+  /*   // QUEHACERES for now, it's always 1, will need to change once */
+  /*   // we've actually got the disk elements in there */
+  /*   return 1.0; */
+  /* } */
 
-    // the GeomObj::boundary_triad() gives back unit vectors, so \hat\zeta is
-    // just the tangent vector
-    zeta_hat = tangent;
+  // ### QUEHACERES delete
+  /* // ========================================================================== */
+  /* // get the Lagrangian triad unit vectors \hat\rho, \hat\zeta and \hat\phi */
+  /* // ========================================================================== */
+  /* void lagrangian_triad_and_x_disk_edge(const EdgeCoordinates& edge_coords, */
+  /* 					Vector<double>& rho_hat, */
+  /* 					Vector<double>& zeta_hat, */
+  /* 					Vector<double>& phi_hat, */
+  /* 					Vector<double>& x_disk_edge) */
+  /* { */
+  /*   // make enough space */
+  /*   rho_hat.resize(3); */
+  /*   zeta_hat.resize(3); */
+  /*   phi_hat.resize(3); */
+  /*   x_disk_edge.resize(3); */
+
+  /*   // boundary triad (functions of \zeta) in Cartesian coordinates */
+  /*   Vector<double> tangent(3, 0.0); */
+  /*   Vector<double> normal(3, 0.0); */
+  /*   Vector<double> binormal(3, 0.0); */
     
-    // the - sign in front of binormal component has been cancelled out by the
-    // angle flip, since cos(pi-x) = -cos(x)
-    for(unsigned i=0; i<3; i++)
-      phi_hat[i] = normal[i] * sin(edge_coords.phi) + binormal[i] * cos(edge_coords.phi);
-  }
+  /*   // get the triad unit vectors and disk edge at this zeta */
+  /*   boundary_triad(edge_coords.zeta, x_disk_edge, tangent, normal, binormal); */
+    
+  /*   // unit vector in the rho direction     */
+  /*   for(unsigned i=0; i<3; i++) */
+  /*     rho_hat[i] = normal[i] * cos(edge_coords.phi) + binormal[i] * sin(edge_coords.phi); */
+
+  /*   // the GeomObj::boundary_triad() gives back unit vectors, so \hat\zeta is */
+  /*   // just the tangent vector */
+  /*   zeta_hat = tangent; */
+    
+  /*   // the - sign in front of binormal component has been cancelled out by the */
+  /*   // angle flip, since cos(pi-x) = -cos(x) */
+  /*   for(unsigned i=0; i<3; i++) */
+  /*     phi_hat[i] = normal[i] * sin(edge_coords.phi) + binormal[i] * cos(edge_coords.phi); */
+  /* } */
 
   
   // ==========================================================================
   // Converts velocities given in arbitrary Lagrangian coordinates to
   // global Cartesian (x,y,z) coordinates
   // ==========================================================================
-  void lagrangian_to_eulerian_velocity(const EdgeCoordinates& edge_coords,
-				       const Vector<Vector<double> >& lagr_unit_vec,
-				       const Vector<double>& u_lagrangian,				       
-				       Vector<double>& u_cartesian)
+  void lagrangian_to_eulerian_velocity(const LagrangianCoordinates& lagr_coords,
+  				       const Vector<double>& u_lagrangian,
+  				       Vector<double>& u_cartesian)
   {
-    // Matrix of Cartesian unit vectors
-    Vector<Vector<double> > e_hat(3);
-    e_hat[0] = cartesian_unit_vector(0);
-    e_hat[1] = cartesian_unit_vector(1);
-    e_hat[2] = cartesian_unit_vector(2);
-
-    // assemble the transformation matrix U_{ij} = e_hat_{ik} xi_{jk}
-    DenseMatrix<double> U(3,3, 0.0);
-    for(unsigned i=0; i<3; i++)
-    {
-      for(unsigned j=0; j<3; j++)
-      {	
-	// do the dot product
-	for(unsigned k=0; k<3; k++)
-	  U(i,j) += e_hat[i][k] * lagr_unit_vec[j][k]; // xi[j][k];
-      }
-    }
-
-    // zero everything out
-    u_cartesian.resize(3);
-    std::fill(u_cartesian.begin(), u_cartesian.end(), 0.0);
+    // Lagrangian triad unit vectors
+    Vector<double> a1(3, 0.0);
+    Vector<double> a2(3, 0.0);
+    Vector<double> a3(3, 0.0);
     
-    // do the conversion u_i = U_ij u'_j
+    Vector<double> xi = lagr_coords.vector();
+    
+    // get 'em
+    disk_geom_obj_pt->basis_vectors(lagr_coords, a1, a2, a3);
+
+    // make a vector of the basis vectors for easier indexing
+    Vector<Vector<double>> a(3);
+    a[0] = a1;
+    a[1] = a2;
+    a[2] = a3;
+    
+    // make enough space
+    u_cartesian.resize(3, 0.0);
+    u_cartesian.initialise(0.0);
+    
+    // compute the Eulerian coordinates of this point for the derivatives
+    // ---------------------------------
+
+    // loop over the Eulerian coordinates
     for(unsigned i=0; i<3; i++)
     {
+      // Cartesian unit vector in the ith direction
+      Vector<double> e_hat = cartesian_unit_vector(i);
+
+      // loop over the curvilinear coordinates
       for(unsigned j=0; j<3; j++)
       {
-	u_cartesian[i] += U(i,j) * u_lagrangian[j];
+	// dot product loop
+	for(unsigned k=0; k<3; k++)
+	{
+	  u_cartesian[i] += e_hat[k] * a[j][k] * u_lagrangian[j];
+	}
       }
     }
   }
+  
+  // ### QUEHACERES delete
+  /* void lagrangian_to_eulerian_velocity(const EdgeCoordinates& edge_coords,
+  /* 				       const Vector<Vector<double> >& lagr_unit_vec, */
+  /* 				       const Vector<double>& u_lagrangian,			        */
+  /* 				       Vector<double>& u_cartesian) */
+  /* { */    
+  /*   // Matrix of Cartesian unit vectors */
+  /*   Vector<Vector<double> > e_hat(3); */
+  /*   e_hat[0] = cartesian_unit_vector(0); */
+  /*   e_hat[1] = cartesian_unit_vector(1); */
+  /*   e_hat[2] = cartesian_unit_vector(2); */
+
+  /*   // assemble the transformation matrix U_{ij} = e_hat_{ik} xi_{jk} */
+  /*   DenseMatrix<double> U(3,3, 0.0); */
+  /*   for(unsigned i=0; i<3; i++) */
+  /*   { */
+  /*     for(unsigned j=0; j<3; j++) */
+  /*     {	 */
+  /* 	// do the dot product */
+  /* 	for(unsigned k=0; k<3; k++) */
+  /* 	  U(i,j) += e_hat[i][k] * lagr_unit_vec[j][k]; // xi[j][k]; */
+  /*     } */
+  /*   } */
+
+  /*   // zero everything out */
+  /*   u_cartesian.resize(3); */
+  /*   std::fill(u_cartesian.begin(), u_cartesian.end(), 0.0); */
+    
+  /*   // do the conversion u_i = U_ij u'_j */
+  /*   for(unsigned i=0; i<3; i++) */
+  /*   { */
+  /*     for(unsigned j=0; j<3; j++) */
+  /*     { */
+  /* 	u_cartesian[i] += U(i,j) * u_lagrangian[j]; */
+  /*     } */
+  /*   } */
+  /* } */
 
   // ==========================================================================
   // Conversion from the Lagrangian edge coordinates to the global Cartesians
-  // ==========================================================================
-  void lagrangian_to_eulerian_coordinates(const EdgeCoordinates& edge_coords,
+  // ==========================================================================  
+  void lagrangian_to_eulerian_coordinates(const LagrangianCoordinates& lagr_coords,
 					  Vector<double>& x)
-  {
+  {    
+    // get the Eulerian coordinates of the corresponding disk position
+    disk_geom_obj_pt->position(lagr_coords, x);
+
     // Lagrangian triad unit vectors
-    Vector<double> rho_hat(3, 0.0);
-    Vector<double> zeta_hat(3, 0.0);
-    Vector<double> phi_hat(3, 0.0);
+    Vector<double> a1(3, 0.0);
+    Vector<double> a2(3, 0.0);
+    Vector<double> a3(3, 0.0);
 
-    Vector<double> x_disk_edge(3, 0.0);
-    
     // get 'em
-    lagrangian_triad_and_x_disk_edge(edge_coords, rho_hat, zeta_hat,
-				     phi_hat, x_disk_edge);
+    disk_geom_obj_pt->basis_vectors(lagr_coords, a1, a2, a3);
 
-    // make enough space
-    x.resize(3);
-    
-    // compute the Eulerian coordinates of this point for the derivatives
+    // now we move in a normal direction away from the surface by an amount xi_3
     for(unsigned i=0; i<3; i++)
-      x[i] = x_disk_edge[i] + edge_coords.rho * rho_hat[i];
+    {
+      x[i] += lagr_coords.xi3 * a3[i];
+    }
   }
+  
+  // ### QUEHACERES delete
+  /* void lagrangian_to_eulerian_coordinates(const EdgeCoordinates& edge_coords, */
+  /* 					  Vector<double>& x) */
+  /* { */
+  /*   // Lagrangian triad unit vectors */
+  /*   Vector<double> rho_hat(3, 0.0); */
+  /*   Vector<double> zeta_hat(3, 0.0); */
+  /*   Vector<double> phi_hat(3, 0.0); */
+
+  /*   Vector<double> x_disk_edge(3, 0.0); */
+    
+  /*   // get 'em */
+  /*   lagrangian_triad_and_x_disk_edge(edge_coords, rho_hat, zeta_hat, */
+  /* 				     phi_hat, x_disk_edge); */
+
+  /*   // make enough space */
+  /*   x.resize(3); */
+    
+  /*   // compute the Eulerian coordinates of this point for the derivatives */
+  /*   for(unsigned i=0; i<3; i++) */
+  /*     x[i] = x_disk_edge[i] + edge_coords.rho * rho_hat[i]; */
+  /* } */
 
   // ==========================================================================
   // Compute the residual vector for an Eulerian to Lagrangian coordinate
@@ -175,56 +248,109 @@ namespace CoordinateConversions
 					     const Vector<double>& unknowns,
 					     Vector<double>& residuals)
   {
+    // shorthand
+    const double xi3 = unknowns[2];
+
+    // reset the residual vector
     residuals.resize(3, 0.0);
+    residuals.initialise(0.0);
 
-    Vector<double> r_disk_edge(3);
-    Vector<double> tangent(3);
-    Vector<double> binormal(3);
-    Vector<double> normal(3);
+    // basis vectors at this Lagrangian point on the surface
+    Vector<double> a1(3, 0.0);
+    Vector<double> a2(3, 0.0);
+    Vector<double> a3(3, 0.0);
 
-    double rho  = unknowns[0];
-    double zeta = unknowns[1];
-    double phi  = unknowns[2];
-  
-    // get the unit normal from the disk-like geometric object at this zeta
+    // Eulerian position vector of the surface point corresponding to
+    // these Lagrangian coords
+    Vector<double> r(3, 0.0);
+
+    LagrangianCoordinates lagr_coords(unknowns);
+    
+    disk_geom_obj_pt->position(lagr_coords, r);
+    
+    // get the surface vectors from the geometric object at these surface coords
     disk_geom_obj_pt->
-      boundary_triad(0, zeta, r_disk_edge, tangent, normal, binormal);
-
+      basis_vectors(lagr_coords, a1, a2, a3);
+        
     for(unsigned i=0; i<3; i++)
-    {    
-      residuals[i] = r_disk_edge[i] +
-	rho * (cos(phi) * normal[i] + sin(phi)*binormal[i]) - x[i];
+    {
+      // (p - r)\cdot a_1 = 0
+      residuals[0] += (x[i] - r[i]) * a1[i];
+
+      // (p - r)\cdot a_2 = 0
+      residuals[1] += (x[i] - r[i]) * a2[i];
+
+      // (p - r)\cdot a_3 - xi_3 = 0
+      residuals[2] += (x[i] - r[i]) * a3[i];
     }
+    
+    residuals[2] -= xi3;
   }
+
+  // ### QUEHACERES delete once above works
+  /* void eulerian_to_lagrangian_coord_residual(const Vector<double>& x, */
+  /* 					     const Vector<double>& unknowns, */
+  /* 					     Vector<double>& residuals) */
+  /* { */
+  /*   residuals.resize(3, 0.0); */
+
+  /*   Vector<double> r_disk_edge(3); */
+  /*   Vector<double> tangent(3); */
+  /*   Vector<double> binormal(3); */
+  /*   Vector<double> normal(3); */
+
+  /*   double rho  = unknowns[0]; */
+  /*   double zeta = unknowns[1]; */
+  /*   double phi  = unknowns[2]; */
+  
+  /*   // get the unit normal from the disk-like geometric object at this zeta */
+  /*   disk_geom_obj_pt-> */
+  /*     boundary_triad(0, zeta, r_disk_edge, tangent, normal, binormal); */
+
+  /*   for(unsigned i=0; i<3; i++) */
+  /*   {     */
+  /*     residuals[i] = r_disk_edge[i] + */
+  /* 	rho * (cos(phi) * normal[i] + sin(phi)*binormal[i]) - x[i]; */
+  /*   } */
+  /* } */
 
   // ==========================================================================
   // Perform a black-box finite-diff Newton solve to convert from eulerian
   // to Lagrangian edge coordinates
   // ==========================================================================
   void eulerian_to_lagrangian_coordinates(const Vector<double>& x,
-					  EdgeCoordinates& edge_coords)
+					  LagrangianCoordinates& lagr_coords)
   {
-    // the cylindrical radius of this point
-    double r0 = sqrt(x[0]*x[0] + x[1]*x[1]) - r_disk(edge_coords.zeta);
+    // the (flat) cylindrical radius of this point to use as an initial guess
+    double r0 = sqrt(x[0]*x[0] + x[1]*x[1]); // ### - r_disk(edge_coords.zeta);
   
     Vector<double> unknowns(3, 0.0);
   
     // starting guesses are the Lagrangian coordinates for a flat disk
-    unknowns[0] = sqrt(pow(r0, 2) + pow(x[2], 2)); // rho
-    unknowns[1] = atan2pi(x[1], x[0]);             // zeta
-    unknowns[2] = atan2(x[2], r0);                 // phi
+    unknowns[0] = r0;                // xi_1
+    unknowns[1] = atan2(x[1], x[0]); // xi_2
+    unknowns[2] = x[2];              // xi_3
+    
+    // ### QUEHACERES delete
+    /* unknowns[0] = sqrt(pow(r0, 2) + pow(x[2], 2)); // rho */
+    /* unknowns[1] = atan2pi(x[1], x[0]);             // zeta */
+    /* unknowns[2] = atan2(x[2], r0);                 // phi */
 
     // keep track of the last good values we had
     Vector<double> previous_converged_unknowns = unknowns;
       
     // back up the actual disk object
-    WarpedCircularDiskWithAnnularInternalBoundary* warped_disk_backup_pt =
+    CylindricallyWarpedCircularDiskWithAnnularInternalBoundary* warped_disk_backup_pt =
       disk_geom_obj_pt;
 
     // disk parameters we're keeping fixed
-    const double target_epsilon = warped_disk_backup_pt->epsilon();
-    const double r_torus        = warped_disk_backup_pt->h_annulus();
-    const unsigned n            = warped_disk_backup_pt->n();
+    const double target_r_curvature = warped_disk_backup_pt->radius_of_curvature();
+    const double r_torus = warped_disk_backup_pt->h_annulus();
+    
+    // ### QUEHACERES delete
+    /* const double target_epsilon = warped_disk_backup_pt->epsilon(); */
+    /* const double r_torus        = warped_disk_backup_pt->h_annulus(); */
+    /* const unsigned n            = warped_disk_backup_pt->n(); */
 
     // number of sequential attempts without convergence before
     // we give up and decide something more fundamental has gone wrong
@@ -232,18 +358,21 @@ namespace CoordinateConversions
 
     // tolerance on floating-point comparisons
     const double tol = 1e-6;
-    
-    double current_epsilon = target_epsilon;
-    double d_eps = target_epsilon;
+
+    // ### QUEHACERES delete
+    /* double current_epsilon = target_epsilon; */
+    /* double d_eps = target_epsilon; */
+
+    double current_r_curvature = target_r_curvature;
+    double d_r = target_r_curvature;
     unsigned count = 0;
       
     while (true)
     {
       // make a temporary copy to work with
       auto temp_disk_pt = std::make_unique<
-	WarpedCircularDiskWithAnnularInternalBoundary>(r_torus, 
-						       current_epsilon,
-						       n);
+	CylindricallyWarpedCircularDiskWithAnnularInternalBoundary>(r_torus, 
+								    current_r_curvature);
 
       // slightly hacky, but grab the and assign the raw pointer, since the
       // black-box residual fct uses the raw disk_geom_obj_pt pointer
@@ -256,7 +385,7 @@ namespace CoordinateConversions
 	  &eulerian_to_lagrangian_coord_residual, x, unknowns);
 
 	// if we've got a converged solution at the target epsilon, we're done
-	if(abs(target_epsilon - current_epsilon) < tol)
+	if(abs(target_r_curvature - current_r_curvature) < tol)
 	  break;
 	else
 	{
@@ -264,7 +393,7 @@ namespace CoordinateConversions
 	  count = 0;
 	  
 	  // otherwise increase the current value and go again
-	  current_epsilon += d_eps;
+	  current_r_curvature += d_r;
 
 	  // store this solution
 	  previous_converged_unknowns = unknowns;
@@ -282,10 +411,10 @@ namespace CoordinateConversions
 	if(count == max_attempts)
 	  break;
 	
-	// otherwise reduce the current value and go again
-	d_eps *= 0.5;
+	// otherwise increase the current radius of curvature and go again
+	d_r *= 2;
 	
-	current_epsilon -= d_eps;
+	current_r_curvature += d_r;
 
 	// reset the initial guess to the last converged solution
 	unknowns = previous_converged_unknowns;
@@ -306,23 +435,25 @@ namespace CoordinateConversions
     // did we get a solution with rho < 0?
     if(unknowns[0] < 0)
     {
-      // make a temporary copy to work with
-      auto temp_disk_pt = std::make_unique<
-	WarpedCircularDiskWithAnnularInternalBoundary>(r_torus, 
-						       current_epsilon,
-						       n);
+      // ### QUEHACERES delete
+      /* // make a temporary copy to work with */
+      /* auto temp_disk_pt = std::make_unique< */
+      /* 	CylindricallyWarpedCircularDiskWithAnnularInternalBoundary>(r_torus, */
+      /* 								    current_r_curvature); */
+      /* 						       /\* ### current_epsilon, *\/ */
+      /* 						       /\* n); *\/ */
       
-      // slightly hacky, but grab the and assign the raw pointer, since the
-      // black-box residual fct uses the raw disk_geom_obj_pt pointer
-      disk_geom_obj_pt = temp_disk_pt.get();
+      /* // slightly hacky, but grab the and assign the raw pointer, since the */
+      /* // black-box residual fct uses the raw disk_geom_obj_pt pointer */
+      /* disk_geom_obj_pt = temp_disk_pt.get(); */
       
-      // if so, then presumably flipping the angle by pi gives the same
-      // solution with a positive rho - lets check
-      unknowns[0] = -unknowns[0];
-      unknowns[2] += MathematicalConstants::Pi;
+      /* // if so, then presumably flipping the angle by pi gives the same */
+      /* // solution with a positive rho - lets check */
+      /* unknowns[0] = -unknowns[0]; */
+      /* unknowns[2] += MathematicalConstants::Pi; */
 
-      BlackBoxFDNewtonSolver::black_box_fd_newton_solve(
-	  &eulerian_to_lagrangian_coord_residual, x, unknowns);
+      /* BlackBoxFDNewtonSolver::black_box_fd_newton_solve( */
+      /* 	  &eulerian_to_lagrangian_coord_residual, x, unknowns); */
 
       if(unknowns[0] < 0)
       {
@@ -330,11 +461,14 @@ namespace CoordinateConversions
 	disk_geom_obj_pt = warped_disk_backup_pt;
 	
 	std::ostringstream error_message;
-	error_message << "Something weird has happened - the initial Lagrangian "
-		      << "coordinate solve returned a negative radial coordinate, "
-		      << "so flipping the sign and reflecting the elevation angle "
-		      << "should have resulted in a valid solution, but it didn't "
-		      << "converge.\n\n";
+	error_message << "Lagrangian coordinate solve returned a negative radial coordinate\n";
+
+	// ### QUEHACERES delete
+	/* error_message << "Something weird has happened - the initial Lagrangian " */
+	/* 	      << "coordinate solve returned a negative radial coordinate, " */
+	/* 	      << "so flipping the sign and reflecting the elevation angle " */
+	/* 	      << "should have resulted in a valid solution, but it didn't " */
+	/* 	      << "converge.\n\n"; */
 
 	throw OomphLibError(error_message.str(),
 			    OOMPH_CURRENT_FUNCTION,
@@ -342,103 +476,240 @@ namespace CoordinateConversions
       }
     }
     
-    // interpret the solve and convert angles to the appropriate range;
-    // we're using [0,2pi] for zeta but [-pi:pi] for phi as the +/- jump
-    // is a useful identifier for the top/bottom surface of the plate
-    edge_coords.rho  = unknowns[0];
-    edge_coords.zeta = map_angle_to_range_0_to_2pi(unknowns[1]);
-    edge_coords.phi  = map_angle_to_range_plus_minus_pi(unknowns[2]);
+    // interpret the solve and convert 'azimuthal' angle to the appropriate range
+    lagr_coords.xi1 = unknowns[0];
+    lagr_coords.xi2 = map_angle_to_range_0_to_2pi(unknowns[1]);
+    lagr_coords.xi3 = unknowns[2];
+
+    // QUEHACERES delete
+    /* // we're using [0,2pi] for zeta but [-pi:pi] for phi as the +/- jump */
+    /* // is a useful identifier for the top/bottom surface of the plate */
+    
+    /* edge_coords.rho  = unknowns[0]; */
+    /* edge_coords.zeta = map_angle_to_range_0_to_2pi(unknowns[1]); */
+    /* edge_coords.phi  = map_angle_to_range_plus_minus_pi(unknowns[2]); *\/ */
 
     // reset the raw disk pointer
     disk_geom_obj_pt = warped_disk_backup_pt;
   }
 
-  // ==========================================================================
-  //
-  // ==========================================================================
-  void dx_dzeta_residual(const Vector<double>& edge_coords,
-			 const Vector<double>& dx_dzeta,
-			 Vector<double>& residuals)
-  { 
-    // interpret
-    double rho  = edge_coords[0];
-    double zeta = edge_coords[1];
-    double phi  = edge_coords[2];
+  // ### QUEHACERES delete
+  /* // ========================================================================== */
+  /* // */
+  /* // ========================================================================== */
+  /* void dx_dzeta_residual(const Vector<double>& edge_coords, */
+  /* 			 const Vector<double>& dx_dzeta, */
+  /* 			 Vector<double>& residuals) */
+  /* {  */
+  /*   // interpret */
+  /*   double rho  = edge_coords[0]; */
+  /*   double zeta = edge_coords[1]; */
+  /*   double phi  = edge_coords[2]; */
           
-    // get the derivatives of the triad unit vectors
-    Vector<double> dr_disk_edge_dzeta(3, 0);
-    Vector<double> dtangent_dzeta(3, 0);
-    Vector<double> dnormal_dzeta(3, 0);
-    Vector<double> dbinormal_dzeta(3, 0);
+  /*   // get the derivatives of the triad unit vectors */
+  /*   Vector<double> dr_disk_edge_dzeta(3, 0); */
+  /*   Vector<double> dtangent_dzeta(3, 0); */
+  /*   Vector<double> dnormal_dzeta(3, 0); */
+  /*   Vector<double> dbinormal_dzeta(3, 0); */
       
-    disk_geom_obj_pt->
-      dboundary_triad_dzeta(0, zeta, dr_disk_edge_dzeta,
-			    dtangent_dzeta, dnormal_dzeta, dbinormal_dzeta);
+  /*   disk_geom_obj_pt-> */
+  /*     dboundary_triad_dzeta(0, zeta, dr_disk_edge_dzeta, */
+  /* 			    dtangent_dzeta, dnormal_dzeta, dbinormal_dzeta); */
     
-    residuals.resize(3);
+  /*   residuals.resize(3); */
 
-    // residual equation is the derivative of the equation for the normal
-    // distance of the bulk point from the plane at this zeta, i.e.
-    // d/dx ((x-r)*tangent)
-    for(unsigned i=0; i<residuals.size(); i++)
-    {                 
-      residuals[i] = dr_disk_edge_dzeta[i] +
-	rho * (cos(phi) * dnormal_dzeta[i] + sin(phi)*dbinormal_dzeta[i]) - dx_dzeta[i];
-    }
-  }
+  /*   // residual equation is the derivative of the equation for the normal */
+  /*   // distance of the bulk point from the plane at this zeta, i.e. */
+  /*   // d/dx ((x-r)*tangent) */
+  /*   for(unsigned i=0; i<residuals.size(); i++) */
+  /*   {                  */
+  /*     residuals[i] = dr_disk_edge_dzeta[i] + */
+  /* 	rho * (cos(phi) * dnormal_dzeta[i] + sin(phi)*dbinormal_dzeta[i]) - dx_dzeta[i]; */
+  /*   } */
+  /* } */
   
   // ==========================================================================
-  /// Function which computes dx/dzeta
+  /// \short Function which computes the derivatives of the Eulerian coordinates
+  /// w.r.t. the curviliear coordinates
   // ==========================================================================
-  DenseMatrix<double> dx_dxi(const EdgeCoordinates& edge_coords)
+  DenseMatrix<double> dx_dxi(const LagrangianCoordinates& lagr_coords)
   {
-    // interpret
-    double rho  = edge_coords.rho;
-    double zeta = edge_coords.zeta;
-    double phi  = edge_coords.phi;
+    // basis vectors
+    Vector<double> a1(3, 0.0),
+      a2 = a1,
+      a3 = a1;
 
-    // boundary triad (functions of \zeta) in Cartesian coordinates
-    Vector<double> x_disk_edge(3, 0.0);
-    Vector<double> tangent(3, 0.0);
-    Vector<double> normal(3, 0.0);
-    Vector<double> binormal(3, 0.0);
-        
-    // get the triad unit vectors and disk edge at this zeta
-    boundary_triad(edge_coords.zeta, x_disk_edge, tangent, normal, binormal);
+    // derivatives of basis vectors w.r.t. curvilinear coords
+    DenseMatrix<double> da1_dxi(3, 2, 0.0),
+      da2_dxi = da1_dxi,
+      da3_dxi = da1_dxi;
+
+    // derivatives of the disk position vector
+    DenseMatrix<double> dr_dxi(3, 2, 0.0);
     
-    // get the derivatives of the triad unit vectors
-    Vector<double> dr_disk_edge_dzeta(3, 0);
-    Vector<double> dtangent_dzeta(3, 0);
-    Vector<double> dnormal_dzeta(3, 0);
-    Vector<double> dbinormal_dzeta(3, 0);     
+    // make vector for easier indexing
+    Vector<double> xi(3, 0.0);
+    xi[0] = lagr_coords.xi1;
+    xi[1] = lagr_coords.xi2;
+    xi[2] = lagr_coords.xi3;
     
-    dboundary_triad_dzeta(zeta, dr_disk_edge_dzeta, dtangent_dzeta,
-			  dnormal_dzeta, dbinormal_dzeta);
+    // get stuff from the geom object
+    disk_geom_obj_pt->basis_vectors(lagr_coords, a1, a2, a3);
+    disk_geom_obj_pt->da_dxi(lagr_coords, da1_dxi, da2_dxi, da3_dxi);
+    disk_geom_obj_pt->dposition_dxi(lagr_coords, dr_dxi);
+
+    // make vector for easier indexing
+    Vector<DenseMatrix<double>> da_dxi(3);
+    da_dxi[0] = da1_dxi;
+    da_dxi[1] = da2_dxi;
+    da_dxi[2] = da3_dxi;
     
+    // output matrix
     DenseMatrix<double> dxdxi(3, 3, 0.0);
 
-    // derivatives dx_i/dxi_j is the derivative of the equation for the cartesian
-    // position, x_i = r_disk_i + rho(cos(phi)*s_i + sin(phi)*n_i)
+    // -------------------------------------
+    // compute the derivatives of the Cartesian coordinates w.r.t. the
+    // curvilinear coordinates, i.e. the derivatives of:
+    //
+    // x(xi1,xi2,xi3) = r(xi1,xi2) + xi3 * a_3 (xi1,xi2)
+    //
+    
+    // loop over the Cartesian coordinates
     for(unsigned i=0; i<3; i++)
     {
-      // dx_i/drho
-      dxdxi(i,0) = cos(phi) * normal[i] + sin(phi)*binormal[i];
-      
-      // dx_i/dzeta
-      dxdxi(i,1) = dr_disk_edge_dzeta[i] +
-	rho * (cos(phi) * dnormal_dzeta[i] + sin(phi)*dbinormal_dzeta[i]);
-
-      // dx_i/dphi
-      dxdxi(i,2) = rho * (-sin(phi) * normal[i] + cos(phi)*binormal[i]);      
+      // loop over the curvilinear coordinates
+      for(unsigned j=0; j<3; j++)
+      {
+	if(j == 2)
+	{
+	  dxdxi(i,j) += a3[i];
+	}
+	else
+	{
+	  dxdxi(i,j) += dr_dxi(i,j) + lagr_coords.xi3 * da3_dxi(i,j);
+	}
+      }
     } 
 
     return dxdxi;
   }
 
-  DenseMatrix<double> dxi_dx(const EdgeCoordinates& edge_coords)
+  // ### QUEHACERES delete, moved to additional_maths
+  /* DenseMatrix<double> doblate_dxi(const double& r, const double& z) */
+  /* { */
+  /*   DenseMatrix<double> dobl_dxi(2, 2, 0.0); */
+
+  /*   // dlambda/dxi1 */
+  /*   dobl_dxi(0,0) = (Cosh(Log(Power(r,2) + Power(z,2) + Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2)) +  */
+  /*        2*Power(Power(-1 + r,2) + Power(z,2),0.25)*Power(Power(1 + r,2) + Power(z,2),0.25)* */
+  /*         (r*Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) + z*Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.)))/2.)* */
+  /*    (r*Power(Power(-1 + r,2) + Power(z,2),0.25)*Power(Power(1 + r,2) + Power(z,2),0.25)* */
+  /*       (-1 + Power(r,2) + Power(z,2) + Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2))) +  */
+  /*      (1 + 2*Power(r,4) + Power(z,2) + Power(r,2)*(-3 + 2*Power(z,2)))*Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) +  */
+  /*      2*r*z*(Power(r,2) + Power(z,2))*Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.)))/ */
+  /*  (Power(Power(-1 + r,2) + Power(z,2),0.75)*Power(Power(1 + r,2) + Power(z,2),0.75)* */
+  /*    (Power(r,2) + Power(z,2) + Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2)) +  */
+  /*      2*Power(Power(-1 + r,2) + Power(z,2),0.25)*Power(Power(1 + r,2) + Power(z,2),0.25)* */
+  /*       (r*Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) + z*Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.)))); */
+
+  /*   // dlambda/dxi3 */
+  /*   dobl_dxi(0,1) = (Cosh(Log(Power(r,2) + Power(z,2) + Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2)) +  */
+  /*        2*Power(Power(-1 + r,2) + Power(z,2),0.25)*Power(Power(1 + r,2) + Power(z,2),0.25)* */
+  /*         (r*Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) + z*Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.)))/2.)* */
+  /*    (z*Power(Power(-1 + r,2) + Power(z,2),0.25)*Power(Power(1 + r,2) + Power(z,2),0.25)* */
+  /*       (1 + Power(r,2) + Power(z,2) + Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2))) +  */
+  /*      2*r*z*(Power(r,2) + Power(z,2))*Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) +  */
+  /*      (1 - Power(r,2) + (3 + 2*Power(r,2))*Power(z,2) + 2*Power(z,4))*Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.)))/ */
+  /*  (Power(Power(-1 + r,2) + Power(z,2),0.75)*Power(Power(1 + r,2) + Power(z,2),0.75)* */
+  /*    (Power(r,2) + Power(z,2) + Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2)) +  */
+  /*      2*Power(Power(-1 + r,2) + Power(z,2),0.25)*Power(Power(1 + r,2) + Power(z,2),0.25)* */
+  /*       (r*Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) + z*Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.)))); */
+
+  /*   // dzeta/dxi1 */
+  /*   dobl_dxi(1,0) = (-(r*z*Power(Power(-1 + r,2) + Power(z,2),0.25)*Power(Power(1 + r,2) + Power(z,2),0.25)* */
+  /*       (1 + 2*Power(r,2) + 2*Power(z,2) + 2*Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2)))) -  */
+  /*    z*(3*Power(r,4) + (1 + Power(z,2))*(1 + Power(z,2) +  */
+  /*          Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2))) +  */
+  /*       Power(r,2)*(-2 + 4*Power(z,2) + Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2))))* */
+  /*     Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) +  */
+  /*    r*(-1 + Power(r,2) - (3 + 2*Power(r,2))*Power(z,2) - 2*Power(z,4))*Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.))/ */
+  /*  (Power(Power(-1 + r,2) + Power(z,2),0.75)*Power(Power(1 + r,2) + Power(z,2),0.75)* */
+  /*    Power(Power(r + Power(Power(-1 + r,2) + Power(z,2),0.25)*Power(Power(1 + r,2) + Power(z,2),0.25)* */
+  /*         Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.),2) +  */
+  /*      Power(z + Power(Power(-1 + r,2) + Power(z,2),0.25)*Power(Power(1 + r,2) + Power(z,2),0.25)* */
+  /*         Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.),2),1.5)); */
+
+  /*   // dzeta/dxi3 */
+  /*   dobl_dxi(1,1) = (4*Power(r,6) + (1 + Power(z,2))*(-1 - Power(z,2) +  */
+  /*       Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2))) +  */
+  /*    Power(r,4)*(-9 + 8*Power(z,2) + 4*Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2))) +  */
+  /*    Power(r,2)*(6 + 4*Power(z,4) - 5*Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2)) +  */
+  /*       Power(z,2)*(6 + 4*Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2)))) +  */
+  /*    2*r*Power(Power(-1 + r,2) + Power(z,2),0.25)*Power(Power(1 + r,2) + Power(z,2),0.25)* */
+  /*     ((2 + 3*Power(r,4) - Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2)) +  */
+  /*          Power(z,2)*(3 + Power(z,2) + Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2))) +  */
+  /*          Power(r,2)*(-5 + 4*Power(z,2) + Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2))))* */
+  /*        Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) +  */
+  /*       2*r*z*(Power(r,2) + Power(z,2))*Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.)))/ */
+  /*  (2.*(Power(-1 + r,2) + Power(z,2))*(Power(1 + r,2) + Power(z,2))* */
+  /*    Power(Power(r + Power(Power(-1 + r,2) + Power(z,2),0.25)*Power(Power(1 + r,2) + Power(z,2),0.25)* */
+  /*         Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.),2) +  */
+  /*      Power(z + Power(Power(-1 + r,2) + Power(z,2),0.25)*Power(Power(1 + r,2) + Power(z,2),0.25)* */
+  /*         Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.),2),1.5)); */
+
+  /*   return dobl_dxi; */
+  /* } */
+  
+  // ### QUEHACERES delete
+  /* DenseMatrix<double> dx_dxi(const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   // interpret */
+  /*   double rho  = edge_coords.rho; */
+  /*   double zeta = edge_coords.zeta; */
+  /*   double phi  = edge_coords.phi; */
+
+  /*   // boundary triad (functions of \zeta) in Cartesian coordinates */
+  /*   Vector<double> x_disk_edge(3, 0.0); */
+  /*   Vector<double> tangent(3, 0.0); */
+  /*   Vector<double> normal(3, 0.0); */
+  /*   Vector<double> binormal(3, 0.0); */
+        
+  /*   // get the triad unit vectors and disk edge at this zeta */
+  /*   boundary_triad(edge_coords.zeta, x_disk_edge, tangent, normal, binormal); */
+    
+  /*   // get the derivatives of the triad unit vectors */
+  /*   Vector<double> dr_disk_edge_dzeta(3, 0); */
+  /*   Vector<double> dtangent_dzeta(3, 0); */
+  /*   Vector<double> dnormal_dzeta(3, 0); */
+  /*   Vector<double> dbinormal_dzeta(3, 0);      */
+    
+  /*   dboundary_triad_dzeta(zeta, dr_disk_edge_dzeta, dtangent_dzeta, */
+  /* 			  dnormal_dzeta, dbinormal_dzeta); */
+    
+  /*   DenseMatrix<double> dxdxi(3, 3, 0.0); */
+
+  /*   // derivatives dx_i/dxi_j is the derivative of the equation for the cartesian */
+  /*   // position, x_i = r_disk_i + rho(cos(phi)*s_i + sin(phi)*n_i) */
+  /*   for(unsigned i=0; i<3; i++) */
+  /*   { */
+  /*     // dx_i/drho */
+  /*     dxdxi(i,0) = cos(phi) * normal[i] + sin(phi)*binormal[i]; */
+      
+  /*     // dx_i/dzeta */
+  /*     dxdxi(i,1) = dr_disk_edge_dzeta[i] + */
+  /* 	rho * (cos(phi) * dnormal_dzeta[i] + sin(phi)*dbinormal_dzeta[i]); */
+
+  /*     // dx_i/dphi */
+  /*     dxdxi(i,2) = rho * (-sin(phi) * normal[i] + cos(phi)*binormal[i]);       */
+  /*   }  */
+
+  /*   return dxdxi; */
+  /* } */
+
+  DenseMatrix<double> dxi_dx(const LagrangianCoordinates& lagr_coords)
   {
     // get the derivatives dx_i/dxi_j
-    DenseMatrix<double> dxdxi = dx_dxi(edge_coords);
+    DenseMatrix<double> dxdxi = dx_dxi(lagr_coords);
 
     // Calculate the determinant of the matrix
     const double det = dxdxi(0,0) * dxdxi(1,1) * dxdxi(2,2) 
@@ -476,24 +747,10 @@ namespace CoordinateConversions
   // ==========================================================================
   /// Function which computes dzeta/dx
   // ==========================================================================
-  Vector<double> dzeta_dx(const EdgeCoordinates& edge_coords)
+  Vector<double> dzeta_dx(const LagrangianCoordinates& lagr_coords)
   {
-    // QUEHACERES delete
-    /* const double tol = 1e-8; */
-
-    /* // get the derivatives dx_i/dxi_j */
-    /* DenseMatrix<double> dxdxi = dx_dxi(edge_coords); */
-
-    /* // Calculate the determinant of the matrix */
-    /* const double det = dxdxi(0,0) * dxdxi(1,1) * dxdxi(2,2)  */
-    /*   + dxdxi(0,1) * dxdxi(1,2) * dxdxi(2,0)  */
-    /*   + dxdxi(0,2) * dxdxi(1,0) * dxdxi(2,1)  */
-    /*   - dxdxi(0,0) * dxdxi(1,2) * dxdxi(2,1)  */
-    /*   - dxdxi(0,1) * dxdxi(1,0) * dxdxi(2,2)  */
-    /*   - dxdxi(0,2) * dxdxi(1,1) * dxdxi(2,0);  */
-
     // get the derivatives dxi_i/dx_j
-    DenseMatrix<double> dxidx = dxi_dx(edge_coords);
+    DenseMatrix<double> dxidx = dxi_dx(lagr_coords);
     
     // now extract the zeta (= xi_2) derivatives
     Vector<double> dzetadx(3, 0.0);

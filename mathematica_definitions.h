@@ -15,11 +15,12 @@
 
 #define ArcSin(x)       (asin((double)(x)))
 #define ArcCos(x)       (acos((double)(x)))
-#define ArcTan(x)       (atan((double)(x)))
-
-#define Sinh(x)          (sinh((double)(x)))
-#define Cosh(x)          (cosh((double)(x)))
-#define Tanh(x)          (tanh((double)(x)))
+//#define ArcTan(x)       (atan((double)(x)))
+#define ArcTan(x,y)     (atan2((double)(y),(double)(x)))
+#define ArcCot(x)       (atan(1.0/(double)(x)))
+#define Sinh(x)         (sinh((double)(x)))
+#define Cosh(x)         (cosh((double)(x)))
+#define Tanh(x)         (tanh((double)(x)))
 
 
 //#define E       2.71828182845904523536029

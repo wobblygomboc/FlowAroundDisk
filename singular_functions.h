@@ -12,36 +12,45 @@ namespace SingularFunctions
   const double PI = MathematicalConstants::Pi;
 
   // generic function pointer for a singular function
-  typedef Vector<double> (*SingularFctPt)(const EdgeCoordinates&);
+  typedef Vector<double> (*SingularFctPt)(const LagrangianCoordinates&);
 
-  void warped_cylindrical_to_eulerian_velocity(const EdgeCoordinates& edge_coords,
-					       const Vector<double>& u_cyl,
-					       Vector<double>& u)
-  {
-    // boundary triad (functions of \zeta) in Cartesian coordinates
-    mVector tangent(3, 0.0);
-    mVector normal(3, 0.0);
-    mVector binormal(3, 0.0);
-    mVector x_disk_edge_dummy(3, 0.0);
-    
-    // get the unit normals from the disk-like geometric object at this zeta
-    CoordinateConversions::boundary_triad(edge_coords.zeta, x_disk_edge_dummy, tangent,
-					  normal, binormal);
-    
-    // cylindrical unit vectors
-    Vector<Vector<double> > cyl_unit_vec(3);
-    cyl_unit_vec[0] = normal;
-    cyl_unit_vec[1] = tangent;
-    cyl_unit_vec[2] = binormal;
+  // generic function pointer for a function that computes the derivatives
+  // of the cylindrical singular velocity components w.r.t. the oblate spheroidal coords
+  typedef Vector<double> (*DSingularFctDoblateSpheroidalPt)(const LagrangianCoordinates&,
+							    DenseMatrix<double>&);
+  
+  // ### QUEHACERES delete
+  /* typedef Vector<double> (*SingularFctPt)(const EdgeCoordinates&); */
 
-    // do the conversion with the generic function
-    CoordinateConversions::lagrangian_to_eulerian_velocity(edge_coords,
-							   cyl_unit_vec,
-							   u_cyl, u);
-  }
+  // ### QUEHACERES delete
+  /* void warped_cylindrical_to_eulerian_velocity(const EdgeCoordinates& edge_coords, */
+  /* 					       const Vector<double>& u_cyl, */
+  /* 					       Vector<double>& u) */
+  /* { */
+  /*   // boundary triad (functions of \zeta) in Cartesian coordinates */
+  /*   mVector tangent(3, 0.0); */
+  /*   mVector normal(3, 0.0); */
+  /*   mVector binormal(3, 0.0); */
+  /*   mVector x_disk_edge_dummy(3, 0.0); */
+    
+  /*   // get the unit normals from the disk-like geometric object at this zeta */
+  /*   CoordinateConversions::boundary_triad(edge_coords.zeta, x_disk_edge_dummy, tangent, */
+  /* 					  normal, binormal); */
+    
+  /*   // cylindrical unit vectors */
+  /*   Vector<Vector<double> > cyl_unit_vec(3); */
+  /*   cyl_unit_vec[0] = normal; */
+  /*   cyl_unit_vec[1] = tangent; */
+  /*   cyl_unit_vec[2] = binormal; */
+
+  /*   // do the conversion with the generic function */
+  /*   CoordinateConversions::lagrangian_to_eulerian_velocity(edge_coords, */
+  /* 							   cyl_unit_vec, */
+  /* 							   u_cyl, u); */
+  /* } */
   
   // generic function to compute velocity gradient via finite difference
-  void generic_dudx_finite_diff(const EdgeCoordinates& edge_coords,
+  void generic_dudx_finite_diff(const LagrangianCoordinates& lagr_coords,
 				const SingularFctPt& sing_fct_pt,
 				DenseMatrix<double>& du_dx)
   {
@@ -52,18 +61,18 @@ namespace SingularFunctions
     du_dx.resize(3,3, 0.0);
     
     // solution at the current point
-    Vector<double> u0 = (*sing_fct_pt)(edge_coords);
+    Vector<double> u0 = (*sing_fct_pt)(lagr_coords);
 
     // get the Cartesian coords of this point
-    Vector<double> x(3,0.0);
-    CoordinateConversions::lagrangian_to_eulerian_coordinates(edge_coords, x);
+    Vector<double> x(3, 0.0);
+    CoordinateConversions::lagrangian_to_eulerian_coordinates(lagr_coords, x);
 
     /* // compute dzeta/dx at this Lagrangian point */
     /* Vector<double> dzeta_dx = compute_dzeta_dx(edge_coords); */
 
-    // get the sign of the elevation angle; +ve => upper disk, -ve => lower disk
-    int sign_of_phi = sgn(edge_coords.phi);
-    
+    // get the sign of the normal coordinate; +ve => upper disk, -ve => lower disk
+    int sign_of_xi3 = lagr_coords.sign_of_xi3();
+     
     // now compute the solution at a small increment in each Cartesian direction
     for(unsigned j=0; j<3; j++)
     {
@@ -74,18 +83,18 @@ namespace SingularFunctions
       x_plus_dx[j] += fd_dx;
 
       // convert the incremented position into Lagrangian coords
-      EdgeCoordinates edge_coords_plus_dx;      
+      LagrangianCoordinates lagr_coords_plus_dx;      
       CoordinateConversions::eulerian_to_lagrangian_coordinates(
-	x_plus_dx, edge_coords_plus_dx);
+	x_plus_dx, lagr_coords_plus_dx);
 
       // get the sign of phi after the dx shift
-      int sign_of_phi_at_dx = sgn(edge_coords_plus_dx.phi);
+      int sign_of_xi3_at_dx = lagr_coords_plus_dx.sign_of_xi3();
 
       // direction of the increment w.r.t. the +ve coordinate axis
       int direction = 1;
 
       // did the dx increment move the point to the other side of the disk?
-      if (sign_of_phi != sign_of_phi_at_dx)
+      if (sign_of_xi3 != sign_of_xi3_at_dx)
       {
 	// if it did, flip the direction sign
 	direction = -1;
@@ -94,11 +103,11 @@ namespace SingularFunctions
 	x_plus_dx[j] -= 2 * fd_dx;
 
 	CoordinateConversions::eulerian_to_lagrangian_coordinates(
-	x_plus_dx, edge_coords_plus_dx);
+	x_plus_dx, lagr_coords_plus_dx);
       }
       
       // get the solution at the incremented position
-      Vector<double> u_plus_dx = (*sing_fct_pt)(edge_coords_plus_dx);
+      Vector<double> u_plus_dx = (*sing_fct_pt)(lagr_coords_plus_dx);
 	
       // now do the finite diff to get the velocity gradients
       for(unsigned i=0; i<3; i++)
@@ -111,75 +120,44 @@ namespace SingularFunctions
   // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
   // QUEHACERES experimental - no asymptotics, subtract the whole bloody thing!
   // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
- 
-  Vector<double> __singular_fct_exact_broadside_translation(const EdgeCoordinates& edge_coords)
+
+  // how far to shift the radius to compute "infinity" when the actual
+  // radius is zero
+  const double dr = Global_Parameters::Drho_for_infinity;
+
+  // tolerance for some floating-point comparisons
+  const double tol = 1e-7;
+
+  const double Pi = MathematicalConstants::Pi;
+
+  // --------------------------------------------------------------------------
+  
+  Vector<double> __singular_fct_exact_broadside_translation(const LagrangianCoordinates& lagr_coords)
   {
-    // how far to shift the radius to compute "infinity" when the actual
-    // radius is zero
-    const double dr = Global_Parameters::Drho_for_infinity;
-
-    // QUEHACERES delete?
-    /* // tolerance for some floating-point comparisons */
-    /* const double tol = 1e-7; */
-
-    // shorthand
-    double rho  = edge_coords.rho;    
-    double phi  = edge_coords.phi;
-    
     // catch the case where we're sat exactly at the singularity
-    if(rho < dr) // tol)
-      rho = dr;
-
-    // cylindrical coordinates (r,zeta,z)
-    Vector<double> u_cyl(3, 0.0);
-
-    // the radial coordinate of the flat tangent disk on which the solution is based
-    double r = 1.0 + rho * cos(phi);
-
-    double z = rho * sin(phi);
-
-    // the solution is only valid for the half-space z>=0,
-    // so flip the z coordinate if we're in the lower half-space
-    // and apply the appropriate symmetries after
-    bool in_lower_half_space = (z < 0);
-    z = in_lower_half_space ? -z : z;
+    const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1.0 - dr : lagr_coords.xi1;
     
-    const double Pi = MathematicalConstants::Pi;
-        
-    // --------------------------------------------------------
-    // solution from Tanzosh & Stone (1996);
-    // mu and nu are oblate spheroidal coordinates
-    double lambda = 0;
-    double zeta   = 0;
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, lagr_coords.xi3);
 
-    // get 'em
-    oblate_spheroidal_coordinates(r, z, lambda, zeta);
-
-    // radial component
-    u_cyl[0] = (2.0/Pi)*sqrt((1 - zeta*zeta)/(1+lambda*lambda))*
-      (lambda*lambda*zeta) / (lambda*lambda + zeta*zeta);
-
-    // flow is axisymmetric so no azimuthal component
-    u_cyl[1] = 0.0;
-
-    // z component
-    u_cyl[2] = (2/Pi)*(acot(lambda) + zeta*zeta*lambda / (zeta*zeta + lambda*lambda) );
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
 
     // pressure
-    double p = (4.0/Pi) * zeta / (lambda*lambda + zeta*zeta);
-
-    // apply the appropriate symmetries for points in the lower half-space
-    if(in_lower_half_space)
-    {
-      // u_z is symmetric about z=0, u_r, and p are anti-symmetric
-      u_cyl[0] = -u_cyl[0];
-      p   = -p;
-    }
+    double p = 0.0;
+    
+    // get the flat disk solution
+    FlatDiskExactSolutions::broadside_translation_solution_cylindrical(obl_sph_coords, u_lagr, p);
     
     // now convert to Cartesian
     // ------------------------
     Vector<double> u(3, 0.0);
-    warped_cylindrical_to_eulerian_velocity(edge_coords, u_cyl, u);
+    CoordinateConversions::lagrangian_to_eulerian_velocity(lagr_coords, u_lagr, u);
+      
+    // ### QUEHACERES delete
+    /* warped_cylindrical_to_eulerian_velocity(edge_coords, u_cyl, u); */
     
     // QUEHACERES debug
     bool inf_or_nan = isinf(u[0]) || isinf(u[1]) || isinf(u[2])
@@ -199,79 +177,36 @@ namespace SingularFunctions
 
   // --------------------------------------------------------------------------
   
-  Vector<double> __singular_fct_exact_in_plane_translation(const EdgeCoordinates& edge_coords)
+  Vector<double> __singular_fct_exact_in_plane_translation(const LagrangianCoordinates& lagr_coords)
   {
-    // how far to shift the radius to compute "infinity" when the actual
-    // radius is zero
-    const double dr = Global_Parameters::Drho_for_infinity;
-
-    // QUEHACERES delete?
-    /* // tolerance for some floating-point comparisons */
-    /* const double tol = 1e-7; */
-
-    // shorthand
-    double rho  = edge_coords.rho;    
-    double phi  = edge_coords.phi;
-    
     // catch the case where we're sat exactly at the singularity
-    if(rho < dr)
-      rho = dr;
+    const double xi1 = (abs(lagr_coords.xi1 - 1) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1 - dr : lagr_coords.xi1;
 
-    // the radial coordinate of the flat tangent disk on which the solution is based
-    double r = 1.0 + rho * cos(phi);
+    // set the 'azimuthal' angle to where cos(theta) = sin(theta) for slice solution
+    const double theta = Pi / 4.0;
 
-    double z = rho * sin(phi);
-
-    // the solution is only valid for the half-space z>=0,
-    // so flip the z coordinate if we're in the lower half-space
-    // and apply the appropriate symmetries after
-    bool in_lower_half_space = (z < 0);
-    z = in_lower_half_space ? -z : z;
-
-    // using notation of Tanzosh & Stone (1996) (i.e. zeta is an oblate spheroidal
-    // coordinate and theta is the azimuthal coord)
+    /* const double scaling = 1.0/cos(theta); */
     
+    // convert the Lagrangian curvilinear coordinates into 'flat'
     // oblate spheroidal coordinates
-    double lambda = 0;
-    double zeta   = 0;
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, theta, lagr_coords.xi3);
     
-    // get 'em
-    oblate_spheroidal_coordinates(r, z, lambda, zeta);
-    
-    // cylindrical coordinates (r, theta, z)
-    Vector<double> u_cyl(3, 0.0);
-    
-    // u_r / cos(theta) 
-    u_cyl[0] = (2.0 / (3.0*PI)) * (
-      3*acot(lambda) - (lambda*zeta*zeta)/(lambda*lambda + zeta*zeta) +
-      (pow(lambda,3) * (1-zeta*zeta))/((1+lambda*lambda)*(lambda*lambda + zeta*zeta)) );
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
 
-    // u_theta / sin(theta)
-    u_cyl[1] = (2.0 / (3.0*PI)) * (
-      -3*acot(lambda) + (lambda*zeta*zeta)/(lambda*lambda + zeta*zeta) +
-      (pow(lambda,3) * (1-zeta*zeta))/((1+lambda*lambda)*(lambda*lambda + zeta*zeta)) );;
-
-    // u_z / cos(theta)
-    u_cyl[2] = (4.0/(3.0*PI)) *
-      sqrt((1 - zeta*zeta)/(1+lambda*lambda)) * (lambda*lambda*zeta) /
-      (lambda*lambda + zeta*zeta);
+    // pressure
+    double p = 0.0;
     
-    // p / cos(theta)
-    double p = (8.0/(3.0*PI)) *
-      sqrt((1 - zeta*zeta)/(1+lambda*lambda)) * lambda / (lambda*lambda + zeta*zeta);
-
-    // apply the appropriate symmetries for points in the lower half-space
-    if(in_lower_half_space)
-    {
-      // u_r, u_theta and p are symmetric about z=0, u_z is anti-symmetric
-      u_cyl[2] = -u_cyl[2];
-    }
+    // get the flat disk solution
+    FlatDiskExactSolutions::in_plane_translation_solution_cylindrical(obl_sph_coords,
+								      u_lagr, p);
     
     // now convert to Cartesian
     // ------------------------
     Vector<double> u(3, 0.0);
-    warped_cylindrical_to_eulerian_velocity(edge_coords, u_cyl, u);
-    
+    CoordinateConversions::lagrangian_to_eulerian_velocity(lagr_coords, u_lagr, u);
+
     // QUEHACERES debug
     bool inf_or_nan = isinf(u[0]) || isinf(u[1]) || isinf(u[2])
       || isnan(u[0]) || isnan(u[1]) || isnan(u[2]);
@@ -291,46 +226,41 @@ namespace SingularFunctions
   
   // --------------------------------------------------------------------------
   
-  Vector<double> __singular_fct_exact_broadside_rotation(const EdgeCoordinates& edge_coords)
+  Vector<double> __singular_fct_exact_broadside_rotation(const LagrangianCoordinates& lagr_coords)
   {
-    // how far to shift the radius to compute "infinity" when the actual
-    // radius is zero
-    const double dr = Global_Parameters::Drho_for_infinity;
-
-    // QUEHACERES delete?
-    /* // tolerance for some floating-point comparisons */
-    /* const double tol = 1e-7; */
- 
-    // shorthand
-    double rho  = edge_coords.rho;    
-    double phi  = edge_coords.phi;
-    
     // catch the case where we're sat exactly at the singularity
-    if(rho < dr) // tol)
-      rho = dr;
+    const double xi1 = (abs(lagr_coords.xi1 - 1) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1 - dr : lagr_coords.xi1;
 
-    double zeta = PI/4.;
+    // set the 'azimuthal' angle to where cos(theta) = sin(theta) for slice solution
+    const double theta = Pi / 4.0;
+
+    const double scaling = 1.0/cos(theta);
     
-    Vector<double> x(3, 0.0);
-    x[0] = cos(zeta) * (1 + rho*cos(phi) );
-    x[1] = sin(zeta) * (1 + rho*cos(phi) );
-    x[2] = rho*sin(phi);
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, theta, lagr_coords.xi3);
     
-    Vector<double> u_temp(3, 0.0);
-    FlatDiskExactSolutions::out_of_plane_rotation_solution(x, u_temp);
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
 
-    Vector<double> u_cyl(3, 0.0);
-    u_cyl[0] = cos(zeta) * u_temp[0] + sin(zeta) * u_temp[1];
-    u_cyl[1] = -sin(zeta) * u_temp[0] + cos(zeta) * u_temp[1];
-    u_cyl[2] = u_temp[2];
+    // pressure
+    double p = 0.0;
 
-    double p = u_temp[3];
+    // get it
+    FlatDiskExactSolutions::out_of_plane_rotation_solution_cylindrical(obl_sph_coords, u_lagr, p);
+
+    // scale, so that c(\xi_2) encodes the full scaling
+    u_lagr[0] *= scaling;
+    u_lagr[1] *= scaling;
+    u_lagr[2] *= scaling;
+    p         *= scaling;
     
     // now convert to Cartesian
     // ------------------------
     Vector<double> u(3, 0.0);
-    warped_cylindrical_to_eulerian_velocity(edge_coords, u_cyl, u);
-    
+    CoordinateConversions::lagrangian_to_eulerian_velocity(lagr_coords, u_lagr, u);
+
     // and add the pressure
     u.push_back(p);
 
@@ -339,65 +269,35 @@ namespace SingularFunctions
 
   // --------------------------------------------------------------------------
   
-  Vector<double> __singular_fct_exact_in_plane_rotation(const EdgeCoordinates& edge_coords)
+  Vector<double> __singular_fct_exact_in_plane_rotation(const LagrangianCoordinates& lagr_coords)
   {
-    // how far to shift the radius to compute "infinity" when the actual
-    // radius is zero
-    const double dr = Global_Parameters::Drho_for_infinity;
-
-    // QUEHACERES delete?
-    /* // tolerance for some floating-point comparisons */
-    /* const double tol = 1e-7; */
-
-    // shorthand
-    double rho  = edge_coords.rho;    
-    double phi  = edge_coords.phi;
-    
     // catch the case where we're sat exactly at the singularity
-    if(rho < dr) //  tol)
-      rho = dr;
+    const double xi1 = (abs(lagr_coords.xi1 - 1) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1 - dr : lagr_coords.xi1;
 
-    // the radial coordinate of the flat tangent disk on which the solution is based
-    double r = 1.0 + rho * cos(phi);
+    // set the 'azimuthal' angle to where cos(theta) = sin(theta) for slice solution
+    const double theta = Pi / 4.0;
 
-    double z = rho * sin(phi);
-
-    // the solution is only valid for the half-space z>=0,
-    // so flip the z coordinate if we're in the lower half-space
-    // and apply the appropriate symmetries after
-    bool in_lower_half_space = (z < 0);
-    z = in_lower_half_space ? -z : z;
-
-    // using notation of Tanzosh & Stone (1996) (i.e. zeta is an oblate spheroidal
-    // coordinate and theta is the azimuthal coord)
-    
+    // convert the Lagrangian curvilinear coordinates into 'flat'
     // oblate spheroidal coordinates
-    double lambda = 0;
-    double zeta   = 0;
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, theta, lagr_coords.xi3);
     
-    // get 'em
-    oblate_spheroidal_coordinates(r, z, lambda, zeta);
-    
-    // cylindrical coordinates (r, theta, z)
-    Vector<double> u_cyl(3, 0.0);
-    
-    // u_r
-    u_cyl[0] = 0.0;
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
 
-    // u_theta
-    u_cyl[1] = (2.0/PI) * sqrt((1 - zeta*zeta)/(1+lambda*lambda)) *
-      ((1+lambda*lambda)*acot(lambda) - lambda);
-
-    // u_z
-    u_cyl[2] = 0.0;
-    
     // pressure
-    double p = 0;
-    
+    double p = 0.0;
+
+    // get it
+    FlatDiskExactSolutions::in_plane_rotation_solution_cylindrical(obl_sph_coords, u_lagr, p);
+      
     // now convert to Cartesian
     // ------------------------
     Vector<double> u(3, 0.0);
-    warped_cylindrical_to_eulerian_velocity(edge_coords, u_cyl, u);
+    CoordinateConversions::lagrangian_to_eulerian_velocity(lagr_coords, u_lagr, u);
+
+    // ### QUEHACERES delete
+    /* warped_cylindrical_to_eulerian_velocity(edge_coords, u_cyl, u); */
     
     // QUEHACERES debug
     bool inf_or_nan = isinf(u[0]) || isinf(u[1]) || isinf(u[2])
@@ -416,497 +316,1081 @@ namespace SingularFunctions
     return u;
   }
   
-  DenseMatrix<double> __gradient_of_singular_fct_exact_broadside_translation(
-    const EdgeCoordinates& edge_coords)
-  {
-    DenseMatrix<double> du_dx(3, 3, 0.0);
-    
-    // compute the velocity gradient via finite difference
-    generic_dudx_finite_diff(edge_coords,
-  			     &__singular_fct_exact_broadside_translation,
-  			     du_dx);
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
-    return du_dx;
+  void du_broadside_cylindrical_doblate_sph(const LagrangianCoordinates& lagr_coords,
+					    DenseMatrix<double>& du_cyl_doblate_sph)
+  {
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1.0 - dr : lagr_coords.xi1;
+    
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, lagr_coords.xi3);
+
+    // shorthands
+    const double lambda = obl_sph_coords.lambda;
+    const double zeta   = obl_sph_coords.zeta;
+    
+    du_cyl_doblate_sph.resize(3, 3, 0.0);
+
+    // du_r/dlambda
+    du_cyl_doblate_sph(0,0) = (2*lambda*zeta*Sqrt((1 - Power(zeta,2))/(1 + Power(lambda,2)))
+			       *(-Power(lambda,4) + (2 + Power(lambda,2))*Power(zeta,2))) /
+      ((1 + Power(lambda,2))*Pi*Power(Power(lambda,2) + Power(zeta,2),2));
+
+    // du_r/dzeta
+    du_cyl_doblate_sph(0,1) = (-2*Power(lambda,2)*(Power(zeta,2) + Power(lambda,2)*
+						   (-1 + 2*Power(zeta,2)))) /
+      ((1 + Power(lambda,2))*Pi*Sqrt((1 - Power(zeta,2))/(1 + Power(lambda,2)))
+       *Power(Power(lambda,2) + Power(zeta,2),2));
+
+    // du_r/dtheta = 0
+    
+    // du_theta/dlambda
+    du_cyl_doblate_sph(1,0) = 0.0;
+
+    // du_theta/dzeta
+    du_cyl_doblate_sph(1,1) = 0.0;
+
+    // du_theta/dtheta = 0
+    
+    // du_z/dlambda
+    du_cyl_doblate_sph(2,0) = (-2*Power(lambda,2)*(Power(lambda,2) + (3 + Power(lambda,2))
+						   *Power(zeta,2) - Power(zeta,4))) /
+      ((1 + Power(lambda,2))*Pi*Power(Power(lambda,2) + Power(zeta,2),2));
+
+    // du_z/dzeta
+    du_cyl_doblate_sph(2,1) = (4*Power(lambda,3)*zeta)/(Pi*Power(Power(lambda,2) + Power(zeta,2),2));
+
+    // du_z/dtheta = 0
+  }
+
+  void du_broadside_rotation_cylindrical_doblate_sph(const LagrangianCoordinates& lagr_coords,
+						     DenseMatrix<double>& du_cyl_doblate_sph)
+  {
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1.0 - dr : lagr_coords.xi1;
+    
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, lagr_coords.xi2, lagr_coords.xi3);
+
+    // shorthands
+    const double lambda = obl_sph_coords.lambda;
+    const double zeta   = obl_sph_coords.zeta;
+    const double theta  = obl_sph_coords.theta;
+    
+    // get the solution (for theta derivs)
+    Vector<double> u_cyl(3, 0.0);
+    double p_dummy = 0.0;
+    FlatDiskExactSolutions::out_of_plane_rotation_solution_cylindrical(obl_sph_coords,
+								       u_cyl, p_dummy);
+    
+    du_cyl_doblate_sph.resize(3, 3, 0.0);
+
+    // du_r/dlambda
+    du_cyl_doblate_sph(0,0) = cos(theta) * (2*zeta*((lambda*(-1 + Power(lambda,2)))/Power(1 + Power(lambda,2),2)
+				       - (4*Power(lambda,3))/Power(Power(lambda,2) + Power(zeta,2),2)
+				       + (4*lambda)/(Power(lambda,2) + Power(zeta,2))
+				       - ArcCot(lambda)))/Pi;
+
+    // du_r/dzeta
+    du_cyl_doblate_sph(0,1) = cos(theta) * (-2*lambda*(-Power(lambda,5) + lambda*Power(zeta,2)*
+					  (2 + Power(zeta,2)) +
+					  Power(lambda,3)*(-2 + 4*Power(zeta,2)) +
+					  (1 + Power(lambda,2))*Power(Power(lambda,2) +
+								      Power(zeta,2),2)*ArcCot(lambda)))/
+      ((1 + Power(lambda,2))*Pi*Power(Power(lambda,2) + Power(zeta,2),2));
+
+    // du_r/dtheta
+    du_cyl_doblate_sph(0,2) = (2*lambda*zeta*(lambda*(1/(1 + Power(lambda,2)) -
+						      2/(Power(lambda,2) + Power(zeta,2))) +
+					      ArcCot(lambda))*Sin(theta))/Pi;
+    
+    // du_theta/dlambda
+    du_cyl_doblate_sph(1,0) = sin(theta) * (2*zeta*(-((lambda*(3 + Power(lambda,2))) /
+					 Power(1 + Power(lambda,2),2)) + ArcCot(lambda)))/Pi;
+
+    // du_theta/dzeta
+    du_cyl_doblate_sph(1,1) = sin(theta) * (2*lambda*(-(lambda/(1 + Power(lambda,2))) +
+						      ArcCot(lambda)))/Pi;
+
+    // du_theta/dtheta
+    du_cyl_doblate_sph(1,2) = (-2*lambda*zeta*(-(lambda/(1 + Power(lambda,2))) + ArcCot(lambda))*Sin(theta))/Pi;
+
+    // du_z/dlambda
+    du_cyl_doblate_sph(2,0) = cos(theta) * (2*(-1 + Power(zeta,2))*(Power(lambda,2)*
+						       (Power(lambda,2)*(2 + Power(lambda,2)) +
+							6*(1 + Power(lambda,2))*Power(zeta,2) +
+							Power(zeta,4)) -
+						       (lambda + Power(lambda,3))*
+						       Power(Power(lambda,2) +
+							     Power(zeta,2),2)*ArcCot(lambda))) /
+      (Power(1 + Power(lambda,2),2)*Pi*Sqrt((1 - Power(zeta,2)) /
+					    (1 + Power(lambda,2)))*Power(Power(lambda,2)
+									 + Power(zeta,2),2));
+
+    // du_z/dzeta
+    du_cyl_doblate_sph(2,1) = cos(theta) * (-2*zeta*(-Power(lambda,5) + lambda*Power(zeta,4) +
+					4*Power(lambda,3)*(-1 + Power(zeta,2)) +
+					(1 + Power(lambda,2))*Power(Power(lambda,2) +
+								    Power(zeta,2),2)*ArcCot(lambda))) /
+      ((1 + Power(lambda,2))*Pi*Sqrt((1 - Power(zeta,2))/
+				     (1 + Power(lambda,2)))*Power(Power(lambda,2) +
+								  Power(zeta,2),2));
+
+    // du_z/dtheta
+    du_cyl_doblate_sph(2,2) = (-2*Sqrt((1 - Power(zeta,2))/(1 + Power(lambda,2)))*(lambda - (2*Power(lambda,3))/(Power(lambda,2) + Power(zeta,2)) + (1 + Power(lambda,2))*ArcCot(lambda))*Sin(theta))/Pi;
+  }
+
+  void du_in_plane_cylindrical_doblate_sph(const LagrangianCoordinates& lagr_coords,
+					   DenseMatrix<double>& du_cyl_doblate_sph)
+  {
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1.0 - dr : lagr_coords.xi1;
+    
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, lagr_coords.xi2, lagr_coords.xi3);
+
+    // shorthands
+    const double lambda = obl_sph_coords.lambda;
+    const double zeta   = obl_sph_coords.zeta;
+    const double theta  = obl_sph_coords.theta;
+
+    // get the solution without azimuthal dependence (for theta derivs)
+    Vector<double> u_cyl(3, 0.0);
+    double p_dummy = 0.0;
+    FlatDiskExactSolutions::in_plane_translation_solution_cylindrical(obl_sph_coords,
+								      u_cyl, p_dummy);
+    
+    du_cyl_doblate_sph.resize(3, 3, 0.0);
+
+    // du_r/dlambda
+    du_cyl_doblate_sph(0,0) = cos(theta) * (4*(-((2 + 4*Power(lambda,2) + Power(lambda,4)) /
+				    Power(1 + Power(lambda,2),2)) - (2*Power(lambda,4)) /
+				  Power(Power(lambda,2) + Power(zeta,2),2) +
+				  (3*Power(lambda,2))/(Power(lambda,2) +
+						       Power(zeta,2))))/(3.*Pi);
+
+    // du_r/dzeta
+    du_cyl_doblate_sph(0,1) = cos(theta) * (-8*Power(lambda,3)*zeta)/(3.*Pi*Power(Power(lambda,2) + Power(zeta,2),2));
+
+    // du_r_dtheta
+    du_cyl_doblate_sph(0,2) = (-2*(lambda*(-2 + 1/(1 + Power(lambda,2)) +
+					   (2*Power(lambda,2))/(Power(lambda,2) + Power(zeta,2))) +
+				   3*ArcCot(lambda))*Sin(theta))/(3.*Pi);
+    
+    // du_theta/dlambda
+    du_cyl_doblate_sph(1,0) = sin(theta) * (4*(2 + Power(lambda,2)))/(3.*Power(1 + Power(lambda,2),2)*Pi);
+
+    // du_theta/dzeta
+    du_cyl_doblate_sph(1,1) = 0.0;
+
+    // du_theta/dtheta
+    du_cyl_doblate_sph(1,2) = (2*(lambda - 3*(1 + Power(lambda,2))*ArcCot(lambda))*Cos(theta))/
+      (3.*(1 + Power(lambda,2))*Pi);
+    
+    // du_z/dlambda
+    du_cyl_doblate_sph(2,0) = cos(theta) * (4*lambda*zeta*Sqrt((1 - Power(zeta,2)) /
+						  (1 + Power(lambda,2)))*(-Power(lambda,4) +
+									  (2 + Power(lambda,2))*
+									  Power(zeta,2)))/
+      (3.*(1 + Power(lambda,2))*Pi*Power(Power(lambda,2) + Power(zeta,2),2));
+
+    // du_z/dzeta
+    du_cyl_doblate_sph(2,1) = cos(theta) * (-4*Power(lambda,2)*(Power(zeta,2) + Power(lambda,2)*
+						   (-1 + 2*Power(zeta,2)))) /
+      (3.*(1 + Power(lambda,2))*Pi*Sqrt((1 - Power(zeta,2)) /
+					(1 + Power(lambda,2)))*
+       Power(Power(lambda,2) + Power(zeta,2),2));
+
+    // du_z/dtheta
+    du_cyl_doblate_sph(2,2) = (-4*Power(lambda,2)*zeta*Sqrt((1 - Power(zeta,2)) /
+							    (1 + Power(lambda,2)))
+			       *Sin(theta))/(3.*Pi*(Power(lambda,2) + Power(zeta,2)));
+  }
+
+  void du_in_plane_rotation_cylindrical_doblate_sph(const LagrangianCoordinates& lagr_coords,
+						    DenseMatrix<double>& du_cyl_doblate_sph)
+  {
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1.0 - dr : lagr_coords.xi1;
+    
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, lagr_coords.xi3);
+
+    // shorthands
+    const double lambda = obl_sph_coords.lambda;
+    const double zeta   = obl_sph_coords.zeta;
+    
+    du_cyl_doblate_sph.resize(3, 3, 0.0);
+
+    // du_r/dlambda
+    du_cyl_doblate_sph(0,0) = 0.0;
+
+    // du_r/dzeta
+    du_cyl_doblate_sph(0,1) = 0.0;
+
+    // du_theta/dlambda
+    du_cyl_doblate_sph(1,0) = (2*Sqrt((1 - Power(zeta,2))/(1 + Power(lambda,2)))*(-2 - Power(lambda,2) + (lambda + Power(lambda,3))*ArcCot(lambda)))/((1 + Power(lambda,2))*Pi);
+
+    // du_theta/dzeta
+    du_cyl_doblate_sph(1,1) = (2*zeta*(lambda - (1 + Power(lambda,2))*ArcCot(lambda)))/((1 + Power(lambda,2))*Pi*Sqrt((1 - Power(zeta,2))/(1 + Power(lambda,2))));
+
+    // du_z/dlambda
+    du_cyl_doblate_sph(2,0) = 0.0;
+
+    // du_z/dzeta
+    du_cyl_doblate_sph(2,1) = 0.0;
+  }
+
+  // //////////////////////////////////////////////////////////////////////////
+
+  // generic function for computing the derivatives of the Cartesian singular
+  // velocity components w.r.t. the curvilinear coordinates
+  void du_sing_dx_eulerian(const LagrangianCoordinates& lagr_coords,
+			   const Vector<double>& u_cyl,
+			   const DenseMatrix<double>& du_cyl_dobl_sph,			       
+			   DenseMatrix<double>& du_dx)
+  {  
+    // basis vectors
+    Vector<double> a1, a2, a3;
+    Global_Parameters::Warped_disk_with_boundary_pt->basis_vectors(lagr_coords,
+								   a1, a2, a3);
+
+    // curvilinear derivatives of basis vectors
+    DenseMatrix<double> da1_dxi, da2_dxi, da3_dxi;
+    Global_Parameters::Warped_disk_with_boundary_pt->da_dxi(lagr_coords,
+							    da1_dxi, da2_dxi, da3_dxi);
+    
+    // make vectors for easier indexing
+    // --------------------------------
+
+    Vector<Vector<double>> a(3);
+    a[0] = a1;
+    a[1] = a2;
+    a[2] = a3;
+    
+    Vector<DenseMatrix<double>> da_dxi(3);
+
+    da_dxi[0] = da1_dxi;
+    da_dxi[1] = da2_dxi;
+    da_dxi[2] = da3_dxi;
+
+    // oblate spheroidal coords for the corresponding flat disk
+    OblateSpheroidalCoordinates obl_sph_coords(lagr_coords.xi1, lagr_coords.xi3);
+
+    // derivatives of the oblate spheroidal coordinates w.r.t. the cylindrical
+    // coordinates
+    DenseMatrix<double> dobl_sph_dcyl(3, 3, 0.0);
+    obl_sph_coords.doblate_spheroidal_dcylindrical(dobl_sph_dcyl);
+
+    // compute the derivatives of the Cartesian velocity components w.r.t. the
+    // curviliear coordinates
+    // --------------------------------------------------
+    DenseMatrix<double> du_eulerian_dxi(3, 3, 0.0);
+    
+    for(unsigned i=0; i<3; i++)
+    {
+      for(unsigned j=0; j<3; j++)
+      {
+	for(unsigned k=0; k<3; k++)
+	{
+	  du_eulerian_dxi(i,j) += da_dxi[k](i,j) * u_cyl[k]; 	    
+
+	  for(unsigned l=0; l<3; l++)
+	  {
+	    du_eulerian_dxi(i,j) += a[k][i] * du_cyl_dobl_sph(k,l) * dobl_sph_dcyl(l,j);
+	  }
+	}
+      }
+    }
+
+    // now compute the Eulerian derivatives
+    // ---------------------------------------
+
+    // get the Eulerian derivatives of the curvilinear coordinates
+    DenseMatrix<double> dxi_dx = CoordinateConversions::dxi_dx(lagr_coords);
+
+    // zero everything out as we're doing += 
+    du_dx.resize(3, 3, 0.0);
+    du_dx.initialise(0.0);
+    
+    for(unsigned i=0; i<3; i++)
+    {
+      for(unsigned j=0; j<3; j++)
+      {
+	for(unsigned k=0; k<3; k++)
+	{
+	  // compute via the chain rule
+	  du_dx(i,j) += du_eulerian_dxi(i,k) * dxi_dx(k,j);
+	}
+      }
+    }
+  }
+  
+  // //////////////////////////////////////////////////////////////////////////
+  // //////////////////////////////////////////////////////////////////////////
+
+  DenseMatrix<double> __gradient_of_singular_fct_exact_broadside_translation(
+    const LagrangianCoordinates& lagr_coords)
+  {
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1.0 - dr : lagr_coords.xi1;
+    
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, lagr_coords.xi3);
+
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
+
+    // pressure
+    double p = 0.0;
+    
+    // get the flat disk solution
+    FlatDiskExactSolutions::broadside_translation_solution_cylindrical(obl_sph_coords, u_lagr, p);
+
+    // get the derivatives of the 'cylindrical' components of the singular velocity
+    // w.r.t. the oblate spheroidal coordinates
+    DenseMatrix<double> du_cyl_doblate_sph;
+    du_broadside_cylindrical_doblate_sph(lagr_coords, du_cyl_doblate_sph);
+	
+    // get the singular velocity gradient
+    DenseMatrix<double> du_dx_sing(3, 3, 0.0);
+
+    du_sing_dx_eulerian(lagr_coords, u_lagr, du_cyl_doblate_sph, du_dx_sing);
+
+#ifdef PARANOID
+    for(unsigned i=0; i<3; i++)
+    {
+      for(unsigned j=0; j<3; j++)
+      {
+	if(!isfinite(du_dx_sing(i,j)))
+	{
+	  ostringstream error_message;
+
+	  error_message << "Error: du_dx_broadside(" << i << "," << j << ") = "
+			<< du_dx_sing(i,j) << std::endl;
+	    
+	  throw OomphLibError(error_message.str().c_str(),
+			      OOMPH_CURRENT_FUNCTION,
+			      OOMPH_EXCEPTION_LOCATION);
+	}
+      }
+    }
+#endif
+    
+    return du_dx_sing;
   }
 
   DenseMatrix<double> __gradient_of_singular_fct_exact_broadside_rotation(
-    const EdgeCoordinates& edge_coords)
+    const LagrangianCoordinates& lagr_coords)
   {
-    DenseMatrix<double> du_dx(3, 3, 0.0);
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1.0 - dr : lagr_coords.xi1;
     
-    // compute the velocity gradient via finite difference
-    generic_dudx_finite_diff(edge_coords,
-  			     &__singular_fct_exact_broadside_rotation,
-  			     du_dx);
+    // set the 'azimuthal' angle to where cos(theta) = sin(theta) for slice solution
+    const double theta = Pi / 4.0;
+    const double scaling = 1.0/cos(theta);
+        
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords_slice(xi1, theta, lagr_coords.xi3);
 
-    return du_dx;
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
+
+    // pressure
+    double p = 0.0;
+    
+    // get the flat disk solution
+    FlatDiskExactSolutions::out_of_plane_rotation_solution_cylindrical(obl_sph_coords_slice,
+								       u_lagr, p);
+
+    // Lagrangian coordinates of the slice where cos(theta) = sin(theta)
+    LagrangianCoordinates lagr_coords_slice(lagr_coords.xi1, theta, lagr_coords.xi3);
+    
+    // get the derivatives of the 'cylindrical' components of the singular velocity
+    // w.r.t. the oblate spheroidal coordinates
+    DenseMatrix<double> du_cyl_doblate_sph;
+    du_broadside_rotation_cylindrical_doblate_sph(lagr_coords_slice, du_cyl_doblate_sph);
+
+    /* // scale the cylindrical gradient appropriately to account for the angle of the slice */
+    /* for(unsigned i=0; i<3; i++) */
+    /* { */
+    /*   for(unsigned j=0; j<3; j++) */
+    /*   { */
+    /* 	du_cyl_doblate_sph(i,j) *= scaling; */
+    /*   } */
+    /* } */
+    
+    // get the singular velocity gradient, passing the actual (non-sliced) Lagrangian coords
+    DenseMatrix<double> du_dx_sing(3, 3, 0.0);
+
+    du_sing_dx_eulerian(lagr_coords, u_lagr, du_cyl_doblate_sph, du_dx_sing);
+
+#ifdef PARANOID
+    for(unsigned i=0; i<3; i++)
+    {
+      for(unsigned j=0; j<3; j++)
+      {
+	if(!isfinite(du_dx_sing(i,j)))
+	{
+	  ostringstream error_message;
+
+	  error_message << "Error: du_dx_broadside_rot(" << i << "," << j << ") = "
+			<< du_dx_sing(i,j) << std::endl;
+	    
+	  throw OomphLibError(error_message.str().c_str(),
+			      OOMPH_CURRENT_FUNCTION,
+			      OOMPH_EXCEPTION_LOCATION);
+	}
+      }
+    }
+#endif
+    
+    return du_dx_sing;
   }
 
   DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_translation(
-    const EdgeCoordinates& edge_coords)
+    const LagrangianCoordinates& lagr_coords)
   {
-    DenseMatrix<double> du_dx(3, 3, 0.0);
-    
-    // compute the velocity gradient via finite difference
-    generic_dudx_finite_diff(edge_coords,
-  			     &__singular_fct_exact_in_plane_translation,
-  			     du_dx);
+    /* // @@@@@ QUEHACERES */
+    /* DenseMatrix<double> du_dx(3,3,0.0); */
+    /* LagrangianCoordinates lagr_coords_slice(lagr_coords.xi1, Pi/4.0, lagr_coords.xi3); */
+    /* generic_dudx_finite_diff(lagr_coords_slice, &__singular_fct_exact_in_plane_translation, */
+    /* 			     du_dx); */
+    /* return du_dx; */
+    /* // @@@@@@@@@@@@@@@@@@ */
+      
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1.0 - dr : lagr_coords.xi1;
 
-    return du_dx;
+    // set the 'azimuthal' angle to where cos(theta) = sin(theta) for slice solution
+    const double theta = Pi / 4.0;
+    const double scaling = 1.0/cos(theta);
+     
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords_slice(xi1, theta, lagr_coords.xi3);
+
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
+
+    // pressure
+    double p = 0.0;
+    
+    // get the flat disk solution
+    FlatDiskExactSolutions::in_plane_translation_solution_cylindrical(obl_sph_coords_slice,
+								      u_lagr, p);
+
+    // Lagrangian coordinates of the slice where cos(theta) = sin(theta)
+    LagrangianCoordinates lagr_coords_slice(lagr_coords.xi1, theta, lagr_coords.xi3);
+    
+    // get the derivatives of the 'cylindrical' components of the singular velocity
+    // w.r.t. the oblate spheroidal coordinates
+    DenseMatrix<double> du_cyl_doblate_sph;
+    du_in_plane_cylindrical_doblate_sph(lagr_coords_slice, du_cyl_doblate_sph);
+
+    /* // scale the cylindrical gradient appropriately to account for the angle of the slice */
+    /* for(unsigned i=0; i<3; i++) */
+    /* { */
+    /*   for(unsigned j=0; j<3; j++) */
+    /*   { */
+    /* 	du_cyl_doblate_sph(i,j) *= scaling; */
+    /*   } */
+    /* } */
+    
+    // get the singular velocity gradient, passing the actual (non-sliced) Lagrangian coords
+    DenseMatrix<double> du_dx_sing(3, 3, 0.0);
+
+    du_sing_dx_eulerian(lagr_coords, u_lagr, du_cyl_doblate_sph, du_dx_sing);
+
+#ifdef PARANOID
+    for(unsigned i=0; i<3; i++)
+    {
+      for(unsigned j=0; j<3; j++)
+      {
+	if(!isfinite(du_dx_sing(i,j)))
+	{
+	  ostringstream error_message;
+
+	  error_message << "Error: du_dx_in_plane(" << i << "," << j << ") = "
+			<< du_dx_sing(i,j) << std::endl;
+	    
+	  throw OomphLibError(error_message.str().c_str(),
+			      OOMPH_CURRENT_FUNCTION,
+			      OOMPH_EXCEPTION_LOCATION);
+	}
+      }
+    }
+#endif
+    return du_dx_sing;
   }
 
   DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_rotation(
-    const EdgeCoordinates& edge_coords)
+    const LagrangianCoordinates& lagr_coords)
   {
-    DenseMatrix<double> du_dx(3, 3, 0.0);
+    /* // @@@@@ QUEHACERES */
+    /* DenseMatrix<double> du_dx(3,3,0.0); */
+    /* generic_dudx_finite_diff(lagr_coords, &__singular_fct_exact_in_plane_rotation, */
+    /* 			     du_dx); */
+    /* return du_dx; */
+    /* // @@@@@@@@@@@@@@@@@@ */
     
-    // compute the velocity gradient via finite difference
-    generic_dudx_finite_diff(edge_coords,
-  			     &__singular_fct_exact_in_plane_rotation,
-  			     du_dx);
-
-    return du_dx;
-  }
-
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-  
-  // //////////////////////////////////////////////////////////////////////////
-  // //////////////////////////////////////////////////////////////////////////
-
-  // QUEHACERES change name if this works 15/1
-  Vector<double> singular_fct_exact_asymptotic_in_plane_full(const EdgeCoordinates& edge_coords)
-  {
-    // how far to shift the radius to compute "infinity" when the actual
-    // radius is zero
-    const double dr = 1e-5;
-    
-    // tolerance for some floating-point comparisons
-    const double tol = 1e-6;
-
-    // shorthand
-    double rho  = edge_coords.rho;
-
     // catch the case where we're sat exactly at the singularity
-    if(rho < tol)
-      rho = dr;
+    const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1.0 - dr : lagr_coords.xi1;
+    
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    // N.B. this function is axisymmetric, so can just (implicitly) pass theta=0 here
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, lagr_coords.xi3);
 
-    double phi = edge_coords.phi;
-
-    // cylindrical coordinates (r, zeta, z)
-    Vector<double> u_cyl(3, 0.0);
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
 
     // pressure
-    double p = 0;
+    double p = 0.0;
     
-    // these solutions have the zeta-dependence factored out
-    // (will be added back in via the singular amplitude c(\zeta) )
-         
-    if(Only_subtract_first_singular_term)
+    // get the flat disk solution
+    FlatDiskExactSolutions::in_plane_rotation_solution_cylindrical(obl_sph_coords, u_lagr, p);
+
+    // get the derivatives of the 'cylindrical' components of the singular velocity
+    // w.r.t. the oblate spheroidal coordinates
+    DenseMatrix<double> du_cyl_doblate_sph;
+    du_in_plane_rotation_cylindrical_doblate_sph(lagr_coords, du_cyl_doblate_sph);
+	
+    // get the singular velocity gradient
+    DenseMatrix<double> du_dx_sing(3, 3, 0.0);
+
+    du_sing_dx_eulerian(lagr_coords, u_lagr, du_cyl_doblate_sph, du_dx_sing);
+
+#ifdef PARANOID
+    for(unsigned i=0; i<3; i++)
     {
-      // u_r / cos(zeta)
-      // -----------------
-      u_cyl[0] = 1 + (2*sqrt(rho)*(-3 + cos(phi))*sqrt(1 + cos(phi)))/(3.*PI);
-      
-      // u_zeta / sin(zeta)
-      u_cyl[1] = -1 + 8.0 * sqrt(1 + cos(phi)) * sqrt(rho) / (3.0*PI);
-      
-      // u_z / cos(zeta)
-      u_cyl[2] = (2*sqrt(rho)*sqrt(1 + cos(phi))*sin(phi))/(3.*PI);
-
-      // p / cos(zeta)
-      p = (4*sqrt(1 + cos(phi)))/(3.*PI*sqrt(rho));
-
-    }
-    else // we're doing 2 terms
-    {
-      // limit values as phi->+/-pi
-      u_cyl[0] =  1.0;
-      u_cyl[1] = -1.0;
-      u_cyl[2] =  0.0;
-
-      p = 0.0;
-      
-      if(abs(abs(phi) - PI) > tol)
+      for(unsigned j=0; j<3; j++)
       {
-	// u_r / cos(zeta)
-	u_cyl[0] = 1 + (2*sqrt(rho)*(-3 + cos(phi))*sqrt(1 + cos(phi)))/(3.*PI) - 
-	  (2*pow(rho,1.5)*pow(cos(phi/2.),4)*(2 - cos(phi) + cos(2*phi)))/(3.*PI*pow(1 + cos(phi),1.5));
+	if(!isfinite(du_dx_sing(i,j)))
+	{
+	  ostringstream error_message;
 
-	// u_zeta / sin(zeta)
-	u_cyl[1] = -1 + (8*sqrt(rho)*sqrt(1 + cos(phi)))/(3.*PI) -
-	  (8*pow(rho,1.5)*pow(cos(phi/2.),4)*(1 + 2*cos(phi)))/(3.*PI*pow(1 + cos(phi),1.5));;
-
-	// u_z / cos(zeta)
-	u_cyl[2] = (2*sqrt(rho)*sqrt(1 + cos(phi))*sin(phi))/(3.*PI) - 
-	  (pow(rho,1.5)*(7*sin(phi) + 5*sin(2*phi) + sin(3*phi)))/(12.*PI*sqrt(1 + cos(phi)));
-
-	// p / cos(zeta)
-	p = (4*sqrt(1 + cos(phi)))/(3.*PI*sqrt(rho)) -
-	  (2*sqrt(rho)*pow(cos(phi/2.),2)*(3 + 2*cos(phi)))/(3.*PI*sqrt(1 + cos(phi)));
+	  error_message << "Error: du_dx_in_plane_rot(" << i << "," << j << ") = "
+			<< du_dx_sing(i,j) << std::endl;
+	    
+	  throw OomphLibError(error_message.str().c_str(),
+			      OOMPH_CURRENT_FUNCTION,
+			      OOMPH_EXCEPTION_LOCATION);
+	}
       }
     }
+#endif
     
-    // QUEHACERES for debug
-    bool inf_or_nan = !(isfinite(u_cyl[0]) && isfinite(u_cyl[2]) && isfinite(p));
-
-    if(inf_or_nan)
-    {
-      oomph_info << "INF or NAN in cylindrical coords; singular_fct_exact_asymptotic_in_plane()"
-		 << std::endl;
-      oomph_info << std::setprecision(8) << "rho = " << rho << ", phi = " << phi << std::endl;
-      abort();
-    }
-    
-    // now convert to Cartesian
-    // ------------------------
-
-    // boundary triad (functions of \zeta) in Cartesian coordinates
-    mVector tangent(3, 0.0);
-    mVector normal(3, 0.0);
-    mVector binormal(3, 0.0);
-    mVector x_disk_edge_dummy(3, 0.0);
-    
-    // get the unit normals from the disk-like geometric object at this zeta
-    CoordinateConversions::boundary_triad(edge_coords.zeta, x_disk_edge_dummy,
-					  tangent, normal, binormal);
-    
-    // cylindrical unit vectors
-    Vector<Vector<double> > cyl_unit_vec(3);
-    cyl_unit_vec[0] = normal;
-    cyl_unit_vec[1] = tangent;
-    cyl_unit_vec[2] = binormal;
-
-    // do the conversion    
-    Vector<double> u(3, 0.0);
-    CoordinateConversions::lagrangian_to_eulerian_velocity(edge_coords, cyl_unit_vec, u_cyl, u);
-    
-    // QUEHACERES debug
-    inf_or_nan = isinf(u[0]) || isinf(u[1]) || isinf(u[2])
-      || isnan(u[0]) || isnan(u[1]) || isnan(u[2]);
-
-    if(inf_or_nan)
-    {
-      oomph_info << "INF or NAN in cartesian coords; singular_fct_exact_asymptotic_in_plane()";
-      abort();
-    }
-
-    // QUEHACERES add the pressure offset
-    p += Global_Parameters::p0;
-    
-    // and add the pressure
-    u.push_back(p);
-
-    return u;
+    return du_dx_sing;
   }
+
+  // @@@@@@@@
+  // FD versions - keep around for the time being
+  
+  /* DenseMatrix<double> __gradient_of_singular_fct_exact_broadside_translation( */
+  /*   const LagrangianCoordinates& lagr_coords) */
+  /* { */
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
+    
+  /*   // compute the velocity gradient via finite difference */
+  /*   generic_dudx_finite_diff(lagr_coords, */
+  /* 			     &__singular_fct_exact_broadside_translation, */
+  /* 			     du_dx); */
+
+  /*   return du_dx; */
+  /* } */
+
+  /* DenseMatrix<double> __gradient_of_singular_fct_exact_broadside_rotation( */
+  /*   const LagrangianCoordinates& lagr_coords) */
+  /* { */
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
+    
+  /*   // compute the velocity gradient via finite difference */
+  /*   generic_dudx_finite_diff(lagr_coords, */
+  /* 			     &__singular_fct_exact_broadside_rotation, */
+  /* 			     du_dx); */
+
+  /*   return du_dx; */
+  /* } */
+
+  /* DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_translation( */
+  /*   const LagrangianCoordinates& lagr_coords) */
+  /* { */
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
+    
+  /*   // compute the velocity gradient via finite difference */
+  /*   generic_dudx_finite_diff(lagr_coords, */
+  /* 			     &__singular_fct_exact_in_plane_translation, */
+  /* 			     du_dx); */
+
+  /*   return du_dx; */
+  /* } */
+
+  /* DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_rotation( */
+  /*   const LagrangianCoordinates& lagr_coords) */
+  /* { */
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
+    
+  /*   // compute the velocity gradient via finite difference */
+  /*   generic_dudx_finite_diff(lagr_coords, */
+  /* 			     &__singular_fct_exact_in_plane_rotation, */
+  /* 			     du_dx); */
+
+  /*   return du_dx; */
+  /* } */
+
+  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  // ### QUEHACERES delete now!
+  /* // QUEHACERES change name if this works 15/1 */
+  /* Vector<double> singular_fct_exact_asymptotic_in_plane_full(const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   // how far to shift the radius to compute "infinity" when the actual */
+  /*   // radius is zero */
+  /*   const double dr = 1e-5; */
+    
+  /*   // tolerance for some floating-point comparisons */
+  /*   const double tol = 1e-6; */
+
+  /*   // shorthand */
+  /*   double rho  = edge_coords.rho; */
+
+  /*   // catch the case where we're sat exactly at the singularity */
+  /*   if(rho < tol) */
+  /*     rho = dr; */
+
+  /*   double phi = edge_coords.phi; */
+
+  /*   // cylindrical coordinates (r, zeta, z) */
+  /*   Vector<double> u_cyl(3, 0.0); */
+
+  /*   // pressure */
+  /*   double p = 0; */
+    
+  /*   // these solutions have the zeta-dependence factored out */
+  /*   // (will be added back in via the singular amplitude c(\zeta) ) */
+         
+  /*   if(Only_subtract_first_singular_term) */
+  /*   { */
+  /*     // u_r / cos(zeta) */
+  /*     // ----------------- */
+  /*     u_cyl[0] = 1 + (2*sqrt(rho)*(-3 + cos(phi))*sqrt(1 + cos(phi)))/(3.*PI); */
+      
+  /*     // u_zeta / sin(zeta) */
+  /*     u_cyl[1] = -1 + 8.0 * sqrt(1 + cos(phi)) * sqrt(rho) / (3.0*PI); */
+      
+  /*     // u_z / cos(zeta) */
+  /*     u_cyl[2] = (2*sqrt(rho)*sqrt(1 + cos(phi))*sin(phi))/(3.*PI); */
+
+  /*     // p / cos(zeta) */
+  /*     p = (4*sqrt(1 + cos(phi)))/(3.*PI*sqrt(rho)); */
+
+  /*   } */
+  /*   else // we're doing 2 terms */
+  /*   { */
+  /*     // limit values as phi->+/-pi */
+  /*     u_cyl[0] =  1.0; */
+  /*     u_cyl[1] = -1.0; */
+  /*     u_cyl[2] =  0.0; */
+
+  /*     p = 0.0; */
+      
+  /*     if(abs(abs(phi) - PI) > tol) */
+  /*     { */
+  /* 	// u_r / cos(zeta) */
+  /* 	u_cyl[0] = 1 + (2*sqrt(rho)*(-3 + cos(phi))*sqrt(1 + cos(phi)))/(3.*PI) -  */
+  /* 	  (2*pow(rho,1.5)*pow(cos(phi/2.),4)*(2 - cos(phi) + cos(2*phi)))/(3.*PI*pow(1 + cos(phi),1.5)); */
+
+  /* 	// u_zeta / sin(zeta) */
+  /* 	u_cyl[1] = -1 + (8*sqrt(rho)*sqrt(1 + cos(phi)))/(3.*PI) - */
+  /* 	  (8*pow(rho,1.5)*pow(cos(phi/2.),4)*(1 + 2*cos(phi)))/(3.*PI*pow(1 + cos(phi),1.5));; */
+
+  /* 	// u_z / cos(zeta) */
+  /* 	u_cyl[2] = (2*sqrt(rho)*sqrt(1 + cos(phi))*sin(phi))/(3.*PI) -  */
+  /* 	  (pow(rho,1.5)*(7*sin(phi) + 5*sin(2*phi) + sin(3*phi)))/(12.*PI*sqrt(1 + cos(phi))); */
+
+  /* 	// p / cos(zeta) */
+  /* 	p = (4*sqrt(1 + cos(phi)))/(3.*PI*sqrt(rho)) - */
+  /* 	  (2*sqrt(rho)*pow(cos(phi/2.),2)*(3 + 2*cos(phi)))/(3.*PI*sqrt(1 + cos(phi))); */
+  /*     } */
+  /*   } */
+    
+  /*   // QUEHACERES for debug */
+  /*   bool inf_or_nan = !(isfinite(u_cyl[0]) && isfinite(u_cyl[2]) && isfinite(p)); */
+
+  /*   if(inf_or_nan) */
+  /*   { */
+  /*     oomph_info << "INF or NAN in cylindrical coords; singular_fct_exact_asymptotic_in_plane()" */
+  /* 		 << std::endl; */
+  /*     oomph_info << std::setprecision(8) << "rho = " << rho << ", phi = " << phi << std::endl; */
+  /*     abort(); */
+  /*   } */
+    
+  /*   // now convert to Cartesian */
+  /*   // ------------------------ */
+
+  /*   // boundary triad (functions of \zeta) in Cartesian coordinates */
+  /*   mVector tangent(3, 0.0); */
+  /*   mVector normal(3, 0.0); */
+  /*   mVector binormal(3, 0.0); */
+  /*   mVector x_disk_edge_dummy(3, 0.0); */
+    
+  /*   // get the unit normals from the disk-like geometric object at this zeta */
+  /*   CoordinateConversions::boundary_triad(edge_coords.zeta, x_disk_edge_dummy, */
+  /* 					  tangent, normal, binormal); */
+    
+  /*   // cylindrical unit vectors */
+  /*   Vector<Vector<double> > cyl_unit_vec(3); */
+  /*   cyl_unit_vec[0] = normal; */
+  /*   cyl_unit_vec[1] = tangent; */
+  /*   cyl_unit_vec[2] = binormal; */
+
+  /*   // do the conversion     */
+  /*   Vector<double> u(3, 0.0); */
+  /*   CoordinateConversions::lagrangian_to_eulerian_velocity(edge_coords, cyl_unit_vec, u_cyl, u); */
+    
+  /*   // QUEHACERES debug */
+  /*   inf_or_nan = isinf(u[0]) || isinf(u[1]) || isinf(u[2]) */
+  /*     || isnan(u[0]) || isnan(u[1]) || isnan(u[2]); */
+
+  /*   if(inf_or_nan) */
+  /*   { */
+  /*     oomph_info << "INF or NAN in cartesian coords; singular_fct_exact_asymptotic_in_plane()"; */
+  /*     abort(); */
+  /*   } */
+
+  /*   // QUEHACERES add the pressure offset */
+  /*   p += Global_Parameters::p0; */
+    
+  /*   // and add the pressure */
+  /*   u.push_back(p); */
+
+  /*   return u; */
+  /* } */
 
   
-  // //////////////////////////////////////////////////////////////////////////
-  // QUEHACERES version without azimuthal component, delete if the above works
-  Vector<double> singular_fct_exact_asymptotic_in_plane(const EdgeCoordinates& edge_coords)
-  {
-    // how far to shift the radius to compute "infinity" when the actual
-    // radius is zero
-    const double dr = 1e-5;
+  /* // ////////////////////////////////////////////////////////////////////////// */
+  /* // QUEHACERES version without azimuthal component, delete if the above works */
+  /* Vector<double> singular_fct_exact_asymptotic_in_plane(const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   // how far to shift the radius to compute "infinity" when the actual */
+  /*   // radius is zero */
+  /*   const double dr = 1e-5; */
     
-    // tolerance for some floating-point comparisons
-    const double tol = 1e-6;
+  /*   // tolerance for some floating-point comparisons */
+  /*   const double tol = 1e-6; */
 
-    // shorthand
-    double rho  = edge_coords.rho;
+  /*   // shorthand */
+  /*   double rho  = edge_coords.rho; */
 
-    // catch the case where we're sat exactly at the singularity
-    if(rho < tol)
-      rho = dr;
+  /*   // catch the case where we're sat exactly at the singularity */
+  /*   if(rho < tol) */
+  /*     rho = dr; */
 
-    double phi = edge_coords.phi;
+  /*   double phi = edge_coords.phi; */
 
-    // cylindrical coordinates (r, zeta, z)
-    Vector<double> u_cyl(3, 0.0);
+  /*   // cylindrical coordinates (r, zeta, z) */
+  /*   Vector<double> u_cyl(3, 0.0); */
 
-    // pressure
-    double p = 0;
+  /*   // pressure */
+  /*   double p = 0; */
     
-    // these solutions have the zeta-dependence factored out
-    // (will be added back in via the singular amplitude c(\zeta) )
+  /*   // these solutions have the zeta-dependence factored out */
+  /*   // (will be added back in via the singular amplitude c(\zeta) ) */
          
-    if(Only_subtract_first_singular_term)
-    {
-      // u_r / cos(zeta)
-      // -----------------
-      u_cyl[0] = 1 + (2*sqrt(rho)*(-3 + cos(phi))*sqrt(1 + cos(phi)))/(3.*PI);
+  /*   if(Only_subtract_first_singular_term) */
+  /*   { */
+  /*     // u_r / cos(zeta) */
+  /*     // ----------------- */
+  /*     u_cyl[0] = 1 + (2*sqrt(rho)*(-3 + cos(phi))*sqrt(1 + cos(phi)))/(3.*PI); */
     
-      // u_zeta / sin(zeta) - leave out and will compensate for it with rotation mode
+  /*     // u_zeta / sin(zeta) - leave out and will compensate for it with rotation mode */
 
-      // u_z / cos(zeta)
-      u_cyl[2] = (2*sqrt(rho)*sqrt(1 + cos(phi))*sin(phi))/(3.*PI);
+  /*     // u_z / cos(zeta) */
+  /*     u_cyl[2] = (2*sqrt(rho)*sqrt(1 + cos(phi))*sin(phi))/(3.*PI); */
 
-      // p / cos(zeta)
-      p = (4*sqrt(1 + cos(phi)))/(3.*PI*sqrt(rho));
+  /*     // p / cos(zeta) */
+  /*     p = (4*sqrt(1 + cos(phi)))/(3.*PI*sqrt(rho)); */
 
-    }
-    else // we're doing 2 terms
-    {
-      // limit values as phi->+/-pi
-      u_cyl[0] = 1.0;
-      u_cyl[1] = 0;
-      u_cyl[2] = 0.0;
+  /*   } */
+  /*   else // we're doing 2 terms */
+  /*   { */
+  /*     // limit values as phi->+/-pi */
+  /*     u_cyl[0] = 1.0; */
+  /*     u_cyl[1] = 0; */
+  /*     u_cyl[2] = 0.0; */
 
-      p = 0.0;
+  /*     p = 0.0; */
       
-      if(abs(abs(phi) - PI) > tol)
-      {
-	// u_r / cos(zeta)
-	u_cyl[0] = 1 + (2*sqrt(rho)*(-3 + cos(phi))*sqrt(1 + cos(phi)))/(3.*PI) - 
-	  (2*pow(rho,1.5)*pow(cos(phi/2.),4)*(2 - cos(phi) + cos(2*phi)))/(3.*PI*pow(1 + cos(phi),1.5));
+  /*     if(abs(abs(phi) - PI) > tol) */
+  /*     { */
+  /* 	// u_r / cos(zeta) */
+  /* 	u_cyl[0] = 1 + (2*sqrt(rho)*(-3 + cos(phi))*sqrt(1 + cos(phi)))/(3.*PI) -  */
+  /* 	  (2*pow(rho,1.5)*pow(cos(phi/2.),4)*(2 - cos(phi) + cos(2*phi)))/(3.*PI*pow(1 + cos(phi),1.5)); */
 
-	// u_zeta / sin(zeta) (0 here, will be dealt with by other sing function)
-	u_cyl[1] = 0.0;
+  /* 	// u_zeta / sin(zeta) (0 here, will be dealt with by other sing function) */
+  /* 	u_cyl[1] = 0.0; */
 
-	// u_z / cos(zeta)
-	u_cyl[2] = (2*sqrt(rho)*sqrt(1 + cos(phi))*sin(phi))/(3.*PI) - 
-	  (pow(rho,1.5)*(7*sin(phi) + 5*sin(2*phi) + sin(3*phi)))/(12.*PI*sqrt(1 + cos(phi)));
+  /* 	// u_z / cos(zeta) */
+  /* 	u_cyl[2] = (2*sqrt(rho)*sqrt(1 + cos(phi))*sin(phi))/(3.*PI) -  */
+  /* 	  (pow(rho,1.5)*(7*sin(phi) + 5*sin(2*phi) + sin(3*phi)))/(12.*PI*sqrt(1 + cos(phi))); */
 
-	// p / cos(zeta)
-	p = (4*sqrt(1 + cos(phi)))/(3.*PI*sqrt(rho)) -
-	  (2*sqrt(rho)*pow(cos(phi/2.),2)*(3 + 2*cos(phi)))/(3.*PI*sqrt(1 + cos(phi)));
-      }
-    }
+  /* 	// p / cos(zeta) */
+  /* 	p = (4*sqrt(1 + cos(phi)))/(3.*PI*sqrt(rho)) - */
+  /* 	  (2*sqrt(rho)*pow(cos(phi/2.),2)*(3 + 2*cos(phi)))/(3.*PI*sqrt(1 + cos(phi))); */
+  /*     } */
+  /*   } */
     
-    // QUEHACERES for debug
-    bool inf_or_nan = !(isfinite(u_cyl[0]) && isfinite(u_cyl[2]) && isfinite(p));
+  /*   // QUEHACERES for debug */
+  /*   bool inf_or_nan = !(isfinite(u_cyl[0]) && isfinite(u_cyl[2]) && isfinite(p)); */
 
-    if(inf_or_nan)
-    {
-      oomph_info << "INF or NAN in cylindrical coords; singular_fct_exact_asymptotic_in_plane()"
-		 << std::endl;
-      oomph_info << std::setprecision(8) << "rho = " << rho << ", phi = " << phi << std::endl;
-      abort();
-    }
+  /*   if(inf_or_nan) */
+  /*   { */
+  /*     oomph_info << "INF or NAN in cylindrical coords; singular_fct_exact_asymptotic_in_plane()" */
+  /* 		 << std::endl; */
+  /*     oomph_info << std::setprecision(8) << "rho = " << rho << ", phi = " << phi << std::endl; */
+  /*     abort(); */
+  /*   } */
     
-    // now convert to Cartesian
-    // ------------------------
+  /*   // now convert to Cartesian */
+  /*   // ------------------------ */
 
-    // boundary triad (functions of \zeta) in Cartesian coordinates
-    mVector tangent(3, 0.0);
-    mVector normal(3, 0.0);
-    mVector binormal(3, 0.0);
-    mVector x_disk_edge_dummy(3, 0.0);
+  /*   // boundary triad (functions of \zeta) in Cartesian coordinates */
+  /*   mVector tangent(3, 0.0); */
+  /*   mVector normal(3, 0.0); */
+  /*   mVector binormal(3, 0.0); */
+  /*   mVector x_disk_edge_dummy(3, 0.0); */
     
-    // get the unit normals from the disk-like geometric object at this zeta
-    CoordinateConversions::boundary_triad(edge_coords.zeta, x_disk_edge_dummy,
-					  tangent, normal, binormal);
+  /*   // get the unit normals from the disk-like geometric object at this zeta */
+  /*   CoordinateConversions::boundary_triad(edge_coords.zeta, x_disk_edge_dummy, */
+  /* 					  tangent, normal, binormal); */
     
-    // cylindrical unit vectors
-    Vector<Vector<double> > cyl_unit_vec(3);
-    cyl_unit_vec[0] = normal;
-    cyl_unit_vec[1] = tangent;
-    cyl_unit_vec[2] = binormal;
+  /*   // cylindrical unit vectors */
+  /*   Vector<Vector<double> > cyl_unit_vec(3); */
+  /*   cyl_unit_vec[0] = normal; */
+  /*   cyl_unit_vec[1] = tangent; */
+  /*   cyl_unit_vec[2] = binormal; */
 
-    // do the conversion    
-    Vector<double> u(3, 0.0);
-    CoordinateConversions::lagrangian_to_eulerian_velocity(edge_coords, cyl_unit_vec, u_cyl, u);
+  /*   // do the conversion     */
+  /*   Vector<double> u(3, 0.0); */
+  /*   CoordinateConversions::lagrangian_to_eulerian_velocity(edge_coords, cyl_unit_vec, u_cyl, u); */
     
-    // QUEHACERES debug
-    inf_or_nan = isinf(u[0]) || isinf(u[1]) || isinf(u[2])
-      || isnan(u[0]) || isnan(u[1]) || isnan(u[2]);
+  /*   // QUEHACERES debug */
+  /*   inf_or_nan = isinf(u[0]) || isinf(u[1]) || isinf(u[2]) */
+  /*     || isnan(u[0]) || isnan(u[1]) || isnan(u[2]); */
 
-    if(inf_or_nan)
-    {
-      oomph_info << "INF or NAN in cartesian coords; singular_fct_exact_asymptotic_in_plane()";
-      abort();
-    }
+  /*   if(inf_or_nan) */
+  /*   { */
+  /*     oomph_info << "INF or NAN in cartesian coords; singular_fct_exact_asymptotic_in_plane()"; */
+  /*     abort(); */
+  /*   } */
 
-    // QUEHACERES add the pressure offset
-    p += Global_Parameters::p0;
+  /*   // QUEHACERES add the pressure offset */
+  /*   p += Global_Parameters::p0; */
     
-    // and add the pressure
-    u.push_back(p);
+  /*   // and add the pressure */
+  /*   u.push_back(p); */
 
-    return u;
-  }
+  /*   return u; */
+  /* } */
 
   // ==========================================================================
 
-  Vector<double> singular_fct_exact_asymptotic_in_plane_zeta(
-    const EdgeCoordinates& edge_coords)
-  {
-    // how far to shift the radius to compute "infinity" when the actual
-    // radius is zero
-    const double dr = 1e-5;
+  /* Vector<double> singular_fct_exact_asymptotic_in_plane_zeta( */
+  /*   const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   // how far to shift the radius to compute "infinity" when the actual */
+  /*   // radius is zero */
+  /*   const double dr = 1e-5; */
     
-    // tolerance for some floating-point comparisons
-    const double tol = 1e-6;
+  /*   // tolerance for some floating-point comparisons */
+  /*   const double tol = 1e-6; */
 
-    // shorthand
-    double rho  = edge_coords.rho;
-    double zeta = edge_coords.zeta;
-    double phi  = edge_coords.phi;
+  /*   // shorthand */
+  /*   double rho  = edge_coords.rho; */
+  /*   double zeta = edge_coords.zeta; */
+  /*   double phi  = edge_coords.phi; */
     
-    // catch the case where we're sat exactly at the singularity
-    if(rho < tol)
-      rho = dr;
+  /*   // catch the case where we're sat exactly at the singularity */
+  /*   if(rho < tol) */
+  /*     rho = dr; */
 
-    // cylindrical coordinates (r,zeta,z)
-    Vector<double> u_cyl(3, 0.0);
+  /*   // cylindrical coordinates (r,zeta,z) */
+  /*   Vector<double> u_cyl(3, 0.0); */
 
-    // p = 0, since already accounted for by the normal in-plane function
-    double p = 0.0;
+  /*   // p = 0, since already accounted for by the normal in-plane function */
+  /*   double p = 0.0; */
 
-    if(Only_subtract_first_singular_term)
-    {
-      // azimuthal part of the in-plane solution, with zeta dependence factored out
-      // u_zeta / sin(zeta)
-      u_cyl[1] = -1 + 8.0 * sqrt(1 + cos(phi)) * sqrt(edge_coords.rho) / (3.0*PI);
-    }
-    else
-    {
-      // lim(u_zeta) as phi->pi = -1
-      u_cyl[1] = -1;
+  /*   if(Only_subtract_first_singular_term) */
+  /*   { */
+  /*     // azimuthal part of the in-plane solution, with zeta dependence factored out */
+  /*     // u_zeta / sin(zeta) */
+  /*     u_cyl[1] = -1 + 8.0 * sqrt(1 + cos(phi)) * sqrt(edge_coords.rho) / (3.0*PI); */
+  /*   } */
+  /*   else */
+  /*   { */
+  /*     // lim(u_zeta) as phi->pi = -1 */
+  /*     u_cyl[1] = -1; */
     
-      if(abs(abs(phi) - PI) > tol)
-      {
-	u_cyl[1] = -1 + (8*sqrt(rho)*sqrt(1 + cos(phi)))/(3.*PI) -
-	  (8*pow(rho,1.5)*pow(cos(phi/2.),4)*(1 + 2*cos(phi)))/(3.*PI*pow(1 + cos(phi),1.5));
-      }
-    }
+  /*     if(abs(abs(phi) - PI) > tol) */
+  /*     { */
+  /* 	u_cyl[1] = -1 + (8*sqrt(rho)*sqrt(1 + cos(phi)))/(3.*PI) - */
+  /* 	  (8*pow(rho,1.5)*pow(cos(phi/2.),4)*(1 + 2*cos(phi)))/(3.*PI*pow(1 + cos(phi),1.5)); */
+  /*     } */
+  /*   } */
 
-    // now convert to Cartesian
-    // ------------------------
+  /*   // now convert to Cartesian */
+  /*   // ------------------------ */
 
-    // boundary triad (functions of \zeta) in Cartesian coordinates
-    mVector tangent(3, 0.0);
-    mVector normal(3, 0.0);
-    mVector binormal(3, 0.0);
-    mVector x_disk_edge_dummy(3, 0.0);
+  /*   // boundary triad (functions of \zeta) in Cartesian coordinates */
+  /*   mVector tangent(3, 0.0); */
+  /*   mVector normal(3, 0.0); */
+  /*   mVector binormal(3, 0.0); */
+  /*   mVector x_disk_edge_dummy(3, 0.0); */
     
-    // get the unit normals from the disk-like geometric object at this zeta
-    CoordinateConversions::boundary_triad(zeta, x_disk_edge_dummy, tangent,
-					  normal, binormal);
+  /*   // get the unit normals from the disk-like geometric object at this zeta */
+  /*   CoordinateConversions::boundary_triad(zeta, x_disk_edge_dummy, tangent, */
+  /* 					  normal, binormal); */
 
-    // cylindrical unit vectors
-    Vector<Vector<double> > cyl_unit_vec(3);
-    cyl_unit_vec[0] = normal;
-    cyl_unit_vec[1] = tangent;
-    cyl_unit_vec[2] = binormal;
+  /*   // cylindrical unit vectors */
+  /*   Vector<Vector<double> > cyl_unit_vec(3); */
+  /*   cyl_unit_vec[0] = normal; */
+  /*   cyl_unit_vec[1] = tangent; */
+  /*   cyl_unit_vec[2] = binormal; */
 
-    // do the conversion    
-    Vector<double> u(3, 0.0);
+  /*   // do the conversion     */
+  /*   Vector<double> u(3, 0.0); */
 
-    CoordinateConversions::lagrangian_to_eulerian_velocity(edge_coords,
-							   cyl_unit_vec,
-							   u_cyl, u);
+  /*   CoordinateConversions::lagrangian_to_eulerian_velocity(edge_coords, */
+  /* 							   cyl_unit_vec, */
+  /* 							   u_cyl, u); */
 
-    // and add the pressure
-    u.push_back(p);
+  /*   // and add the pressure */
+  /*   u.push_back(p); */
 
-    return u;
-  }
+  /*   return u; */
+  /* } */
 
-  // QUEHACERES *full* broadside rotation
-  Vector<double> singular_fct_exact_asymptotic_broadside_rotation(
-    const EdgeCoordinates& edge_coords)
-  {
-    // how far to shift the radius to compute "infinity" when the actual
-    // radius is zero
-    const double dr = 1e-5;
+  /* // QUEHACERES *full* broadside rotation */
+  /* Vector<double> singular_fct_exact_asymptotic_broadside_rotation( */
+  /*   const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   // how far to shift the radius to compute "infinity" when the actual */
+  /*   // radius is zero */
+  /*   const double dr = 1e-5; */
     
-    // tolerance for some floating-point comparisons
-    const double tol = 1e-6;
+  /*   // tolerance for some floating-point comparisons */
+  /*   const double tol = 1e-6; */
 
-    // shorthand
-    double rho  = edge_coords.rho;
-    double phi  = edge_coords.phi;
-    double zeta = edge_coords.zeta;
+  /*   // shorthand */
+  /*   double rho  = edge_coords.rho; */
+  /*   double phi  = edge_coords.phi; */
+  /*   double zeta = edge_coords.zeta; */
     
-    // catch the case where we're sat exactly at the singularity
-    if(rho < tol)
-      rho = dr;
+  /*   // catch the case where we're sat exactly at the singularity */
+  /*   if(rho < tol) */
+  /*     rho = dr; */
 
     
-    // cylindrical coordinates (r, zeta, z)
-    Vector<double> u_cyl(3, 0.0);
+  /*   // cylindrical coordinates (r, zeta, z) */
+  /*   Vector<double> u_cyl(3, 0.0); */
 
-    double sin_phi_over_sqrt_1_plus_cos_phi = 0;
-    double sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = 0;
+  /*   double sin_phi_over_sqrt_1_plus_cos_phi = 0; */
+  /*   double sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = 0; */
     
-    if(abs(phi - PI) < tol)
-    {
-      sin_phi_over_sqrt_1_plus_cos_phi = sqrt(2);
-      sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = sqrt(2);
-      u_cyl[2] = 1;
-    }
-    else if(abs(phi + PI) < tol)
-    {
-      sin_phi_over_sqrt_1_plus_cos_phi = -sqrt(2);
-      sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = -sqrt(2);
-      u_cyl[2] = 1;
-    }
-    else
-    {
-      sin_phi_over_sqrt_1_plus_cos_phi = sin(phi)/sqrt(1.+cos(phi));
+  /*   if(abs(phi - PI) < tol) */
+  /*   { */
+  /*     sin_phi_over_sqrt_1_plus_cos_phi = sqrt(2); */
+  /*     sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = sqrt(2); */
+  /*     u_cyl[2] = 1; */
+  /*   } */
+  /*   else if(abs(phi + PI) < tol) */
+  /*   { */
+  /*     sin_phi_over_sqrt_1_plus_cos_phi = -sqrt(2); */
+  /*     sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = -sqrt(2); */
+  /*     u_cyl[2] = 1; */
+  /*   } */
+  /*   else */
+  /*   { */
+  /*     sin_phi_over_sqrt_1_plus_cos_phi = sin(phi)/sqrt(1.+cos(phi)); */
 
-      sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi =
-	(sin(2.*phi) + sin(3.*phi))/sqrt(1.+cos(phi));
-    }
+  /*     sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = */
+  /* 	(sin(2.*phi) + sin(3.*phi))/sqrt(1.+cos(phi)); */
+  /*   } */
     
     
-    // these solutions have the zeta-dependence factored out
-    // (will be added back in via the singular amplitude c(\zeta) )
+  /*   // these solutions have the zeta-dependence factored out */
+  /*   // (will be added back in via the singular amplitude c(\zeta) ) */
 
-    // u_r / cos(zeta)
-    // -----------------
-    u_cyl[0] = (2.0/PI) * sin(phi) * sqrt(1 + cos(phi)) * sqrt(rho);
+  /*   // u_r / cos(zeta) */
+  /*   // ----------------- */
+  /*   u_cyl[0] = (2.0/PI) * sin(phi) * sqrt(1 + cos(phi)) * sqrt(rho); */
     
-    // u_zeta / sin(zeta) 
-    u_cyl[1] = 0.0;
+  /*   // u_zeta / sin(zeta)  */
+  /*   u_cyl[1] = 0.0; */
     
-    // u_z / cos(zeta)
-    u_cyl[2] = 1 - (2./PI)*pow(1 + cos(phi), 3./2.) * sqrt(rho);
+  /*   // u_z / cos(zeta) */
+  /*   u_cyl[2] = 1 - (2./PI)*pow(1 + cos(phi), 3./2.) * sqrt(rho); */
 
-    // p / cos(zeta)
-    double p = 4.0 * sin_phi_over_sqrt_1_plus_cos_phi / (PI * sqrt(rho));
+  /*   // p / cos(zeta) */
+  /*   double p = 4.0 * sin_phi_over_sqrt_1_plus_cos_phi / (PI * sqrt(rho)); */
       
-    if(!Only_subtract_first_singular_term)
-    {
-      // we're doing 2 terms
+  /*   if(!Only_subtract_first_singular_term) */
+  /*   { */
+  /*     // we're doing 2 terms */
 
-      u_cyl[0] -= sin(phi) * rho;  // /cos(zeta)
-      u_cyl[1] = -sin(phi) * rho;  // /sin(zeta)
-      u_cyl[2] += cos(phi) * rho;  // /cos(zeta)
+  /*     u_cyl[0] -= sin(phi) * rho;  // /cos(zeta) */
+  /*     u_cyl[1] = -sin(phi) * rho;  // /sin(zeta) */
+  /*     u_cyl[2] += cos(phi) * rho;  // /cos(zeta) */
 
-      p -= (2. * cos(phi) + 5) * sin_phi_over_sqrt_1_plus_cos_phi * sqrt(rho) / PI;
-    }
+  /*     p -= (2. * cos(phi) + 5) * sin_phi_over_sqrt_1_plus_cos_phi * sqrt(rho) / PI; */
+  /*   } */
 
-    // boundary triad (functions of \zeta) in Cartesian coordinates
-    mVector tangent(3, 0.0);
-    mVector normal(3, 0.0);
-    mVector binormal(3, 0.0);
-    mVector x_disk_edge_dummy(3, 0.0);
+  /*   // boundary triad (functions of \zeta) in Cartesian coordinates */
+  /*   mVector tangent(3, 0.0); */
+  /*   mVector normal(3, 0.0); */
+  /*   mVector binormal(3, 0.0); */
+  /*   mVector x_disk_edge_dummy(3, 0.0); */
     
-    // get the unit normals from the disk-like geometric object at this zeta
-    CoordinateConversions::boundary_triad(zeta, x_disk_edge_dummy, tangent,
-					  normal, binormal);
+  /*   // get the unit normals from the disk-like geometric object at this zeta */
+  /*   CoordinateConversions::boundary_triad(zeta, x_disk_edge_dummy, tangent, */
+  /* 					  normal, binormal); */
 
-    // cylindrical unit vectors
-    Vector<Vector<double> > cyl_unit_vec(3);
-    cyl_unit_vec[0] = normal;
-    cyl_unit_vec[1] = tangent;
-    cyl_unit_vec[2] = binormal;
+  /*   // cylindrical unit vectors */
+  /*   Vector<Vector<double> > cyl_unit_vec(3); */
+  /*   cyl_unit_vec[0] = normal; */
+  /*   cyl_unit_vec[1] = tangent; */
+  /*   cyl_unit_vec[2] = binormal; */
 
-    // do the conversion    
-    Vector<double> u(3, 0.0);
+  /*   // do the conversion     */
+  /*   Vector<double> u(3, 0.0); */
 
-    CoordinateConversions::lagrangian_to_eulerian_velocity(edge_coords,
-							   cyl_unit_vec,
-							   u_cyl, u);
+  /*   CoordinateConversions::lagrangian_to_eulerian_velocity(edge_coords, */
+  /* 							   cyl_unit_vec, */
+  /* 							   u_cyl, u); */
 
-    // and add the pressure
-    u.push_back(p);
+  /*   // and add the pressure */
+  /*   u.push_back(p); */
 
-    return u;
-  }
+  /*   return u; */
+  /* } */
 
   // QUEHACERES delete if the above works 15/1
   /* // QUEHACERES azimuthal component of broadside rotation */
@@ -977,46 +1461,46 @@ namespace SingularFunctions
   /*   return u; */
   /* } */
   
-  // ==========================================================================
+  /* // ========================================================================== */
   
-  DenseMatrix<double> gradient_of_singular_fct_exact_asymptotic_in_plane_full(
-    const EdgeCoordinates& edge_coords)
-  {
-    DenseMatrix<double> du_dx(3, 3, 0.0);
+  /* DenseMatrix<double> gradient_of_singular_fct_exact_asymptotic_in_plane_full( */
+  /*   const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
     
-    // compute the velocity gradient via finite difference
-    generic_dudx_finite_diff(edge_coords,
-			     &singular_fct_exact_asymptotic_in_plane_full,
-			     du_dx);
+  /*   // compute the velocity gradient via finite difference */
+  /*   generic_dudx_finite_diff(edge_coords, */
+  /* 			     &singular_fct_exact_asymptotic_in_plane_full, */
+  /* 			     du_dx); */
 
-    return du_dx;
-  }
+  /*   return du_dx; */
+  /* } */
 
-  DenseMatrix<double> gradient_of_singular_fct_exact_asymptotic_in_plane(
-    const EdgeCoordinates& edge_coords)
-  {
-    DenseMatrix<double> du_dx(3, 3, 0.0);
+  /* DenseMatrix<double> gradient_of_singular_fct_exact_asymptotic_in_plane( */
+  /*   const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
     
-    // compute the velocity gradient via finite difference
-    generic_dudx_finite_diff(edge_coords,
-			     &singular_fct_exact_asymptotic_in_plane,
-			     du_dx);
+  /*   // compute the velocity gradient via finite difference */
+  /*   generic_dudx_finite_diff(edge_coords, */
+  /* 			     &singular_fct_exact_asymptotic_in_plane, */
+  /* 			     du_dx); */
 
-    return du_dx;
-  }
+  /*   return du_dx; */
+  /* } */
   
-  DenseMatrix<double> gradient_of_singular_fct_exact_asymptotic_in_plane_zeta(
-    const EdgeCoordinates& edge_coords)
-  {
-    DenseMatrix<double> du_dx(3, 3, 0.0);
+  /* DenseMatrix<double> gradient_of_singular_fct_exact_asymptotic_in_plane_zeta( */
+  /*   const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
     
-    // compute the velocity gradient via finite difference
-    generic_dudx_finite_diff(edge_coords,
-			     &singular_fct_exact_asymptotic_in_plane_zeta,
-			     du_dx);
+  /*   // compute the velocity gradient via finite difference */
+  /*   generic_dudx_finite_diff(edge_coords, */
+  /* 			     &singular_fct_exact_asymptotic_in_plane_zeta, */
+  /* 			     du_dx); */
 
-    return du_dx;
-  }
+  /*   return du_dx; */
+  /* } */
 
   // QUEHACERES delete if the full versions work 15/1
   /* DenseMatrix<double> gradient_of_singular_fct_exact_asymptotic_broadside_rotation_no_az( */
@@ -1032,541 +1516,542 @@ namespace SingularFunctions
   /*   return du_dx; */
   /* }  */
 
-  DenseMatrix<double> gradient_of_singular_fct_exact_asymptotic_broadside_rotation(
-    const EdgeCoordinates& edge_coords)
-  {
-    DenseMatrix<double> du_dx(3, 3, 0.0);
+  /* DenseMatrix<double> gradient_of_singular_fct_exact_asymptotic_broadside_rotation( */
+  /*   const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
     
-    // compute the velocity gradient via finite difference
-    generic_dudx_finite_diff(edge_coords,
-			     &singular_fct_exact_asymptotic_broadside_rotation,
-			     du_dx);
+  /*   // compute the velocity gradient via finite difference */
+  /*   generic_dudx_finite_diff(edge_coords, */
+  /* 			     &singular_fct_exact_asymptotic_broadside_rotation, */
+  /* 			     du_dx); */
     
-    return du_dx;
-  }
+  /*   return du_dx; */
+  /* } */
     
-  // exact solution expanded asymptotically in powers of rho in cylindrical coordinates
-  Vector<double> singular_fct_exact_asymptotic_broadside(const EdgeCoordinates& edge_coords)
-  {
-    // how far to shift the radius to compute "infinity" when the actual
-    // radius is zero
-    const double dr = Global_Parameters::Drho_for_infinity;
+  /* // exact solution expanded asymptotically in powers of rho in cylindrical coordinates */
+  /* Vector<double> singular_fct_exact_asymptotic_broadside(const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   // how far to shift the radius to compute "infinity" when the actual */
+  /*   // radius is zero */
+  /*   const double dr = Global_Parameters::Drho_for_infinity; */
     
-    // tolerance for some floating-point comparisons
-    const double tol = 1e-7;
+  /*   // tolerance for some floating-point comparisons */
+  /*   const double tol = 1e-7; */
 
-    // shorthand
-    double rho  = edge_coords.rho;
-    double zeta = edge_coords.zeta;
-    double phi  = edge_coords.phi;
+  /*   // shorthand */
+  /*   double rho  = edge_coords.rho; */
+  /*   double zeta = edge_coords.zeta; */
+  /*   double phi  = edge_coords.phi; */
     
-    // catch the case where we're sat exactly at the singularity
-    if(rho < tol)
-      rho = dr;
+  /*   // catch the case where we're sat exactly at the singularity */
+  /*   if(rho < tol) */
+  /*     rho = dr; */
 
-    // cylindrical coordinates (r,zeta,z)
-    Vector<double> u_cyl(3, 0.0);
+  /*   // cylindrical coordinates (r,zeta,z) */
+  /*   Vector<double> u_cyl(3, 0.0); */
     
-    // these solutions are to O(\rho^{1/2})
-    // ----------------------------------------
+  /*   // these solutions are to O(\rho^{1/2}) */
+  /*   // ---------------------------------------- */
     
-    // u_r
-    // -------------------------
-    u_cyl[0] = sqrt(1+cos(phi)) * sin(phi) * sqrt(rho) / PI;
+  /*   // u_r */
+  /*   // ------------------------- */
+  /*   u_cyl[0] = sqrt(1+cos(phi)) * sin(phi) * sqrt(rho) / PI; */
       
-    if(!Only_subtract_first_singular_term)
-    {
-      // QUEHACERES O(rho^3/2)
-      u_cyl[0] -= sqrt(1+cos(phi))*sin(phi)*(cos(phi)+1.5)*pow(rho,1.5)/(2.*PI);
-    }
+  /*   if(!Only_subtract_first_singular_term) */
+  /*   { */
+  /*     // QUEHACERES O(rho^3/2) */
+  /*     u_cyl[0] -= sqrt(1+cos(phi))*sin(phi)*(cos(phi)+1.5)*pow(rho,1.5)/(2.*PI); */
+  /*   } */
     
-    // u_zeta = 0 for broadside
-    // -------------------------
+  /*   // u_zeta = 0 for broadside */
+  /*   // ------------------------- */
     
-    // u_z
-    // -------------------------
-    u_cyl[2] = 1 - pow(1+cos(phi), 1.5) * sqrt(rho) / PI;
+  /*   // u_z */
+  /*   // ------------------------- */
+  /*   u_cyl[2] = 1 - pow(1+cos(phi), 1.5) * sqrt(rho) / PI; */
 
-    if(!Only_subtract_first_singular_term)
-    {
-      if(abs(abs(phi) - PI) > tol)
-      {
-	// QUEHACERES O(rho^3/2)
-	u_cyl[2] += (2*pow(rho,1.5)*pow(cos(phi/2.),6)*(-1 + 6*cos(phi)))/
-	  (3.*PI*pow(1 + cos(phi),1.5));
-      }
-    }
+  /*   if(!Only_subtract_first_singular_term) */
+  /*   { */
+  /*     if(abs(abs(phi) - PI) > tol) */
+  /*     { */
+  /* 	// QUEHACERES O(rho^3/2) */
+  /* 	u_cyl[2] += (2*pow(rho,1.5)*pow(cos(phi/2.),6)*(-1 + 6*cos(phi)))/ */
+  /* 	  (3.*PI*pow(1 + cos(phi),1.5)); */
+  /*     } */
+  /*   } */
     
-    // pressure
-    // -------------------------
+  /*   // pressure */
+  /*   // ------------------------- */
     
-    // catch the case of phi=+/-pi;
-    // this function is undefined at +/-pi as this yields 0/0
-    // However, lim(sin x/sqrt(1+cos x)) as x->pi = sqrt(2) approaching from 0<x<pi
-    // and as x->-pi, lim = -sqrt(2) approaching from -pi<x<0    
-    double sin_phi_over_sqrt_1_plus_cos_phi = 0;
-    double sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = 0;
+  /*   // catch the case of phi=+/-pi; */
+  /*   // this function is undefined at +/-pi as this yields 0/0 */
+  /*   // However, lim(sin x/sqrt(1+cos x)) as x->pi = sqrt(2) approaching from 0<x<pi */
+  /*   // and as x->-pi, lim = -sqrt(2) approaching from -pi<x<0     */
+  /*   double sin_phi_over_sqrt_1_plus_cos_phi = 0; */
+  /*   double sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = 0; */
     
-    if(abs(phi - PI) < tol)
-    {
-      sin_phi_over_sqrt_1_plus_cos_phi = sqrt(2);
-      sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = sqrt(2);
-      u_cyl[2] = 1;
-    }
-    else if(abs(phi + PI) < tol)
-    {
-      sin_phi_over_sqrt_1_plus_cos_phi = -sqrt(2);
-      sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = -sqrt(2);
-      u_cyl[2] = 1;
-    }
-    else
-    {
-      sin_phi_over_sqrt_1_plus_cos_phi = sin(phi)/sqrt(1.+cos(phi));
+  /*   if(abs(phi - PI) < tol) */
+  /*   { */
+  /*     sin_phi_over_sqrt_1_plus_cos_phi = sqrt(2); */
+  /*     sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = sqrt(2); */
+  /*     u_cyl[2] = 1; */
+  /*   } */
+  /*   else if(abs(phi + PI) < tol) */
+  /*   { */
+  /*     sin_phi_over_sqrt_1_plus_cos_phi = -sqrt(2); */
+  /*     sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = -sqrt(2); */
+  /*     u_cyl[2] = 1; */
+  /*   } */
+  /*   else */
+  /*   { */
+  /*     sin_phi_over_sqrt_1_plus_cos_phi = sin(phi)/sqrt(1.+cos(phi)); */
 
-      sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi =
-	(sin(2.*phi) + sin(3.*phi))/sqrt(1.+cos(phi));
-    }
-    double p = 2.0 * sin_phi_over_sqrt_1_plus_cos_phi / (PI * sqrt(rho));
+  /*     sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi = */
+  /* 	(sin(2.*phi) + sin(3.*phi))/sqrt(1.+cos(phi)); */
+  /*   } */
+  /*   double p = 2.0 * sin_phi_over_sqrt_1_plus_cos_phi / (PI * sqrt(rho)); */
       
-    if(!Only_subtract_first_singular_term)
-    {
-      // QUEHACERES next term O(rho^1/2)
-      p -= sin_phi_over_sqrt_1_plus_cos_phi * (0.5 + cos(phi)) * sqrt(rho) / PI
-	+ (3/(16.*PI))*pow(rho,1.5) * sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi;
-    }
+  /*   if(!Only_subtract_first_singular_term) */
+  /*   { */
+  /*     // QUEHACERES next term O(rho^1/2) */
+  /*     p -= sin_phi_over_sqrt_1_plus_cos_phi * (0.5 + cos(phi)) * sqrt(rho) / PI */
+  /* 	+ (3/(16.*PI))*pow(rho,1.5) * sin_2phi_plus_sin_3phi_over_sqrt_1_plus_cos_phi; */
+  /*   } */
 
-    // QUEHACERES for debug
-    bool inf_or_nan = !(isfinite(u_cyl[0]) && isfinite(u_cyl[2]) && isfinite(p));
+  /*   // QUEHACERES for debug */
+  /*   bool inf_or_nan = !(isfinite(u_cyl[0]) && isfinite(u_cyl[2]) && isfinite(p)); */
 
-    if(inf_or_nan)
-    {
-      oomph_info << "INF or NAN in cylindrical coords; singular_fct_exact_asymptotic_broadside()" 
-		 << std::endl;
-      oomph_info << std::setprecision(8) << "rho = " << rho << ", phi = " << phi << std::endl;
+  /*   if(inf_or_nan) */
+  /*   { */
+  /*     oomph_info << "INF or NAN in cylindrical coords; singular_fct_exact_asymptotic_broadside()"  */
+  /* 		 << std::endl; */
+  /*     oomph_info << std::setprecision(8) << "rho = " << rho << ", phi = " << phi << std::endl; */
 
-      if(abs(phi - PI) < tol)
-	oomph_info << "hit phi=pi check" << std::endl;
-      abort();
-    }
+  /*     if(abs(phi - PI) < tol) */
+  /* 	oomph_info << "hit phi=pi check" << std::endl; */
+  /*     abort(); */
+  /*   } */
     
-    // now convert to Cartesian
-    // ------------------------
+  /*   // now convert to Cartesian */
+  /*   // ------------------------ */
 
-    // boundary triad (functions of \zeta) in Cartesian coordinates
-    mVector tangent(3, 0.0);
-    mVector normal(3, 0.0);
-    mVector binormal(3, 0.0);
-    mVector x_disk_edge_dummy(3, 0.0);
+  /*   // boundary triad (functions of \zeta) in Cartesian coordinates */
+  /*   mVector tangent(3, 0.0); */
+  /*   mVector normal(3, 0.0); */
+  /*   mVector binormal(3, 0.0); */
+  /*   mVector x_disk_edge_dummy(3, 0.0); */
     
-    // get the unit normals from the disk-like geometric object at this zeta
-    CoordinateConversions::boundary_triad(zeta, x_disk_edge_dummy, tangent,
-					  normal, binormal);
+  /*   // get the unit normals from the disk-like geometric object at this zeta */
+  /*   CoordinateConversions::boundary_triad(zeta, x_disk_edge_dummy, tangent, */
+  /* 					  normal, binormal); */
     
-    // cylindrical unit vectors
-    Vector<Vector<double> > cyl_unit_vec(3);
-    cyl_unit_vec[0] = normal;
-    cyl_unit_vec[1] = tangent;
-    cyl_unit_vec[2] = binormal;
+  /*   // cylindrical unit vectors */
+  /*   Vector<Vector<double> > cyl_unit_vec(3); */
+  /*   cyl_unit_vec[0] = normal; */
+  /*   cyl_unit_vec[1] = tangent; */
+  /*   cyl_unit_vec[2] = binormal; */
 
-    // do the conversion
-    Vector<double> u(3, 0.0);
+  /*   // do the conversion */
+  /*   Vector<double> u(3, 0.0); */
     
-    CoordinateConversions::lagrangian_to_eulerian_velocity(edge_coords,
-							   cyl_unit_vec,
-							   u_cyl, u);
+  /*   CoordinateConversions::lagrangian_to_eulerian_velocity(edge_coords, */
+  /* 							   cyl_unit_vec, */
+  /* 							   u_cyl, u); */
 
-    // QUEHACERES debug
-    inf_or_nan = isinf(u[0]) || isinf(u[1]) || isinf(u[2])
-      || isnan(u[0]) || isnan(u[1]) || isnan(u[2]);
+  /*   // QUEHACERES debug */
+  /*   inf_or_nan = isinf(u[0]) || isinf(u[1]) || isinf(u[2]) */
+  /*     || isnan(u[0]) || isnan(u[1]) || isnan(u[2]); */
 
-    if(inf_or_nan)
-    {
-      oomph_info << "INF or NAN in cartesian coords; singular_fct_exact_asymptotic_broadside()";
-      abort();
-    }
+  /*   if(inf_or_nan) */
+  /*   { */
+  /*     oomph_info << "INF or NAN in cartesian coords; singular_fct_exact_asymptotic_broadside()"; */
+  /*     abort(); */
+  /*   } */
     
-    // and add the pressure
-    u.push_back(p);
+  /*   // and add the pressure */
+  /*   u.push_back(p); */
 
-    return u;
-  }
+  /*   return u; */
+  /* } */
 
-  // wrapper to compute the velocity gradients via finite diff (for now)
-  DenseMatrix<double> gradient_of_singular_fct_exact_asymptotic_broadside(const EdgeCoordinates& edge_coords)
-  {
-    DenseMatrix<double> du_dx(3, 3, 0.0);
+  /* // wrapper to compute the velocity gradients via finite diff (for now) */
+  /* DenseMatrix<double> gradient_of_singular_fct_exact_asymptotic_broadside(const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
     
-    // compute the velocity gradient via finite difference
-    generic_dudx_finite_diff(edge_coords,
-			     &singular_fct_exact_asymptotic_broadside,
-			     du_dx);
+  /*   // compute the velocity gradient via finite difference */
+  /*   generic_dudx_finite_diff(edge_coords, */
+  /* 			     &singular_fct_exact_asymptotic_broadside, */
+  /* 			     du_dx); */
 
-    return du_dx;
-  }
+  /*   return du_dx; */
+  /* } */
 
-  // ############################################################################
+  /* // ############################################################################ */
     
-  // Asymptotic singular solution for the rotation of a disk about it's axis of
-  // symmetry, i.e. +ve z-axis rotation
-  Vector<double> singular_fct_in_plane_rotation(const EdgeCoordinates& edge_coords)
-  {
-    Vector<double> u_lagr(4, 0.0);
+  /* // Asymptotic singular solution for the rotation of a disk about it's axis of */
+  /* // symmetry, i.e. +ve z-axis rotation */
+  /* Vector<double> singular_fct_in_plane_rotation(const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   Vector<double> u_lagr(4, 0.0); */
 
-    double zeta = edge_coords.zeta;
-    double phi  = edge_coords.phi;
+  /*   double zeta = edge_coords.zeta; */
+  /*   double phi  = edge_coords.phi; */
 
-    // QUEHACERES delete, using sensible angle convention now!
-    /* // convert from Moffatt angle (where phi=0 is on the disk) */
-    /* double phi = PI - edge_coords.phi; */
+  /*   // QUEHACERES delete, using sensible angle convention now! */
+  /*   /\* // convert from Moffatt angle (where phi=0 is on the disk) *\/ */
+  /*   /\* double phi = PI - edge_coords.phi; *\/ */
 
-    // this solution has u_rho = u_z = p = 0
+  /*   // this solution has u_rho = u_z = p = 0 */
 
-    // u_zeta expanded to O(\rho^{1/2})
-    u_lagr[1] = 1 - (4./PI) * sqrt(1 + cos(phi)) * sqrt(edge_coords.rho);
+  /*   // u_zeta expanded to O(\rho^{1/2}) */
+  /*   u_lagr[1] = 1 - (4./PI) * sqrt(1 + cos(phi)) * sqrt(edge_coords.rho); */
     
-    // convert to Cartesian
-    // ----------------------------------
+  /*   // convert to Cartesian */
+  /*   // ---------------------------------- */
 
-    // Lagrangian unit vectors
-    Vector<double> normal(3, 0.0);
-    Vector<double> tangent(3, 0.0);
-    Vector<double> binormal(3, 0.0);
-    Vector<double> x_disk_edge_dummy(3, 0.0);
+  /*   // Lagrangian unit vectors */
+  /*   Vector<double> normal(3, 0.0); */
+  /*   Vector<double> tangent(3, 0.0); */
+  /*   Vector<double> binormal(3, 0.0); */
+  /*   Vector<double> x_disk_edge_dummy(3, 0.0); */
 
-    // get the triad of unit vectors from the disk-like geometric object at this zeta
-    CoordinateConversions::boundary_triad(zeta, x_disk_edge_dummy, tangent,
-					  normal, binormal);
+  /*   // get the triad of unit vectors from the disk-like geometric object at this zeta */
+  /*   CoordinateConversions::boundary_triad(zeta, x_disk_edge_dummy, tangent, */
+  /* 					  normal, binormal); */
     
-    // Matrix of Lagrangian unit vectors (cylindrical coords)
-    Vector<Vector<double> > cyl_unit_vec(3);
-    cyl_unit_vec[0] = normal;
-    cyl_unit_vec[1] = tangent;
-    cyl_unit_vec[2] = mVector::e_z();
+  /*   // Matrix of Lagrangian unit vectors (cylindrical coords) */
+  /*   Vector<Vector<double> > cyl_unit_vec(3); */
+  /*   cyl_unit_vec[0] = normal; */
+  /*   cyl_unit_vec[1] = tangent; */
+  /*   cyl_unit_vec[2] = mVector::e_z(); */
 
-    // do the conversion
-    Vector<double> u_cartesian(3, 0.0);
-    CoordinateConversions::lagrangian_to_eulerian_velocity(edge_coords,
-							   cyl_unit_vec,
-							   u_lagr, u_cartesian);
+  /*   // do the conversion */
+  /*   Vector<double> u_cartesian(3, 0.0); */
+  /*   CoordinateConversions::lagrangian_to_eulerian_velocity(edge_coords, */
+  /* 							   cyl_unit_vec, */
+  /* 							   u_lagr, u_cartesian); */
 
-    // and add the pressure
-    u_cartesian.push_back(u_lagr[3]);
+  /*   // and add the pressure */
+  /*   u_cartesian.push_back(u_lagr[3]); */
     
-    return u_cartesian;
-  }
+  /*   return u_cartesian; */
+  /* } */
 
-  DenseMatrix<double>
-    gradient_of_singular_fct_in_plane_rotation(const EdgeCoordinates& edge_coords)
-  {
-    // get the in-plane rotation solution in Lagrangian coords
-    Vector<double> u_lagrangian = singular_fct_in_plane_rotation(edge_coords);
+  /* DenseMatrix<double> */
+  /*   gradient_of_singular_fct_in_plane_rotation(const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   // get the in-plane rotation solution in Lagrangian coords */
+  /*   Vector<double> u_lagrangian = singular_fct_in_plane_rotation(edge_coords); */
 
-    // derivatives of the Lagrangian velocity components w.r.t. the
-    // Lagrangian coordinates
-    DenseMatrix<double> u_lagrangian_derivs(3, 3, 0.0);
+  /*   // derivatives of the Lagrangian velocity components w.r.t. the */
+  /*   // Lagrangian coordinates */
+  /*   DenseMatrix<double> u_lagrangian_derivs(3, 3, 0.0); */
 
-    // only non-zero Lagrangian derivatives are du_zeta/drho and du_zeta/dphi
+  /*   // only non-zero Lagrangian derivatives are du_zeta/drho and du_zeta/dphi */
 
-    // du_zeta/drho
-    u_lagrangian_derivs(1,0) = -2 * sqrt(1 + cos(edge_coords.phi)) /
-      (PI * sqrt(edge_coords.rho));
+  /*   // du_zeta/drho */
+  /*   u_lagrangian_derivs(1,0) = -2 * sqrt(1 + cos(edge_coords.phi)) / */
+  /*     (PI * sqrt(edge_coords.rho)); */
 
-    // du_zeta/dphi
-    u_lagrangian_derivs(1,2) = 2 * sqrt(edge_coords.rho) * sin(edge_coords.phi) /
-      (PI * sqrt(1 + cos(edge_coords.phi)) );
+  /*   // du_zeta/dphi */
+  /*   u_lagrangian_derivs(1,2) = 2 * sqrt(edge_coords.rho) * sin(edge_coords.phi) / */
+  /*     (PI * sqrt(1 + cos(edge_coords.phi)) ); */
 
-    // Eulerian derivatives
-    DenseMatrix<double> du_dx(3,3, 0.0);
+  /*   // Eulerian derivatives */
+  /*   DenseMatrix<double> du_dx(3,3, 0.0); */
 
-    // QUEHACERES compute velocity gradient via finite diff for now
-    // (see below for coord issues with the analytic function)
-    generic_dudx_finite_diff(edge_coords,
-			     &singular_fct_in_plane_rotation,
-			     du_dx);
+  /*   // QUEHACERES compute velocity gradient via finite diff for now */
+  /*   // (see below for coord issues with the analytic function) */
+  /*   generic_dudx_finite_diff(edge_coords, */
+  /* 			     &singular_fct_in_plane_rotation, */
+  /* 			     du_dx); */
     
-    // QUEHACERES bring this back in once it's generalised (this won't work as it's
-    // expecting rho,zeta,phi coords & derivs but we have cylindrical r,zeta,z coords here
-    /* // now convert to Eulerian velocity gradient tensor */
-    /* lagrangian_to_eulerian_velocity_gradient(edge_coords, u_lagrangian, */
-    /* 					     u_lagrangian_derivs, du_dx); */
+  /*   // QUEHACERES bring this back in once it's generalised (this won't work as it's */
+  /*   // expecting rho,zeta,phi coords & derivs but we have cylindrical r,zeta,z coords here */
+  /*   /\* // now convert to Eulerian velocity gradient tensor *\/ */
+  /*   /\* lagrangian_to_eulerian_velocity_gradient(edge_coords, u_lagrangian, *\/ */
+  /*   /\* 					     u_lagrangian_derivs, du_dx); *\/ */
 
-    return du_dx;
-  }
+  /*   return du_dx; */
+  /* } */
    
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-  // for debug, functions which match the typedef for a singular function
-  // to allow us to subtract the exact solution rather than the Moffatt solution
+  /* // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ */
+  /* // for debug, functions which match the typedef for a singular function */
+  /* // to allow us to subtract the exact solution rather than the Moffatt solution */
   
-  Vector<double> wrapper_to_exact_solution_broadside(const EdgeCoordinates& edge_coords)
-  {
-    // convert edge coords to Cartesian
-    Vector<double> x(3, 0.0);
-    CoordinateConversions::lagrangian_to_eulerian_coordinates(edge_coords, x);
+  /* Vector<double> wrapper_to_exact_solution_broadside(const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   // convert edge coords to Cartesian */
+  /*   Vector<double> x(3, 0.0); */
+  /*   CoordinateConversions::lagrangian_to_eulerian_coordinates(edge_coords, x); */
 
-    // broadside motion
-    Vector<double> u_disk(3, 0.0);
-    u_disk[2] = 1.0;
+  /*   // broadside motion */
+  /*   Vector<double> u_disk(3, 0.0); */
+  /*   u_disk[2] = 1.0; */
 
-    Vector<double> omega_disk(3, 0.0);
+  /*   Vector<double> omega_disk(3, 0.0); */
     
-    Vector<double> u(4, 0.0);
-    FlatDiskExactSolutions::total_exact_solution(x, u_disk, omega_disk, u);
+  /*   Vector<double> u(4, 0.0); */
+  /*   FlatDiskExactSolutions::total_exact_solution(x, u_disk, omega_disk, u); */
     
-    return u;
-  }
+  /*   return u; */
+  /* } */
 
-  DenseMatrix<double> wrapper_to_exact_velocity_gradient_broadside(const EdgeCoordinates& edge_coords)
-  {
-    // convert edge coords to Cartesian
-    Vector<double> x(3, 0.0);
-    CoordinateConversions::lagrangian_to_eulerian_coordinates(edge_coords, x);
+  /* DenseMatrix<double> wrapper_to_exact_velocity_gradient_broadside(const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   // convert edge coords to Cartesian */
+  /*   Vector<double> x(3, 0.0); */
+  /*   CoordinateConversions::lagrangian_to_eulerian_coordinates(edge_coords, x); */
 
-    // broadside motion
-    Vector<double> u_disk(3, 0.0);
-    u_disk[2] = 1.0;
+  /*   // broadside motion */
+  /*   Vector<double> u_disk(3, 0.0); */
+  /*   u_disk[2] = 1.0; */
 
-    Vector<double> omega_disk(3, 0.0);
+  /*   Vector<double> omega_disk(3, 0.0); */
     
-    DenseMatrix<double> du_dx(3, 3, 0.0);
-    FlatDiskExactSolutions::total_exact_velocity_gradient(x, u_disk, omega_disk, du_dx);
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
+  /*   FlatDiskExactSolutions::total_exact_velocity_gradient(x, u_disk, omega_disk, du_dx); */
     
-    return du_dx;
-  }
+  /*   return du_dx; */
+  /* } */
   
-  Vector<double> wrapper_to_exact_solution_in_plane(const EdgeCoordinates& edge_coords)
-  {
-    // convert edge coords to Cartesian
-    Vector<double> x(3, 0.0);
-    CoordinateConversions::lagrangian_to_eulerian_coordinates(edge_coords, x);
+  /* Vector<double> wrapper_to_exact_solution_in_plane(const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   // convert edge coords to Cartesian */
+  /*   Vector<double> x(3, 0.0); */
+  /*   CoordinateConversions::lagrangian_to_eulerian_coordinates(edge_coords, x); */
 
-    // in-plane motion, uz = 0
-    Vector<double> u_disk(3, 0.0);
-    u_disk[0] = Global_Parameters::u_disk_rigid_translation[0];
-    u_disk[1] = Global_Parameters::u_disk_rigid_translation[1];
+  /*   // in-plane motion, uz = 0 */
+  /*   Vector<double> u_disk(3, 0.0); */
+  /*   u_disk[0] = Global_Parameters::u_disk_rigid_translation[0]; */
+  /*   u_disk[1] = Global_Parameters::u_disk_rigid_translation[1]; */
     
-    Vector<double> omega_disk(3, 0.0);
+  /*   Vector<double> omega_disk(3, 0.0); */
     
-    Vector<double> u(4, 0.0);
-    FlatDiskExactSolutions::total_exact_solution(x, u_disk, omega_disk, u);
+  /*   Vector<double> u(4, 0.0); */
+  /*   FlatDiskExactSolutions::total_exact_solution(x, u_disk, omega_disk, u); */
     
-    return u;
-  }
+  /*   return u; */
+  /* } */
 
-  DenseMatrix<double> wrapper_to_exact_velocity_gradient_in_plane(const EdgeCoordinates& edge_coords)
-  {
-    // convert edge coords to Cartesian
-    Vector<double> x(3, 0.0);
-    CoordinateConversions::lagrangian_to_eulerian_coordinates(edge_coords, x);
+  /* DenseMatrix<double> wrapper_to_exact_velocity_gradient_in_plane(const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   // convert edge coords to Cartesian */
+  /*   Vector<double> x(3, 0.0); */
+  /*   CoordinateConversions::lagrangian_to_eulerian_coordinates(edge_coords, x); */
 
-    // in-plane motion
-    Vector<double> u_disk(3, 0.0);
-    u_disk[0] = Global_Parameters::u_disk_rigid_translation[0];
-    u_disk[1] = Global_Parameters::u_disk_rigid_translation[1];
+  /*   // in-plane motion */
+  /*   Vector<double> u_disk(3, 0.0); */
+  /*   u_disk[0] = Global_Parameters::u_disk_rigid_translation[0]; */
+  /*   u_disk[1] = Global_Parameters::u_disk_rigid_translation[1]; */
 
-    Vector<double> omega_disk(3, 0.0);
+  /*   Vector<double> omega_disk(3, 0.0); */
     
-    DenseMatrix<double> du_dx(3, 3, 0.0);
-    FlatDiskExactSolutions::total_exact_velocity_gradient(x, u_disk, omega_disk, du_dx);
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
+  /*   FlatDiskExactSolutions::total_exact_velocity_gradient(x, u_disk, omega_disk, du_dx); */
     
-    return du_dx;
-  }
+  /*   return du_dx; */
+  /* } */
 
   // ==========================================================================
   // ==========================================================================
   // ==========================================================================
 
-  // Stokes source functions - they compute the residual from feeding the asymptotic
-  // slice solutions into the 3D stokes equations
+  // ### QUEHACERES delete
+  /* // Stokes source functions - they compute the residual from feeding the asymptotic */
+  /* // slice solutions into the 3D stokes equations */
 
-  // this is true for 2 asymptotic terms subtracted off, won't work with 1!
-  void asymptotic_broadside_residual(const EdgeCoordinates& edge_coords,
-				     Vector<double>& stokes_residual_cyl)
-  {
-    // coordinates with phi having the sensible (non-Moffatt!) definition
-    double rho = edge_coords.rho;
-    double phi = edge_coords.phi;
+  /* // this is true for 2 asymptotic terms subtracted off, won't work with 1! */
+  /* void asymptotic_broadside_residual(const EdgeCoordinates& edge_coords, */
+  /* 				     Vector<double>& stokes_residual_cyl) */
+  /* { */
+  /*   // coordinates with phi having the sensible (non-Moffatt!) definition */
+  /*   double rho = edge_coords.rho; */
+  /*   double phi = edge_coords.phi; */
     
-    // zero out the residuals
-    stokes_residual_cyl.resize(3, 0.0);
-    std::fill(stokes_residual_cyl.begin(), stokes_residual_cyl.end(), 0.0);
+  /*   // zero out the residuals */
+  /*   stokes_residual_cyl.resize(3, 0.0); */
+  /*   std::fill(stokes_residual_cyl.begin(), stokes_residual_cyl.end(), 0.0); */
 
-    double tol = 1e-6;
-    double PI = MathematicalConstants::Pi;
+  /*   double tol = 1e-6; */
+  /*   double PI = MathematicalConstants::Pi; */
 
-    // catch the case of phi->PI, where the limit is zero but will get a div0 NaN in code
-    if(abs(phi-PI) > tol)
-    {
-      // r momentum eqn
-      stokes_residual_cyl[0] = (3*sqrt(rho)*(-9*sin(phi) - 5*sin(2*phi) +
-					sin(3*phi) + sin(4*phi))) /
-	(16.*PI*sqrt(1 + cos(phi)));
+  /*   // catch the case of phi->PI, where the limit is zero but will get a div0 NaN in code */
+  /*   if(abs(phi-PI) > tol) */
+  /*   { */
+  /*     // r momentum eqn */
+  /*     stokes_residual_cyl[0] = (3*sqrt(rho)*(-9*sin(phi) - 5*sin(2*phi) + */
+  /* 					sin(3*phi) + sin(4*phi))) / */
+  /* 	(16.*PI*sqrt(1 + cos(phi))); */
 
-      // zeta momentum residual is zero
+  /*     // zeta momentum residual is zero */
       
-      // z momentum eqn
-      stokes_residual_cyl[2] = (-3*sqrt(rho) * Power(cos(phi/2.),4) *
-				(1 - 6*cos(phi) + 2*cos(2*phi))) / (2.*PI*sqrt(1 + cos(phi)));      
-    }
-  }
+  /*     // z momentum eqn */
+  /*     stokes_residual_cyl[2] = (-3*sqrt(rho) * Power(cos(phi/2.),4) * */
+  /* 				(1 - 6*cos(phi) + 2*cos(2*phi))) / (2.*PI*sqrt(1 + cos(phi)));       */
+  /*   } */
+  /* } */
 
-  void asymptotic_in_plane_residual(const EdgeCoordinates& edge_coords,
-				    Vector<double>& stokes_residual_cyl)
-  {    
-    double rho = edge_coords.rho;
-    double phi = edge_coords.phi;
-    // QUEHACERES delete, using sensible angle convention now!
-    /* double phi = Analytic_Functions::map_angle_to_range_0_to_2pi(PI - edge_coords.phi); */
-    double zeta = edge_coords.zeta;
+  /* void asymptotic_in_plane_residual(const EdgeCoordinates& edge_coords, */
+  /* 				    Vector<double>& stokes_residual_cyl) */
+  /* {     */
+  /*   double rho = edge_coords.rho; */
+  /*   double phi = edge_coords.phi; */
+  /*   // QUEHACERES delete, using sensible angle convention now! */
+  /*   /\* double phi = Analytic_Functions::map_angle_to_range_0_to_2pi(PI - edge_coords.phi); *\/ */
+  /*   double zeta = edge_coords.zeta; */
 
-    double tol = 1e-6;
-    double PI = MathematicalConstants::Pi;
+  /*   double tol = 1e-6; */
+  /*   double PI = MathematicalConstants::Pi; */
 
-    // zero out the residuals
-    stokes_residual_cyl.resize(3, 0.0);
-    std::fill(stokes_residual_cyl.begin(), stokes_residual_cyl.end(), 0.0);
+  /*   // zero out the residuals */
+  /*   stokes_residual_cyl.resize(3, 0.0); */
+  /*   std::fill(stokes_residual_cyl.begin(), stokes_residual_cyl.end(), 0.0); */
     
-    // catch the case of phi->PI, where the limit is zero but will get a div0 NaN in code
-    if(abs(phi-PI) > tol)
-    {
-      // r momentum residual
-      stokes_residual_cyl[0] = -(sqrt(rho)*pow(cos(phi/2.),2) *
-				 (6 + 4*cos(phi) + cos(2*phi)
-				  - cos(3*phi))*cos(zeta)) / (2.*PI*sqrt(1 + cos(phi)));
+  /*   // catch the case of phi->PI, where the limit is zero but will get a div0 NaN in code */
+  /*   if(abs(phi-PI) > tol) */
+  /*   { */
+  /*     // r momentum residual */
+  /*     stokes_residual_cyl[0] = -(sqrt(rho)*pow(cos(phi/2.),2) * */
+  /* 				 (6 + 4*cos(phi) + cos(2*phi) */
+  /* 				  - cos(3*phi))*cos(zeta)) / (2.*PI*sqrt(1 + cos(phi))); */
 
-      // zeta momentum residual
-      stokes_residual_cyl[1] = (-4*sqrt(rho)*pow(cos(phi/2.),2) *
-				(2 + 3*cos(phi))*sin(zeta)) / (PI*sqrt(1 + cos(phi)));
+  /*     // zeta momentum residual */
+  /*     stokes_residual_cyl[1] = (-4*sqrt(rho)*pow(cos(phi/2.),2) * */
+  /* 				(2 + 3*cos(phi))*sin(zeta)) / (PI*sqrt(1 + cos(phi))); */
       
-      // z momentum residual
-      stokes_residual_cyl[2] = (sqrt(rho)*pow(cos(phi/2.),3)*cos(zeta) *
-				(-2*(sin(phi/2.) + sin((3*phi)/2.)) +
-				 sin((5*phi)/2.))) / (PI*sqrt(1 + cos(phi)));
-    }
-  }
+  /*     // z momentum residual */
+  /*     stokes_residual_cyl[2] = (sqrt(rho)*pow(cos(phi/2.),3)*cos(zeta) * */
+  /* 				(-2*(sin(phi/2.) + sin((3*phi)/2.)) + */
+  /* 				 sin((5*phi)/2.))) / (PI*sqrt(1 + cos(phi))); */
+  /*   } */
+  /* } */
 
-  // QUEHACERES this will need to get the amplitude from somewhere at some point...
-  // in fact need to actually solve the Stokes equations to do this properly,
-  // once we don't know what the zeta dependence of anything is (and c(\zeta) not analytic)
-  void asymptotic_total_body_force(const double& t,
-				   const Vector<double>& x,
-				   Vector<double>& body_force)
-  {
+  /* // QUEHACERES this will need to get the amplitude from somewhere at some point... */
+  /* // in fact need to actually solve the Stokes equations to do this properly, */
+  /* // once we don't know what the zeta dependence of anything is (and c(\zeta) not analytic) */
+  /* void asymptotic_total_body_force(const double& t, */
+  /* 				   const Vector<double>& x, */
+  /* 				   Vector<double>& body_force) */
+  /* { */
 
-    // get the Lagrangian coordinates at this point
-    EdgeCoordinates edge_coords;
-    CoordinateConversions::eulerian_to_lagrangian_coordinates(x, edge_coords);
+  /*   // get the Lagrangian coordinates at this point */
+  /*   EdgeCoordinates edge_coords; */
+  /*   CoordinateConversions::eulerian_to_lagrangian_coordinates(x, edge_coords); */
     
-    // the residual from the Stokes equations in cylindrical coordinates
-    Vector<double> stokes_residual_cyl(3, 0.0);
+  /*   // the residual from the Stokes equations in cylindrical coordinates */
+  /*   Vector<double> stokes_residual_cyl(3, 0.0); */
 
-    // residuals from each of the singular functions
-    // QUEHACERES do we need to split the in-plane? maybe not...
-    Vector<double> stokes_residual_cyl_broadside(3,0.0);
-    Vector<double> stokes_residual_cyl_in_plane(3,0.0);
+  /*   // residuals from each of the singular functions */
+  /*   // QUEHACERES do we need to split the in-plane? maybe not... */
+  /*   Vector<double> stokes_residual_cyl_broadside(3,0.0); */
+  /*   Vector<double> stokes_residual_cyl_in_plane(3,0.0); */
 
-    // get 'em
-    asymptotic_broadside_residual(edge_coords, stokes_residual_cyl_broadside);
-    asymptotic_in_plane_residual(edge_coords, stokes_residual_cyl_in_plane);
+  /*   // get 'em */
+  /*   asymptotic_broadside_residual(edge_coords, stokes_residual_cyl_broadside); */
+  /*   asymptotic_in_plane_residual(edge_coords, stokes_residual_cyl_in_plane); */
 
-    // constant amplitudes, just to be able to switch off the ones
-    // we're not using
-    double c_broadside = Global_Parameters::u_disk_rigid_translation[2];
-    double c_in_plane  = Global_Parameters::u_disk_rigid_translation[0];
+  /*   // constant amplitudes, just to be able to switch off the ones */
+  /*   // we're not using */
+  /*   double c_broadside = Global_Parameters::u_disk_rigid_translation[2]; */
+  /*   double c_in_plane  = Global_Parameters::u_disk_rigid_translation[0]; */
     
-    // add 'em up
-    stokes_residual_cyl[0] = c_broadside * stokes_residual_cyl_broadside[0] +
-      c_in_plane * stokes_residual_cyl_in_plane[0];
-    stokes_residual_cyl[1] = c_broadside * stokes_residual_cyl_broadside[1] +
-      c_in_plane * stokes_residual_cyl_in_plane[1];
-    stokes_residual_cyl[2] = c_broadside * stokes_residual_cyl_broadside[2] +
-      c_in_plane * stokes_residual_cyl_in_plane[2];
+  /*   // add 'em up */
+  /*   stokes_residual_cyl[0] = c_broadside * stokes_residual_cyl_broadside[0] + */
+  /*     c_in_plane * stokes_residual_cyl_in_plane[0]; */
+  /*   stokes_residual_cyl[1] = c_broadside * stokes_residual_cyl_broadside[1] + */
+  /*     c_in_plane * stokes_residual_cyl_in_plane[1]; */
+  /*   stokes_residual_cyl[2] = c_broadside * stokes_residual_cyl_broadside[2] + */
+  /*     c_in_plane * stokes_residual_cyl_in_plane[2]; */
     
-    Vector<double> r_disk_edge(3);
-    Vector<double> tangent(3);
-    Vector<double> surface_normal(3);
-    Vector<double> normal(3);
+  /*   Vector<double> r_disk_edge(3); */
+  /*   Vector<double> tangent(3); */
+  /*   Vector<double> surface_normal(3); */
+  /*   Vector<double> normal(3); */
 
-    // get the triad vectors from the disk-like geometric object at this zeta
-    Global_Parameters::Warped_disk_with_boundary_pt->
-      boundary_triad(0, edge_coords.zeta, r_disk_edge, tangent, normal, surface_normal);
+  /*   // get the triad vectors from the disk-like geometric object at this zeta */
+  /*   Global_Parameters::Warped_disk_with_boundary_pt-> */
+  /*     boundary_triad(0, edge_coords.zeta, r_disk_edge, tangent, normal, surface_normal); */
 
-    // cylindrical unit vectors in the boundary-triad basis
-    Vector<Vector<double> > cyl_unit_vec(3);
-    cyl_unit_vec[0] = normal;
-    cyl_unit_vec[1] = tangent;
-    cyl_unit_vec[2] = surface_normal;
+  /*   // cylindrical unit vectors in the boundary-triad basis */
+  /*   Vector<Vector<double> > cyl_unit_vec(3); */
+  /*   cyl_unit_vec[0] = normal; */
+  /*   cyl_unit_vec[1] = tangent; */
+  /*   cyl_unit_vec[2] = surface_normal; */
 
-    // now convert this cylindrical residual vector into Cartesian
-    Vector<double> stokes_residual_cartesian(3, 0.0);
+  /*   // now convert this cylindrical residual vector into Cartesian */
+  /*   Vector<double> stokes_residual_cartesian(3, 0.0); */
     
-    CoordinateConversions::lagrangian_to_eulerian_velocity(
-      edge_coords, cyl_unit_vec, stokes_residual_cyl, stokes_residual_cartesian);
+  /*   CoordinateConversions::lagrangian_to_eulerian_velocity( */
+  /*     edge_coords, cyl_unit_vec, stokes_residual_cyl, stokes_residual_cartesian); */
 
-    // the body force is on the RHS of Navier-Stokes, so the negative of the residual,
-    // and then want to subtract it, so two minuses cancel
-    body_force[0] = +stokes_residual_cartesian[0];
-    body_force[1] = +stokes_residual_cartesian[1];
-    body_force[2] = +stokes_residual_cartesian[2];
-  }
+  /*   // the body force is on the RHS of Navier-Stokes, so the negative of the residual, */
+  /*   // and then want to subtract it, so two minuses cancel */
+  /*   body_force[0] = +stokes_residual_cartesian[0]; */
+  /*   body_force[1] = +stokes_residual_cartesian[1]; */
+  /*   body_force[2] = +stokes_residual_cartesian[2]; */
+  /* } */
 
-  double in_plane_source_term(const EdgeCoordinates& edge_coords)
-  {
-    double rho = edge_coords.rho;
-    double zeta = edge_coords.zeta;
-    double phi = edge_coords.phi;
-    // QUEHACERES delete, using sensible angle convention now!
-    /* double phi = Analytic_Functions::map_angle_to_range_0_to_2pi(PI - edge_coords.phi); */
+  /* double in_plane_source_term(const EdgeCoordinates& edge_coords) */
+  /* { */
+  /*   double rho = edge_coords.rho; */
+  /*   double zeta = edge_coords.zeta; */
+  /*   double phi = edge_coords.phi; */
+  /*   // QUEHACERES delete, using sensible angle convention now! */
+  /*   /\* double phi = Analytic_Functions::map_angle_to_range_0_to_2pi(PI - edge_coords.phi); *\/ */
     
-    // residual of the continuity equation, i.e. source term on the RHS
-    double in_plane_source = 0;
+  /*   // residual of the continuity equation, i.e. source term on the RHS */
+  /*   double in_plane_source = 0; */
 
-    double tol = 1e-6;
-    double Pi = MathematicalConstants::Pi;
+  /*   double tol = 1e-6; */
+  /*   double Pi = MathematicalConstants::Pi; */
     
-    if(abs(phi-PI) > tol)
-    {
-      in_plane_source = (-2*Power(rho,1.5)*Power(Cos(phi/2.),4) *
-			 (5 + 6*Cos(phi))*Cos(zeta))/(3.*Pi*Sqrt(1 + Cos(phi)));
-    }
+  /*   if(abs(phi-PI) > tol) */
+  /*   { */
+  /*     in_plane_source = (-2*Power(rho,1.5)*Power(Cos(phi/2.),4) * */
+  /* 			 (5 + 6*Cos(phi))*Cos(zeta))/(3.*Pi*Sqrt(1 + Cos(phi))); */
+  /*   } */
 
-    return in_plane_source;
-  }
+  /*   return in_plane_source; */
+  /* } */
   
-  // QUEHACERES this will need to get the amplitude from somewhere at some point...
-  // in fact need to actually solve the Stokes equations to do this properly,
-  // once we don't know what the zeta dependence of anything is (and c(\zeta) not analytic)
-  double asymptotic_total_source_term(const double& t,
-				      const Vector<double>& x)
-  {
-    // get the Lagrangian coordinates at this point
-    EdgeCoordinates edge_coords;
-    CoordinateConversions::eulerian_to_lagrangian_coordinates(x, edge_coords);
+  /* // QUEHACERES this will need to get the amplitude from somewhere at some point... */
+  /* // in fact need to actually solve the Stokes equations to do this properly, */
+  /* // once we don't know what the zeta dependence of anything is (and c(\zeta) not analytic) */
+  /* double asymptotic_total_source_term(const double& t, */
+  /* 				      const Vector<double>& x) */
+  /* { */
+  /*   // get the Lagrangian coordinates at this point */
+  /*   EdgeCoordinates edge_coords; */
+  /*   CoordinateConversions::eulerian_to_lagrangian_coordinates(x, edge_coords); */
 
-    const unsigned Dim = 3;
+  /*   const unsigned Dim = 3; */
 
-    // get the Cartesian velocity gradient tensor
-    DenseMatrix<double> du_dx_broadside =
-      gradient_of_singular_fct_exact_asymptotic_broadside(edge_coords);
+  /*   // get the Cartesian velocity gradient tensor */
+  /*   DenseMatrix<double> du_dx_broadside = */
+  /*     gradient_of_singular_fct_exact_asymptotic_broadside(edge_coords); */
      
-    // and now compute the divergence
-    double divergence_broadside = 0;
-    double divergence_in_plane = in_plane_source_term(edge_coords);
+  /*   // and now compute the divergence */
+  /*   double divergence_broadside = 0; */
+  /*   double divergence_in_plane = in_plane_source_term(edge_coords); */
     
-    for(unsigned i=0; i<Dim; i++)
-    {
-      divergence_broadside += du_dx_broadside(i,i);
-    }
+  /*   for(unsigned i=0; i<Dim; i++) */
+  /*   { */
+  /*     divergence_broadside += du_dx_broadside(i,i); */
+  /*   } */
 
-    // constant amplitudes, just to be able to switch off the ones
-    // we're not using
-    double c_broadside = Global_Parameters::u_disk_rigid_translation[2];
-    double c_in_plane  = Global_Parameters::u_disk_rigid_translation[0];
+  /*   // constant amplitudes, just to be able to switch off the ones */
+  /*   // we're not using */
+  /*   double c_broadside = Global_Parameters::u_disk_rigid_translation[2]; */
+  /*   double c_in_plane  = Global_Parameters::u_disk_rigid_translation[0]; */
     
-    double divergence_total = -c_broadside * divergence_broadside -
-      c_in_plane * divergence_in_plane;
+  /*   double divergence_total = -c_broadside * divergence_broadside - */
+  /*     c_in_plane * divergence_in_plane; */
 
-    return divergence_total;
-  }
+  /*   return divergence_total; */
+  /* } */
 
   // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
   // keep this code around just in case
