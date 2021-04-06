@@ -472,31 +472,6 @@ namespace FlatDiskExactSolutions
     // check if this point is exactly on the edge of the disk,
     // and move it slightly away if so
     Vector<double> x = shift_x_away_from_disk_edge(x_const);
-
-    // ### QUEHACERES delete
-    /* // rotate the point 180deg around the y-axis */
-    /* bool in_lower_half_space = (x[2] < 0); */
-
-    /* // the solution is only valid for the half-space z>=0, */
-    /* // so if we're in the half-space z<0, rotate the point by Pi around the y-axis */
-    /* if(in_lower_half_space) */
-    /* { */
-    /*   Vector<double> x_rotated(3, 0.0); */
-
-    /*   // get the rotation matrix for a rotation of Pi around e_y */
-    /*   DenseMatrix<double> Ry = R_y(Pi); */
-      
-    /*   // now rotate the position vector */
-    /*   for(unsigned i=0; i<3; i++) */
-    /*   { */
-    /* 	for(unsigned j=0; j<3; j++) */
-    /* 	{ */
-    /* 	  x_rotated[i] += Ry(i,j)*x[j]; */
-    /* 	} */
-    /*   } */
-
-    /*   x = x_rotated; */
-    /* } */
     
     // x-y radius
     const double r = sqrt(x[0]*x[0] + x[1]*x[1]);
@@ -515,84 +490,13 @@ namespace FlatDiskExactSolutions
 
     // get the solution in cylindrical coords
     out_of_plane_rotation_solution_cylindrical(obl_sph_coords, u_cyl, p);
-    
-    // ### QUEHACERES delete
-    /* // oblate spheroidal coordinates */
-    /* double lambda = 0; */
-    /* double zeta   = 0; */
-    
-    /* // get 'em */
-    /* oblate_spheroidal_coordinates(r, z, lambda, zeta); */
-
-    /* double u_r = (2*cos(theta)/Pi) * lambda*zeta * */
-    /*   ( -acot(lambda) + (lambda / (lambda*lambda + zeta*zeta)) * */
-    /* 	(1 + (1 - zeta*zeta) / (1 + lambda*lambda) ) ); */
-    
-    /* double u_theta = (2*sin(theta)/Pi) * lambda*zeta * */
-    /*   ( acot(lambda) - lambda / (1 + lambda*lambda) ); */
-    
-    /* double u_z = (2*cos(theta)/Pi) * sqrt((1 - zeta*zeta)/(1+lambda*lambda)) * */
-    /*   ( (1+lambda*lambda)*acot(lambda) - */
-    /* 	lambda*(lambda*lambda - zeta*zeta) / (lambda*lambda + zeta*zeta) ); */
-    
-    /* double p = (8*cos(theta)/Pi) * sqrt((1 - zeta*zeta)/(1+lambda*lambda)) * */
-    /*   zeta / (lambda*lambda + zeta*zeta); */
 
     // convert
     u = velocity_cylindrical_to_cartesian(u_cyl[0], u_cyl[1], u_cyl[2], theta);
-
-    // ### QUEHACERES delete
-    /* if(in_lower_half_space) */
-    /* { */
-    /*   Vector<double> u_rotated(3, 0.0); */
-
-    /*   // get the rotation matrix for a rotation of -Pi around e_y */
-    /*   DenseMatrix<double> Ry = R_y(-Pi); */
-      
-    /*   // now rotate the velocity vector back again */
-    /*   for(unsigned i=0; i<3; i++) */
-    /*   { */
-    /* 	for(unsigned j=0; j<3; j++) */
-    /* 	{ */
-    /* 	  u_rotated[i] += Ry(i,j)*u[j]; */
-    /* 	} */
-    /*   } */
-
-    /*   u = u_rotated; */
-    /* } */
     
     // and add pressure to solution vector
     u.push_back(p);
   }
-
-  // //////////////////////////////////////////////////////////////////////////
-  // //////////////////////////////////////////////////////////////////////////
-
-  /* void poiseuille_solution_and_gradient(const Vector<double>& x, */
-  /* 					Vector<double>& u, */
-  /* 					DenseMatrix<double>& du_dx) */
-  /* { */
-  /*   double h = Global_Parameters::Box_half_height * 2; */
-  /*   double w = Global_Parameters::Box_half_width  * 2; */
-
-  /*   double xc = x[0] + w/2.0; */
-  /*   double z  = x[2] + h/2.0; */
-      
-  /*   u.resize(4); */
-
-  /*   // Poiseuille flow: ux = z(h-z) */
-  /*   u[0] = z * (h - z); */
-  /*   u[1] = 0; */
-  /*   u[2] = 0; */
-
-  /*   // constant pressure gradient across box     */
-  /*   u[3] = 2.0 * (w - xc); */
-    
-  /*   du_dx.resize(3,3,0); */
-
-  /*   // only non-zero velocity gradient is dux_dz */
-  /*   du_dx(0,2) = h - 2*z;  */
-  /* } */
 
   // //////////////////////////////////////////////////////////////////////////
   // //////////////////////////////////////////////////////////////////////////
@@ -657,180 +561,8 @@ namespace FlatDiskExactSolutions
     }
   }
 
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-  // QUEHACERES adding back in for debug of finite diff dudx
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-  void gupta_solution_and_gradient(const Vector<double>& x,
-				   Vector<double>& u_cartesian,
-				   DenseMatrix<double>& du_dx,
-				   const bool& is_lower_disk_element = false)
-  {
-    const double infinity = 103;
-
-    
-    // make enough space
-    u_cartesian.resize(4,0);
-    du_dx.resize(3,3,0);
-        
-    // cylindrical coordinates
-    double r   = sqrt(x[0]*x[0] + x[1]*x[1]);
-    double phi = atan2(x[1],x[0]);
-    double z   = x[2];
-    
-    double Pi = MathematicalConstants::Pi;
-    
-    // Gupta plate velocity (set to unity, scaling will be done externally)
-    double V = 1;
-
-    // plate radius
-    double a = 1;
-
-    // mass?
-    double M = 1;
-    
-    double p0 = 0;
-    
-    double tol = 1e-8;
-
-    // if this is a point sitting on the plate but the flag has been
-    // specified to say it's a lower disk element, then set the
-    // z coordinate to a very small negative number to handle the
-    // branch cut in the pressure above/below the disk
-    if(is_lower_disk_element && abs(z) < tol)
-    {
-      z = -tol;
-    }
-    
-    Vector<double> r_edge(3, 0.0);
-    r_edge[0] = cos(phi);
-    r_edge[1] = sin(phi);
-
-    Vector<double> rho_vec(3, 0.0);
-    for(unsigned i=0; i<3; i++)
-    {
-      rho_vec[i] = x[i] - r_edge[i];
-    }
-    
-    double rho = sqrt(pow(rho_vec[0],2) + pow(rho_vec[1],2) + pow(rho_vec[2],2));
-    
-    // catch the case of the very edge of the disk
-    tol = 1e-8;
-    if(rho < tol)
-    {
-      u_cartesian[2] = 0.0;
-      u_cartesian[3] = infinity;
-      return;
-    }
-    
-    // --------------------------------------------------------
-    // solution from Al Maskari report;
-    // mu and nu are oblate spheroidal coordinates
-    
-    std::complex<double> arg(r/a, z/a);
-    
-    double mu = std::real(acosh(arg));
-    double nu = std::imag(acosh(arg));
-
-    double ur = (2*V*sin(nu)*cos(nu)*pow(sinh(mu),2)) /
-      (Pi*cosh(mu)*(pow(sin(nu),2) + pow(sinh(mu),2) ));
-
-    double uz = (2*V*acot(sinh(mu)))/Pi + (2*V*pow(sin(nu),2)*sinh(mu)) /
-      (Pi*(pow(sin(nu),2) + pow(sinh(mu),2) ) );
-
-    double p = p0 + 4*M*V*sin(nu) / (Pi*a*(pow(sinh(mu),2) + pow(sin(nu),2)) );
-        
-    // convert to Cartesians (flow is axisymmetric so no azimuthal component)
-    u_cartesian[0] = ur * cos(phi);
-    u_cartesian[1] = ur * sin(phi);
-    u_cartesian[2] = uz;
-
-    u_cartesian[3] = p;
-    
-    // from mathematica
-    
-    double dmu_dz = -std::imag(std::complex<double>(1,0)/
-			       (a*sqrt(std::complex<double>(-a + r, z)/a)*
-				sqrt(std::complex<double>(a + r, z)/a)));
-   
-    double dnu_dz = std::real(std::complex<double>(1,0)/
-			      (a*sqrt(std::complex<double>(-a + r, z)/a)*
-			       sqrt(std::complex<double>(a + r, z)/a)));
-
-    double dmu_dr = std::real(std::complex<double>(1,0)/
-			      (a*sqrt(std::complex<double>(-a + r, z)/a)*
-			       sqrt(std::complex<double>(a + r, z)/a)));
-    double dnu_dr = std::imag(std::complex<double>(1,0)/
-			      (a*sqrt(std::complex<double>(-a + r,z)/a)*
-			       sqrt(std::complex<double>(a + r, z)/a)));
-    
-    // dux_dx
-    du_dx(0,0) = (V*(-(r*Power(Cos(phi),2)*Power(Sech(mu),2)*
-		       (Sin(4*nu)*(5*Sinh(mu) + Sinh(3*mu)) + 
-			Sin(2*nu)*(-7*Sinh(3*mu) + Sinh(5*mu)))*dmu_dr)/8. + 
-		     Sinh(mu)*Tanh(mu)*((-Cos(2*nu) + Cosh(2*mu))*Power(Sin(phi),2)*Sin(2*nu) + 
-					2*r*Power(Cos(phi),2)*(-1 + Cos(2*nu)*Cosh(2*mu))*dnu_dr)))/
-      (2.*Pi*r*Power(Power(Sin(nu),2) + Power(Sinh(mu),2),2));
-
-    // dux_dy
-    du_dx(0,1) = (V*Cos(phi)*Sin(phi)*(4*r*Cos(nu)*Sin(nu)*
-				       (-Power(Sinh(mu),3) + Sech(mu)*Power(Sin(nu),2)*Tanh(mu) + 
-					Sinh(mu)*(Power(Sin(nu),2) + Power(Tanh(mu),2)))*dmu_dr + 
-				       2*Sinh(mu)*Tanh(mu)*(-(Sin(2*nu)*(Power(Sin(nu),2) + Power(Sinh(mu),2))) + 
-							    r*(-1 + Cos(2*nu)*Cosh(2*mu))*dnu_dr)))/
-      (2.*Pi*r*Power(Power(Sin(nu),2) + Power(Sinh(mu),2),2));
-    
-    // dux_dz
-    du_dx(0,2) = (V*Cos(phi)*(2*Cos(nu)*Sin(nu)*(-Power(Sinh(mu),3) + 
-						 Sech(mu)*Power(Sin(nu),2)*Tanh(mu) + 
-						 Sinh(mu)*(Power(Sin(nu),2) + Power(Tanh(mu),2)))*dmu_dz + 
-			      (-1 + Cos(2*nu)*Cosh(2*mu))*Sinh(mu)*Tanh(mu)*dnu_dz))/
-      (Pi*Power(Power(Sin(nu),2) + Power(Sinh(mu),2),2));
-
-    // duy_dx
-    du_dx(1,0) = (V*Cos(phi)*Sin(phi)*(4*r*Cos(nu)*Sin(nu)*
-				       (-Power(Sinh(mu),3) + Sech(mu)*Power(Sin(nu),2)*Tanh(mu) + 
-					Sinh(mu)*(Power(Sin(nu),2) + Power(Tanh(mu),2)))*dmu_dr + 
-				       2*Sinh(mu)*Tanh(mu)*(-(Sin(2*nu)*(Power(Sin(nu),2) + Power(Sinh(mu),2))) + 
-							    r*(-1 + Cos(2*nu)*Cosh(2*mu))*dnu_dr)))/
-      (2.*Pi*r*Power(Power(Sin(nu),2) + Power(Sinh(mu),2),2));
-    
-    //duy_dy
-    du_dx(1,1) = (V*(-(r*Power(Sech(mu),2)*Power(Sin(phi),2)*
-		       (Sin(4*nu)*(5*Sinh(mu) + Sinh(3*mu)) + 
-			Sin(2*nu)*(-7*Sinh(3*mu) + Sinh(5*mu)))*dmu_dr)/8. + 
-		     Sinh(mu)*Tanh(mu)*(Power(Cos(phi),2)*(-Cos(2*nu) + Cosh(2*mu))*Sin(2*nu) + 
-					2*r*(-1 + Cos(2*nu)*Cosh(2*mu))*Power(Sin(phi),2)*dnu_dr)))/
-      (2.*Pi*r*Power(Power(Sin(nu),2) + Power(Sinh(mu),2),2));
-    
-    // duy_dz
-    du_dx(1,2) = (V*Sin(phi)*(2*Cos(nu)*Sin(nu)*(-Power(Sinh(mu),3) + 
-						 Sech(mu)*Power(Sin(nu),2)*Tanh(mu) + 
-						 Sinh(mu)*(Power(Sin(nu),2) + Power(Tanh(mu),2)))*dmu_dz + 
-			      (-1 + Cos(2*nu)*Cosh(2*mu))*Sinh(mu)*Tanh(mu)*dnu_dz))/
-      (Pi*Power(Power(Sin(nu),2) + Power(Sinh(mu),2),2));
-
-    // duz_dx
-    du_dx(2,0) = (2*V*Cos(phi)*Sinh(mu)*Tanh(mu)*((Power(Sin(nu),2)*(-3 + Power(Sin(nu),2)) - 
-						   (1 + Power(Sin(nu),2))*Power(Sinh(mu),2))*dmu_dr + 
-						  Cosh(mu)*Sin(2*nu)*Sinh(mu)*dnu_dr))/
-      (Pi*Power(Power(Sin(nu),2) + Power(Sinh(mu),2),2));
-    
-    // duz_dy
-    du_dx(2,1) = (2*V*Sin(phi)*Sinh(mu)*Tanh(mu)*((Power(Sin(nu),2)*(-3 + Power(Sin(nu),2)) - 
-						   (1 + Power(Sin(nu),2))*Power(Sinh(mu),2))*dmu_dr + 
-						  Cosh(mu)*Sin(2*nu)*Sinh(mu)*dnu_dr))/
-      (Pi*Power(Power(Sin(nu),2) + Power(Sinh(mu),2),2));
-    
-    // duz_dz
-    du_dx(2,2) = (-(V*Sinh(mu)*((5 + Cos(2*nu))*Power(Sin(nu),2) + 
-				2*(1 + Power(Sin(nu),2))*Power(Sinh(mu),2))*Tanh(mu)*dmu_dz) + 
-		  2*V*Sin(2*nu)*Power(Sinh(mu),3)*dnu_dz)/
-      (Pi*Power(Power(Sin(nu),2) + Power(Sinh(mu),2),2));
-  }
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-  // @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  // //////////////////////////////////////////////////////////////////////////////
+  // //////////////////////////////////////////////////////////////////////////////
   
   
   // sum the total contributions of all singular functions

@@ -37,26 +37,7 @@
 #include "chebyshev_gauss_integration.h"
 
 namespace oomph
-{
-
-  // ### QUEHACERES delete
-  /* // type to specify we're using the (\rho,\zeta,\phi) edge coordinate system */
-  /* // not the global Cartesian system */
-  /* struct EdgeCoordinates */
-  /* { */
-  /*   // default the coordinates to zero */
-  /* EdgeCoordinates() : rho(0.0), zeta(0.0), phi(0.0) { } */
-
-  /* EdgeCoordinates(const double& rho_, const double& zeta_, const double& phi_) : */
-  /*   rho(rho_), zeta(zeta_), phi(phi_) { } */
-    
-  /*   double rho; */
-  /*   double zeta; */
-  /*   double phi; */
-    
-  /*   static const unsigned ncoord = 3; */
-  /* }; */
-  
+{  
   //----------------------ONE DIMENSIONAL CIRCULAR (LINE) MESH-----------------
 
   //============================================================================
@@ -1015,12 +996,7 @@ namespace oomph
 	
       // set 'em
       for(unsigned i=0; i<nknot; i++)
-      {
-	Lagrangian_coordinates_at_knot[i] = coords[i];
-	// ### QUEHACERES delete, have a copy constructor now
-	/* Lagrangian_coordinates_at_knot[i].zeta = coords[i].zeta; */
-	/* Lagrangian_coordinates_at_knot[i].phi  = coords[i].phi; */
-      }     
+      	Lagrangian_coordinates_at_knot[i] = coords[i];          
     }
 
     // ========================================================================
@@ -3145,7 +3121,14 @@ namespace oomph
     {
       return Non_augmented_bulk_element_pt;
     }
-    
+
+    // switch on the warning about reducing locate zeta tolerance for finding
+    // this face element's knot points in the (non-augmented) bulk element
+    void warn_about_reducing_tolerance_for_bulk_locate_zeta()
+    {
+      Shut_up_about_reducing_tolerance_for_bulk_locate_zeta = false;
+    }
+      
   private:   
 
     /// \short Add the element's contribution to its residual vector.
@@ -3183,6 +3166,11 @@ namespace oomph
     /// the Lagrange multipliers which enforce continuity of the
     /// Lagrange multipliers which enforce the governing momentum PDEs
     unsigned Lambda_hat_hat_id;
+
+    /// Suppress warning message about having to reduce the locate zeta
+    /// tolerance after a failed attempt to locate one of this face element's
+    /// knot points in the corresponding (non-augmented) bulk element
+    bool Shut_up_about_reducing_tolerance_for_bulk_locate_zeta;
   }; 
 
   //===========================================================================
@@ -3206,7 +3194,8 @@ namespace oomph
 						  face_index,
 						  lambda_hat_id),
     Non_augmented_bulk_element_pt(non_augmented_bulk_el_pt),
-    Lambda_hat_hat_id(lambda_hat_hat_id)
+    Lambda_hat_hat_id(lambda_hat_hat_id), 
+    Shut_up_about_reducing_tolerance_for_bulk_locate_zeta(true)
   {   
     // Back up original nodes and make new ones
     unsigned nnod = this->nnode();
@@ -3675,17 +3664,20 @@ namespace oomph
 
       if (geom_object_pt == nullptr)
       {
-	oomph_info << "Warning: didn't find point: ";
+	if(!Shut_up_about_reducing_tolerance_for_bulk_locate_zeta)
+	{
+	  oomph_info << "Warning: didn't find point: ";
 	
-	for(double xi : x)
+	  for(double xi : x)
 	    oomph_info << xi << " ";
 
-	oomph_info << "\nin the non-augmented bulk element corresponding to "
-		   << "this StressJumpFaceElement with "
-		   << "Locate_zeta_helpers::Newton_tolerance = "
-		   << Locate_zeta_helpers::Newton_tolerance << ".\n"
-		   << "Trying again with tolerance: 1e-6..." << std::endl;
-	  
+	  oomph_info << "\nin the non-augmented bulk element corresponding to "
+		     << "this StressJumpFaceElement with "
+		     << "Locate_zeta_helpers::Newton_tolerance = "
+		     << Locate_zeta_helpers::Newton_tolerance << ".\n"
+		     << "Trying again with tolerance: 1e-6..." << std::endl;
+	}
+	
 	// backup the current tolerance
 	double locate_zeta_tol_backup = Locate_zeta_helpers::Newton_tolerance;
 
@@ -4789,15 +4781,6 @@ namespace oomph
       const Vector<double>& s, const unsigned& ipt,
       const bool& use_plot_points = false) const
     {
-      // ### keeping in atm for debug
-      // interpolate the position
-      Vector<double> x(DIM);
-	
-      for(unsigned i=0; i<DIM; i++)
-      {
-      	x[i] = this->interpolated_x(s,i);
-      }
-
       // get the interpolated FE bit
       Vector<double> u_fe = interpolated_u_fe_navier_stokes(s);
 
@@ -5117,48 +5100,12 @@ namespace oomph
 	Vector<unsigned> sing_ids = sing_el_pt->singular_fct_ids();
 
 	// now loop over the singular functions and output each contribution
-	for(unsigned sing_fct_id : sing_ids) // ### QUEHACERES delete unsigned ising=0; ising < sing_ids.size(); ising++)
-	{
-	  // ### QUEHACERES delete
-	  /* // get the ID */
-	  /* unsigned sing_fct_id = sing_ids[ising]; */
-	
+	for(unsigned sing_fct_id : sing_ids) 
+	{	
 	  // singular part of the solution
 	  Vector<double> u_sing = sing_el_pt->singular_fct(lagr_coords_at_plot,
 							   s_singular_el,
 							   sing_fct_id);
-
-	  // QUEHACERES debug
-	  bool is_finite = isfinite(u_sing[0]) && isfinite(u_sing[1])
-	    && isfinite(u_sing[2]) && isfinite(u_sing[3]);
-
-	  if(!is_finite)
-	  {
-	    ostringstream error_message;
-	    error_message << "\n-----------------------------\n"
-			  << "Error: found infinite value at plot point\n\n"
-			  << "Singular fct ID: " << sing_fct_id << "\n"
-			  << "Plot point: " << iplot << "\n"
-			  << "Lagrangian coordinates of plot point (xi1, xi2, xi3): "
-			  << lagr_coords_at_plot.xi1 << ", "
-			  << lagr_coords_at_plot.xi2 << ", "
-			  << lagr_coords_at_plot.xi3 << ")\n"
-			  << "u_sing = " << u_sing[0] << ", "
-			  << u_sing[1] << ", "
-			  << u_sing[2] << ", "
-			  << u_sing[3] << "\n"
-			  << std::endl;
-
-	    // QUEHACERES for debugger
-	    sing_el_pt->singular_fct(lagr_coords_at_plot,
-				     s_singular_el,
-				     sing_fct_id);
-	    
-	    throw OomphLibError(error_message.str(),
-				OOMPH_CURRENT_FUNCTION,
-				OOMPH_EXCEPTION_LOCATION);
-	  }
-	
 	  for(unsigned i=0; i<DIM+1; i++)
 	  {
 	    outfile << u_sing[i] << " ";
@@ -5302,14 +5249,7 @@ namespace oomph
       
       // set 'em
       for(unsigned i=0; i<n_node; i++)
-      {
 	Nodal_lagr_coordinates[i] = lagr_coords[i];
-
-	// ### QUEHACERES delete, have a copy constructor now
-	/* Nodal_lagr_coordinates[i].rho  = lagr_coords[i].rho; */
-	/* Nodal_lagr_coordinates[i].zeta = lagr_coords[i].zeta; */
-	/* Nodal_lagr_coordinates[i].phi  = lagr_coords[i].phi; */
-      }     
     }
 
     // ========================================================================
@@ -5348,11 +5288,6 @@ namespace oomph
       // The number of integration points (knots)
       const unsigned n_intpt = this->integral_pt()->nweight();
 
-      // QUEHACERES delete, constructor initialises to zero
-      /* interpolated_lagr_coords.rho  = 0.0; */
-      /* interpolated_lagr_coords.zeta = 0.0; */
-      /* interpolated_lagr_coords.phi  = 0.0; */
-	
       // loop over each node in this element and add its contribution to the
       // interpolated coordinates
       for(unsigned j=0; j<n_node; j++)
@@ -5364,11 +5299,6 @@ namespace oomph
 	interpolated_lagr_coords.xi1 += nodal_lagr_coords.xi1 * psi[j];
 	interpolated_lagr_coords.xi2 += nodal_lagr_coords.xi2 * psi[j];
 	interpolated_lagr_coords.xi3 += nodal_lagr_coords.xi3 * psi[j];
-
-	// ### QUEHACERES delete
-	/* interpolated_lagr_coords.rho  += nodal_lagr_coords.rho  * psi[j]; */
-	/* interpolated_lagr_coords.zeta += nodal_lagr_coords.zeta * psi[j]; */
-	/* interpolated_lagr_coords.phi  += nodal_lagr_coords.phi  * psi[j]; */
       }     
       
       return interpolated_lagr_coords;
@@ -5387,7 +5317,6 @@ namespace oomph
       std::pair<GeomObject*, Vector<double> > line_elem_and_local_coord = 
 	this->line_element_and_local_coordinate_at_node(inode);
 
-      // QUEHACERES avoid the hard coded template arg here
       // cast the GeomObject to a singular line element      
       sing_el_pt = dynamic_cast<SingularLineElement*>(line_elem_and_local_coord.first);
 
@@ -5933,8 +5862,7 @@ namespace oomph
 	// compute the derivatives of the functional we're trying to minimise
 	Vector<double> dfunctional_du(DIM, 0.0);
 
-	// QUEHACERES sort this out when we have a proper mesh for this
-	/* // have we actually got a function pointer for dPi/du? */	
+	// have we actually got a function pointer for dPi/du? */	
 	if(Dfunctional_du_fct_pt != nullptr)
 	{
 	  dfunctional_du = Dfunctional_du_fct_pt(interpolated_u);
@@ -6225,8 +6153,8 @@ namespace oomph
 	    if(Is_augmented_element)
 	    {
 	      // add the pressure penalty term from the functional to be minimised
-	      // QUEHACERES do this properly at some point, don't get it from a global variable!!
-	      residuals[local_eqn] += Pressure_regularisation_factor * interpolated_p * psip[k] * W;
+	      residuals[local_eqn] +=
+		Pressure_regularisation_factor * interpolated_p * psip[k] * W;
 	    }
 	    
 	    //Loop over velocity components
@@ -6685,7 +6613,7 @@ namespace oomph
     /// in the augmented region in the functional to be minimised
     double Pressure_regularisation_factor;
 
-    /// QUEHACERES trying this one too
+    /// \short scaling factor for 
     double Velocity_regularisation_factor;
 
     double random_var_to_alter_mem_map;

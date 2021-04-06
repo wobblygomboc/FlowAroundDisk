@@ -467,40 +467,7 @@ namespace oomph
 
  
   private:
-   
-    /* /// Vertical deflection */
-    /* double w(const double& r, const double& phi) const */
-    /* { */
-    /*   return Epsilon*cos(double(N)*phi)*pow(r,2); */
-    /* } */
-
-    /* /// Deriv of vertical deflection w.r.t. radius */
-    /* double dwdr(const double& r, const double& phi) const */
-    /* { */
-    /*   return Epsilon*cos(double(N)*phi)*2.0*r; */
-    /* } *
-
-    /* /// Deriv of vertical deflection w.r.t. angle */
-    /* double dwdphi(const double& r, const double& phi) const */
-    /* { */
-    /*   return -Epsilon*double(N)*sin(double(N)*phi)*pow(r,2); */
-    /* } */
-
-    /* double d2wdr2(const double& r, const double& phi) const */
-    /* { */
-    /*   return Epsilon*cos(double(N)*phi)*2.0; */
-    /* } */
-
-    /* double d2wdrdphi(const double& r, const double& phi) const */
-    /* { */
-    /*   return -Epsilon*(double(N))*sin(double(N)*phi)*2.0*r; */
-    /* } */
-
-    /* double d2wdphi2(const double& r, const double& phi) const */
-    /* { */
-    /*   return -Epsilon*pow(double(N),2)*cos(double(N)*phi)*pow(r,2); */
-    /* } */
-
+  
     /// Radius of curvature (x-z plane)
     double R;
   };
