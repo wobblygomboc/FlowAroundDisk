@@ -3,6 +3,85 @@
 
 #include "external_src/oomph_superlu_4.3/slu_ddefs.h"
 
+template <class ELEMENT>
+void FlowAroundDiskProblem<ELEMENT>::read_and_recompute_singular_drag(
+  const std::string& filename) const
+{
+  oomph_info << "Reading singular amplitudes..." << std::endl;
+  std::ifstream some_file;
+  some_file.open(filename);
+
+  std::string line;
+  
+  unsigned line_counter = 0;
+  
+  while(std::getline(some_file, line))
+  {
+    // ignore zone info
+    if(line_counter % 6 == 0)
+    {
+      line_counter++;
+      continue;
+    }
+    // skip every other line (assumes nplot=5)
+    if(line_counter % 2 == 0)
+    {
+      line_counter++;
+      continue;
+    }
+    
+    std::istringstream iss(line);
+
+    // read the data in
+    Vector<double> amplitude_data(12, 0.0);
+    for(unsigned i=0; i<12; i++)
+    {
+      iss >> amplitude_data[i];
+    }
+
+    unsigned elem_number = line_counter / 6;
+    FiniteElement* elem_pt = dynamic_cast<FiniteElement*>(
+      Singular_fct_element_mesh_pt->element_pt(elem_number));
+
+    unsigned node_number = (line_counter % 6) / 2;
+    Node* node_pt = elem_pt->node_pt(node_number);
+
+    /* oomph_info << "Element number: " << elem_number << ", " */
+    /* 	       << "Node number: " << node_number << std::endl; */
+    for(unsigned i=0; i<4; i++)
+      node_pt->set_value(i, amplitude_data[4+i]);
+
+    line_counter++;
+  }
+  
+  some_file.close();
+
+  oomph_info << "Re-computing singular drag..." << std::endl;
+  
+  // compute the contribution of the singular functions to the
+  // total drag
+  Vector<double> sing_drag_upper(Dim, 0.0), sing_drag_lower(Dim, 0.0),
+    sing_torque_upper(Dim, 0.0), sing_torque_lower(Dim, 0.0);
+
+  Vector<double> centre_of_mass(Dim, 0.0);
+  
+  Singular_drag_elements[0]->compute_total_singular_drag_and_torque(centre_of_mass,
+								    sing_drag_upper,
+								    sing_torque_upper);
+  
+  Singular_drag_elements[1]->compute_total_singular_drag_and_torque(centre_of_mass,
+								    sing_drag_lower,
+								    sing_torque_lower);
+
+  oomph_info << "Total singular drag: ";
+  for(unsigned i=0; i<3; i++)
+  {    
+    oomph_info << sing_drag_upper[i] + sing_drag_lower[i] << " ";
+  }
+  oomph_info << std::endl;
+}
+
+
 //== start of output_submesh_pin_status ==================================
 /// Function to output the pin status of each nodal dof in each submesh
 //========================================================================
@@ -221,6 +300,7 @@ void FlowAroundDiskProblem<ELEMENT>::set_values_to_exact_non_singular_solution()
       Vector<double> u(4, 0.0);
       FlatDiskExactSolutions::total_exact_solution(x, Global_Parameters::u_disk_rigid_translation, 
 						   Global_Parameters::omega_disk,
+						   Global_Parameters::rotation_matrix,
 						   u);
       // set the velocities
       for(unsigned i=0; i<3; i++)
@@ -260,19 +340,25 @@ void FlowAroundDiskProblem<ELEMENT>::set_values_to_exact_non_singular_solution()
 						line_element_and_local_coord);
 
       // cast the GeomObject to a singular line element      
-      ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>* sing_el_pt =
-	dynamic_cast<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>*>
-	(line_element_and_local_coord.first);
+      auto sing_el_pt = 
+	dynamic_cast<SingularLineElement*>(line_element_and_local_coord.first);
 
       // local coordinate in the singular element for the zeta of this plot point
       Vector<double> s_singular_el = line_element_and_local_coord.second;
 
+      // now account for any slight effects of the non-infinite cuvature
+      // which might cause the sign of z to flip from the lower to the upper disk
+      // by catching the case where the Lagrangian xi3 coordinate is negative
+      // but z has sneaked over 0
+      if(x[2] > 0 && lagr_coords.sign_of_xi3() < 0)
+	x[2] = -1e-9;
       
       // get the total solution at this point (in the bulk, so
       // the FE solution is the total solution)
       Vector<double> u_total(4, 0.0);
       FlatDiskExactSolutions::total_exact_solution(x, Global_Parameters::u_disk_rigid_translation, 
 						   Global_Parameters::omega_disk,
+						   Global_Parameters::rotation_matrix,
 						   u_total);
 
       
@@ -280,10 +366,12 @@ void FlowAroundDiskProblem<ELEMENT>::set_values_to_exact_non_singular_solution()
       Vector<double> u_sing_total =
 	sing_el_pt->total_singular_contribution(lagr_coords,
 						s_singular_el);
-      
-      // set the velocities to the non-singular bit
+
+      // QUEHACERES leave velocities at zero for now, i.e. assuming we've
+      // got the correct singular amplitude
+      /* // set the velocities to the non-singular bit */
       for(unsigned i=0; i<3; i++)
-	node_pt->set_value(i, u_total[i] - u_sing_total[i]);
+      	node_pt->set_value(i, u_total[i] - u_sing_total[i]);
 
       // set the pressure if it's there (if there are only velocities and
       // corresponding Lagrange multipliers there will be an odd number of values)
@@ -320,7 +408,11 @@ void FlowAroundDiskProblem<ELEMENT>::validate_singular_stress() const
 	     << "-----------------------------\n" << std::endl;
 
   double t_start = TimingHelpers::timer();
-  
+
+  // set the singular amplitudes to their analytic values
+  impose_fake_singular_amplitude();
+
+  // QUEHACERES delete?
   set_values_to_singular_solution();
   
   char filename[500];
@@ -348,7 +440,7 @@ void FlowAroundDiskProblem<ELEMENT>::validate_singular_stress() const
   // number of plot points per side
   unsigned nplot = Global_Parameters::Nplot_for_bulk;
 
-  oomph_info << "Computing singular and 'FE' stress...\n";
+  oomph_info << "Computing singular analytic and finite-diff stress...\n";
 
   // loop over all the elements in the torus region to compute the error in the stress
   const unsigned nel = Bulk_mesh_pt->nregion_element(Torus_region_id);
@@ -402,70 +494,45 @@ void FlowAroundDiskProblem<ELEMENT>::validate_singular_stress() const
       // get the Lagrangian (xi1,xi2,xi3) coordinates at this knot
       LagrangianCoordinates lagr_coords = elem_pt->lagr_coordinate_at_plot_point(iplot);
       
-      // get the total singular contribution at this point
-      Vector<double> u_sing_total =
-	sing_el_pt->total_singular_contribution(lagr_coords,
-						line_elem_and_local_coord.second);
+      DenseMatrix<double> stress_sing(3,3, 0.0);
 
-      // catch the case where we're sat exactly at the singularity
-      const double tol = 1e-5;
-      const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
-	1.0 - 1e-6 : lagr_coords.xi1;
-    
-      // convert the Lagrangian curvilinear coordinates into 'flat'
-      // oblate spheroidal coordinates
-      OblateSpheroidalCoordinates obl_sph_coords(xi1, lagr_coords.xi3);
+      // get the singular stress from the line element
+      sing_el_pt->total_singular_stress(lagr_coords, line_elem_and_local_coord.second, stress_sing);
+      
+      Vector<double> u_exact(4, 0.0);
+      Analytic_Functions::exact_solution_flat_disk(x, u_exact);
 
-      // velocity components in 'cylindrical' coordinates (r, theta, z)
-      Vector<double> u_lagr(3, 0.0);
+      DenseMatrix<double> du_dx_fd(3,3,0.0);
 
-      // pressure
-      double p_sing = 0.0;
-    
-      // get the flat disk solution
-      FlatDiskExactSolutions::broadside_translation_solution_cylindrical(obl_sph_coords,
-									 u_lagr, p_sing);
-
-      DenseMatrix<double> du_cyl_doblate_sph;
-      SingularFunctions::du_broadside_cylindrical_doblate_sph(lagr_coords,
-							      du_cyl_doblate_sph);
-	
-      // get the singular velocity gradient
-      DenseMatrix<double> du_dx_sing(dim, dim, 0.0);
-
-      SingularFunctions::du_sing_dx_eulerian(lagr_coords, u_lagr,
-					     du_cyl_doblate_sph, du_dx_sing);
-	
-      // compute the singular strain rate
-      DenseMatrix<double> strain_rate_sing(dim, dim, 0.0);
-
-      for(unsigned i=0; i<dim; i++)
+      const double fd_dx = 1e-8;
+      
+      // now compute the solution at a small increment in each Cartesian direction
+      for(unsigned j=0; j<3; j++)
       {
-	for(unsigned j=0; j<dim; j++)
-	{
-	  strain_rate_sing(i,j) = 0.5*(du_dx_sing(i,j) + du_dx_sing(j,i));
-	}
+	// coordinate vectors with increments applied to their components
+	Vector<double> x_plus_dx = x;
+
+	// add the increments in each direction
+	x_plus_dx[j] += fd_dx;
+
+	Vector<double> u_exact_plus_dx(3, 0.0);
+	Analytic_Functions::exact_solution_flat_disk(x_plus_dx, u_exact_plus_dx);
+
+	for(unsigned i=0; i<3; i++)
+	  du_dx_fd(i,j) = (u_exact_plus_dx[i] - u_exact[i]) / fd_dx;
       }
 
-      // get the singular stress
-      DenseMatrix<double> stress_sing(dim, dim, 0.0);
-      stress_sing = Analytic_Functions::stress(strain_rate_sing, p_sing);
+      DenseMatrix<double> stress_exact(3,3,0.0);
+      for(unsigned i=0; i<3; i++)
+      {
+	for(unsigned j=0; j<3; j++)
+	{
+	  if(i==j)
+	    stress_exact(i,j) -= u_exact[3];
 
-      // -----------------------------------------
-      // "FE" stuff
-      // -----------------------------------------
-
-      // FE pressure
-      double p_fe = elem_pt->interpolated_p_nst(s);
-      
-      // compute the "FE" strain-rate
-      DenseMatrix<double> strain_rate_fe(dim, dim, 0.0);
-
-      elem_pt->strain_rate(s, strain_rate_fe);
-
-      // compute the "FE" stress
-      DenseMatrix<double> stress_fe(dim, dim, 0.0);
-      stress_fe = Analytic_Functions::stress(strain_rate_fe, p_fe);
+	  stress_exact(i,j) += du_dx_fd(i,j) + du_dx_fd(j,i);
+	}
+      }
 
       // -----------------------------------------
       // Error
@@ -477,7 +544,7 @@ void FlowAroundDiskProblem<ELEMENT>::validate_singular_stress() const
 	for(unsigned j=0; j<dim; j++)
 	{
 	  // compute the error between the interpolated "FE" stress and the exact singular stress
-	  double error = stress_fe(i,j) - stress_sing(i,j);
+	  double error = /* stress_fe(i,j) */ stress_exact(i,j) - stress_sing(i,j);
 
 	  // output it
 	  stress_error_output       << error << " ";
@@ -500,14 +567,11 @@ void FlowAroundDiskProblem<ELEMENT>::validate_singular_stress() const
       {
       	for(unsigned j=0; j<dim; j++)
       	{
-      	  stress_error_output       << stress_fe(i,j) << " ";
-      	  stress_error_output_plain << stress_fe(i,j) << " ";
+      	  stress_error_output       << stress_exact(i,j) /* stress_fe(i,j) */ << " ";
+      	  stress_error_output_plain << stress_exact(i,j) /* stress_fe(i,j) */ << " ";
       	}
       }
 
-      stress_error_output       << p_sing;
-      stress_error_output_plain << p_sing;
-      
       stress_error_output       << std::endl;
       stress_error_output_plain << std::endl;
       
@@ -533,32 +597,101 @@ void FlowAroundDiskProblem<ELEMENT>::validate_singular_stress() const
 /// Set the singular amplitude to a prescribed value and bypass the proper calculation
 //========================================================================
 template <class ELEMENT>
+Vector<std::pair<unsigned, double>> FlowAroundDiskProblem<ELEMENT>::
+  compute_singular_amplitudes_from_disk_velocity(const double& zeta) const
+{
+  using namespace Global_Parameters;
+    
+  // broadside speed is the z-velocity component
+  double u_broadside =  u_disk_rigid_translation[2];
+    
+  // in-plane speed is the magnitude of the x-y velocity
+  double u_in_plane = sqrt( pow(u_disk_rigid_translation[0], 2) +
+			    pow(u_disk_rigid_translation[1], 2) );
+
+  // azimuthal angle of the in-plane translation vector
+  double zeta_translation = atan2pi(u_disk_rigid_translation[1],
+				    u_disk_rigid_translation[0]);
+  
+  // azimuthal angle of the out-of-plane rotation vector
+  double zeta_rotation = atan2pi(omega_disk[1],
+				 omega_disk[0]);
+
+  // magnitude of the out-of-plane rotation vector
+  double omega_out_of_plane = sqrt(pow(omega_disk[0], 2) +
+				   pow(omega_disk[1], 2));
+    
+  // broadside amplitude is the broadside translation plus the
+  // modulated contribution from out-of-plane rotations (with the factor of 2
+  // which appears for the out-of-plane solution to be locally equivalent
+  // to broadside motion)
+  double c_broadside = u_broadside + // 2 * omega_out_of_plane * sin(zeta - zeta_rotation);
+    2.0 * omega_out_of_plane * (cos(zeta) + sin(zeta));
+
+  double c_broadside_rotation = -omega_out_of_plane * sin(zeta) / sqrt(2);
+
+  double c_broadside_rotation_no_az = omega_out_of_plane * cos(zeta);
+  double c_broadside_rotation_az = omega_out_of_plane * sin(zeta);
+
+  // ### QUEHACERES 
+  /* // in-plane amplitude is the in-plane speed modulated by */
+  /* // an in-phase function of the angle of this point relative to the */
+  /* // translation vector */
+  /* double c_in_plane = u_in_plane * sqrt(2) * cos(zeta) * cos(zeta_rotation); */
+    
+  // in-plane rotation amplitude is the in-plane speed modulated by
+  // a function pi/2 out of phase with the angle of this point relative to the
+  // translation vector
+  double c_in_plane_rotation = u_in_plane * (-sin(zeta) +
+					     cos(zeta)) * cos(zeta_translation) +
+    omega_disk[2];
+
+  double c_in_plane_az    = sin(zeta) * u_in_plane;
+  double c_in_plane_no_az = cos(zeta) * u_in_plane;
+    
+  // now package them up for return
+  Vector<std::pair<unsigned,double>> amplitudes(4);
+
+  // QUEHACERES 
+  /* amplitudes[0] = std::make_pair(Sing_fct_id_broadside, c_broadside); */
+  amplitudes[0] = std::make_pair(Sing_fct_id_broadside_rotation_no_az,
+				 c_broadside_rotation_no_az);
+  amplitudes[1] = std::make_pair(Sing_fct_id_broadside_rotation_az_only,
+				 c_broadside_rotation_az);
+  amplitudes[2] = std::make_pair(Sing_fct_id_in_plane_no_az,
+				 c_in_plane_no_az); // QUEHACERES c_in_plane;
+  amplitudes[3] = std::make_pair(Sing_fct_id_in_plane_az_only,
+				 c_in_plane_az); // QUEHACERES c_in_plane_rotation;
+  
+  return amplitudes;
+}
+
+
+//==start_of_impose_fake_singular_amplitude===============================
+/// Set the singular amplitude to a prescribed value and bypass the proper calculation
+//========================================================================
+template <class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::
-impose_fake_singular_amplitude(const bool& impose_zero_amplitude)
+impose_fake_singular_amplitude(const bool& impose_zero_amplitude) const
 {
   // tell all the elements in the singular element mesh about the fake
   // amplitude to impose
   for(unsigned e=0; e<Singular_fct_element_mesh_pt->nelement(); e++)
   {    
     // get a pointer to this singular line element in the upper mesh
-    ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>* sing_el_pt =
-      dynamic_cast<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>*>(
-	Singular_fct_element_mesh_pt->element_pt(e));
+    auto sing_el_pt =
+      dynamic_cast<SingularLineElement*>(Singular_fct_element_mesh_pt->element_pt(e));
 
-    // defaults here are so if we're subtracting the exact solution
-    // we get the right amplitudes (the exact in-plane already has the azimuthal/rotational
-    // bit built in, so the default amplitude for this should be zero)
-    Vector<double> amplitude_broadside(sing_el_pt->nnode(), 1.0);
+    // if we just want to zero out all the amplitudes, do it and don't mess around
+    // computing anything else
+    if(impose_zero_amplitude)
+    {
+      sing_el_pt->impose_zero_singular_amplitude();
+      continue;
+    }
 
-    Vector<double> amplitude_broadside_rotation(sing_el_pt->nnode(), 0.0);
-    
-    // Global_Parameters::Imposed_singular_amplitude_broadside);
-    Vector<double> amplitude_in_plane(sing_el_pt->nnode(), 1.0);
-    
-    // Global_Parameters::Imposed_singular_amplitude_in_plane);
-
-    // same amplitude as for the in-plane, but will be modulated pi/2 out of phase
-    Vector<double> amplitude_in_plane_rotation(sing_el_pt->nnode(), 0.0);
+    // map from singular function ID to a vector of the corresponding nodal amplitudes
+    std::map<unsigned, Vector<double>> sing_id_to_nodal_amplitudes_map;
     
     // now loop over the nodes and modulate the in-plane amplitude
     // by the azimuthal angle of each
@@ -568,45 +701,29 @@ impose_fake_singular_amplitude(const bool& impose_zero_amplitude)
       double zeta = sing_el_pt->zeta_nodal(j,0,0);
 
       // compute the amplitudes, initially set to zero
-      Vector<double> amplitudes(Nsingular_function, 0.0);
+      Vector<std::pair<unsigned, double>> ids_and_amplitudes;
 
-      if(!impose_zero_amplitude)
-      {
-	amplitudes =
-	  Global_Parameters::compute_singular_amplitudes_from_disk_velocity(zeta);
-      }
-
-      // interpret the vector
-      amplitude_broadside[j]          = amplitudes[0];
-      amplitude_broadside_rotation[j] = amplitudes[1];
-      amplitude_in_plane[j]           = amplitudes[2];
-      amplitude_in_plane_rotation[j]  = amplitudes[3];
-
-      if(CommandLineArgs::command_line_flag_has_been_set("--set_sing_amplitude_broadside"))
-	amplitude_broadside[j] = Global_Parameters::Imposed_singular_amplitude_broadside;
-    }
-
-    if(!CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution"))
-    {
-      sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_broadside_rotation,
-						amplitude_broadside_rotation);
+      ids_and_amplitudes = compute_singular_amplitudes_from_disk_velocity(zeta);
       
-      sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane_rotation,
-						amplitude_in_plane_rotation);      
+      // add to the list
+      for(std::pair<unsigned,double>& id_amplitude_pair : ids_and_amplitudes)
+      {
+	sing_id_to_nodal_amplitudes_map[id_amplitude_pair.first].push_back(id_amplitude_pair.second);
+      }
     }
 
-    // pin the broadside singular function dof and set its amplitude to the
-    // imposed amplitude
-    sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_broadside,
-					      amplitude_broadside);
-    
-    // pin the in-plane translation and rotation singular function dofs
-    // and set their amplitude to the imposed amplitude
-    sing_el_pt->impose_singular_fct_amplitude(Sing_fct_id_in_plane,
-    					      amplitude_in_plane);
+    // now tell the singular elements about them
+    for(auto const& id_amplitudes_pair : sing_id_to_nodal_amplitudes_map)
+    {
+      sing_el_pt->impose_singular_fct_amplitude(id_amplitudes_pair.first,
+						id_amplitudes_pair.second);
+    }
   }  
 }
 
+//==start_of_pin_singular_function========================================
+/// Set (and pin) a particular singular amplitude to a prescribed value
+//========================================================================
 template <class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::pin_singular_function(const unsigned& sing_fct_id,
 							   const double& val)
@@ -616,9 +733,8 @@ void FlowAroundDiskProblem<ELEMENT>::pin_singular_function(const unsigned& sing_
   for(unsigned e=0; e<nel; e++)
   {
     // get a pointer to this singular line element in the upper mesh
-    ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>* sing_el_pt =
-      dynamic_cast<ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>*>(
-	Singular_fct_element_mesh_pt->element_pt(e));
+    auto sing_el_pt =
+      dynamic_cast<SingularLineElement*>(Singular_fct_element_mesh_pt->element_pt(e));
 
     Vector<double> amplitude(sing_el_pt->nnode(), val);
     
@@ -777,6 +893,7 @@ void FlowAroundDiskProblem<ELEMENT>::validate_exact_solution_divergence() const
       FlatDiskExactSolutions::total_exact_velocity_gradient(x,
 							    Global_Parameters::u_disk_rigid_translation,
 							    Global_Parameters::omega_disk,
+							    Global_Parameters::rotation_matrix,
 							    du_dx);
 
       // compute the divergence at this point
@@ -983,8 +1100,8 @@ void FlowAroundDiskProblem<ELEMENT>::fsi_residual_sweep()
 
     Vector<double> centre_of_rotation_dummy(3, 0.0);
     Vector<double> residuals;
-    get_total_disk_force_and_moment_residuals(centre_of_rotation_dummy,
-					      residuals);
+    get_total_disk_force_and_torque(centre_of_rotation_dummy,
+				    residuals);
 
     res.push_back(residuals[0]);
   }

@@ -94,6 +94,55 @@ std::complex<_Tp> acosh(const std::complex<_Tp>& __z)
 
 #endif
 
+/// Rotation matrix for right-handed rotation of theta about e_x
+DenseMatrix<double> R_x(const double& theta)
+{  
+  DenseMatrix<double> R(3,3,0.0);
+  R(0,0) = 1;
+  R(1,1) = cos(theta);
+  R(1,2) = -sin(theta);
+  R(2,1) = sin(theta);
+  R(2,2) = cos(theta);
+
+  return R;
+}
+
+/// Rotation matrix for right-handed rotation of theta about e_y
+DenseMatrix<double> R_y(const double& theta)
+{  
+  DenseMatrix<double> R(3, 3, 0.0);
+  R(0,0) = cos(theta);
+  R(0,2) = sin(theta);
+  R(1,1) = 1;
+  R(2,0) = -sin(theta);
+  R(2,2) = cos(theta);
+
+  return R;
+}
+
+/// Rotation matrix for right-handed rotation of theta about e_z
+DenseMatrix<double> R_z(const double& theta)
+{  
+  DenseMatrix<double> R(3, 3, 0.0);
+  R(0,0) = cos(theta);
+  R(0,1) = -sin(theta);
+  R(1,0) = sin(theta);
+  R(1,1) = cos(theta);
+  R(2,2) = 1;
+
+  return R;
+}
+
+DenseMatrix<double> identity_matrix()
+{
+  DenseMatrix<double> M(3, 3, 0.0);
+
+  for(unsigned i=0; i<3; i++)
+    M(i,i) = 1.0;
+
+  return M;
+}
+
 struct OblateSpheroidalCoordinates
 {
   // default constructor that initialises everything to zero
@@ -142,11 +191,55 @@ OblateSpheroidalCoordinates(const OblateSpheroidalCoordinates& oblate_sph_coords
     {
       return std::signbit(z) ? -1 : 1;
     }
-  
-    // returns matrix of the derivatives of the oblate spheroidal coordinates
-    // (lambda, zeta, theta) w.r.t. the cylindrical coordinates (r,theta,z)
-    void doblate_spheroidal_dcylindrical(DenseMatrix<double>& dobl_sph_dcyl)
+
+  // returns matrix of the derivatives of the oblate spheroidal coordinates
+  // (lambda, zeta, theta) w.r.t. the cylindrical coordinates (r,theta,z)
+  // Matrix is: d(lambda,zeta,theta)/d(r,theta,z) (note order of theta)
+  // Computed by finite difference
+  void doblate_spheroidal_dcylindrical_by_fd(DenseMatrix<double>& dobl_sph_dcyl)
     {
+      const int sign = sign_of_z();
+      
+      // finite-diff step in the cylindrical coordinate
+      // (in the appropriate direction to avoid crossing the x-y plane)
+      const double fd_step = 1e-8 * (double)(sign);
+
+      // make space
+      dobl_sph_dcyl.resize(3, 3, 0.0);
+
+      // take the finite diff steps in the cyclindrical coordinates
+      OblateSpheroidalCoordinates obl_sph_plus_dr(r+fd_step, z);
+      OblateSpheroidalCoordinates obl_sph_plus_dz(r, z+fd_step);
+
+      // N.B. lambda is non-negative, so no direction correction
+      
+      // dlambda/dr
+      dobl_sph_dcyl(0,0) = /* (double)(sign) * */ (obl_sph_plus_dr.lambda - lambda)/fd_step;
+
+      // dlambda/dz
+      dobl_sph_dcyl(0,2) = /* (double)(sign) *  */(obl_sph_plus_dz.lambda - lambda)/fd_step;
+      
+      // dzeta/dr
+      dobl_sph_dcyl(1,0) = (double)(sign) * (obl_sph_plus_dr.zeta - zeta)/fd_step;
+
+      // dzeta/dz
+      dobl_sph_dcyl(1,2) = (double)(sign) * (obl_sph_plus_dz.zeta - zeta)/fd_step;
+
+      // oblate spheroidal coords are orthogonal, so only nonzero theta
+      // derivative is theta
+      
+      //dtheta/dtheta
+      dobl_sph_dcyl(2,1) = 1.0;
+    }
+  
+  // returns matrix of the derivatives of the oblate spheroidal coordinates
+  // (lambda, zeta, theta) w.r.t. the cylindrical coordinates (r,theta,z)
+  void doblate_spheroidal_dcylindrical(DenseMatrix<double>& dobl_sph_dcyl)
+    {
+      //* / QUEHACERES redirect for now */
+      /* doblate_spheroidal_dcylindrical_by_fd(dobl_sph_dcyl); */
+      /* return; */
+      
       dobl_sph_dcyl.resize(3, 3, 0.0);
 
       // --------------------
@@ -179,20 +272,20 @@ OblateSpheroidalCoordinates(const OblateSpheroidalCoordinates& oblate_sph_coords
       // --------------------
       // dlambda/dz
       dobl_sph_dcyl(0,2) = (Cosh(Log(Power(r,2) + Power(z,2) + 
-		  Sqrt(Power(-1 + r,2) + Power(z,2))*
-		  Sqrt(Power(1 + r,2) + Power(z,2)) + 
-		  2*Power(Power(-1 + r,2) + Power(z,2),0.25)*
-		  Power(Power(1 + r,2) + Power(z,2),0.25)*
-		  (r*Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) + 
-		   z*Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.)))/2.)*
-	 (z*Power(Power(-1 + r,2) + Power(z,2),0.25)*
-	  Power(Power(1 + r,2) + Power(z,2),0.25)*
-	  (1 + Power(r,2) + Power(z,2) + 
-	   Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2)))
-	  + 2*r*z*(Power(r,2) + Power(z,2))*
-	  Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) + 
-	  (1 - Power(r,2) + (3 + 2*Power(r,2))*Power(z,2) + 2*Power(z,4))*
-	  Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.)))/
+				     Sqrt(Power(-1 + r,2) + Power(z,2))*
+				     Sqrt(Power(1 + r,2) + Power(z,2)) + 
+				     2*Power(Power(-1 + r,2) + Power(z,2),0.25)*
+				     Power(Power(1 + r,2) + Power(z,2),0.25)*
+				     (r*Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) + 
+				      z*Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.)))/2.)*
+			    (z*Power(Power(-1 + r,2) + Power(z,2),0.25)*
+			     Power(Power(1 + r,2) + Power(z,2),0.25)*
+			     (1 + Power(r,2) + Power(z,2) + 
+			      Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2)))
+			     + 2*r*z*(Power(r,2) + Power(z,2))*
+			     Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) + 
+			     (1 - Power(r,2) + (3 + 2*Power(r,2))*Power(z,2) + 2*Power(z,4))*
+			     Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.)))/
 	(Power(Power(-1 + r,2) + Power(z,2),0.75)*
 	 Power(Power(1 + r,2) + Power(z,2),0.75)*
 	 (Power(r,2) + Power(z,2) + 
@@ -205,18 +298,18 @@ OblateSpheroidalCoordinates(const OblateSpheroidalCoordinates& oblate_sph_coords
       // --------------------
       // dzeta/dr
       dobl_sph_dcyl(1,0) = (-(r*z*Power(Power(-1 + r,2) + Power(z,2),0.25)*
-	   Power(Power(1 + r,2) + Power(z,2),0.25)*
-	   (1 + 2*Power(r,2) + 2*Power(z,2) + 
-	    2*Sqrt(Power(-1 + r,2) + Power(z,2))*
-	    Sqrt(Power(1 + r,2) + Power(z,2)))) - 
-	 z*(3*Power(r,4) + (1 + Power(z,2))*
-	    (1 + Power(z,2) + Sqrt(Power(-1 + r,2) + Power(z,2))*
-	     Sqrt(Power(1 + r,2) + Power(z,2))) + 
-	    Power(r,2)*(-2 + 4*Power(z,2) + 
-			Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2))
-	      ))*Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) + 
-	 r*(-1 + Power(r,2) - (3 + 2*Power(r,2))*Power(z,2) - 2*Power(z,4))*
-	 Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.))/
+			      Power(Power(1 + r,2) + Power(z,2),0.25)*
+			      (1 + 2*Power(r,2) + 2*Power(z,2) + 
+			       2*Sqrt(Power(-1 + r,2) + Power(z,2))*
+			       Sqrt(Power(1 + r,2) + Power(z,2)))) - 
+			    z*(3*Power(r,4) + (1 + Power(z,2))*
+			       (1 + Power(z,2) + Sqrt(Power(-1 + r,2) + Power(z,2))*
+				Sqrt(Power(1 + r,2) + Power(z,2))) + 
+			       Power(r,2)*(-2 + 4*Power(z,2) + 
+					   Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2))
+				 ))*Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) + 
+			    r*(-1 + Power(r,2) - (3 + 2*Power(r,2))*Power(z,2) - 2*Power(z,4))*
+			    Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.))/
 	(Power(Power(-1 + r,2) + Power(z,2),0.75)*
 	 Power(Power(1 + r,2) + Power(z,2),0.75)*
 	 Power(Power(r + Power(Power(-1 + r,2) + Power(z,2),0.25)*
@@ -229,28 +322,28 @@ OblateSpheroidalCoordinates(const OblateSpheroidalCoordinates& oblate_sph_coords
       // --------------------
       // dzeta_dz
       dobl_sph_dcyl(1,2) = (4*Power(r,6) + (1 + Power(z,2))*
-	 (-1 - Power(z,2) + Sqrt(Power(-1 + r,2) + Power(z,2))*
-	  Sqrt(Power(1 + r,2) + Power(z,2))) + 
-	 Power(r,4)*(-9 + 8*Power(z,2) + 
-		     4*Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2)))
-	 + Power(r,2)*(6 + 4*Power(z,4) - 
-		       5*Sqrt(Power(-1 + r,2) + Power(z,2))*
-		       Sqrt(Power(1 + r,2) + Power(z,2)) + 
-		       Power(z,2)*(6 + 4*Sqrt(Power(-1 + r,2) + Power(z,2))*
-				   Sqrt(Power(1 + r,2) + Power(z,2)))) + 
-	 2*r*Power(Power(-1 + r,2) + Power(z,2),0.25)*
-	 Power(Power(1 + r,2) + Power(z,2),0.25)*
-	 ((2 + 3*Power(r,4) - Sqrt(Power(-1 + r,2) + Power(z,2))*
-	   Sqrt(Power(1 + r,2) + Power(z,2)) + 
-           Power(z,2)*(3 + Power(z,2) + 
-		       Sqrt(Power(-1 + r,2) + Power(z,2))*
-		       Sqrt(Power(1 + r,2) + Power(z,2))) + 
-           Power(r,2)*(-5 + 4*Power(z,2) + 
-		       Sqrt(Power(-1 + r,2) + Power(z,2))*
-		       Sqrt(Power(1 + r,2) + Power(z,2))))*
-	  Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) + 
-	  2*r*z*(Power(r,2) + Power(z,2))*
-	  Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.)))/
+			    (-1 - Power(z,2) + Sqrt(Power(-1 + r,2) + Power(z,2))*
+			     Sqrt(Power(1 + r,2) + Power(z,2))) + 
+			    Power(r,4)*(-9 + 8*Power(z,2) + 
+					4*Sqrt(Power(-1 + r,2) + Power(z,2))*Sqrt(Power(1 + r,2) + Power(z,2)))
+			    + Power(r,2)*(6 + 4*Power(z,4) - 
+					  5*Sqrt(Power(-1 + r,2) + Power(z,2))*
+					  Sqrt(Power(1 + r,2) + Power(z,2)) + 
+					  Power(z,2)*(6 + 4*Sqrt(Power(-1 + r,2) + Power(z,2))*
+						      Sqrt(Power(1 + r,2) + Power(z,2)))) + 
+			    2*r*Power(Power(-1 + r,2) + Power(z,2),0.25)*
+			    Power(Power(1 + r,2) + Power(z,2),0.25)*
+			    ((2 + 3*Power(r,4) - Sqrt(Power(-1 + r,2) + Power(z,2))*
+			      Sqrt(Power(1 + r,2) + Power(z,2)) + 
+			      Power(z,2)*(3 + Power(z,2) + 
+					  Sqrt(Power(-1 + r,2) + Power(z,2))*
+					  Sqrt(Power(1 + r,2) + Power(z,2))) + 
+			      Power(r,2)*(-5 + 4*Power(z,2) + 
+					  Sqrt(Power(-1 + r,2) + Power(z,2))*
+					  Sqrt(Power(1 + r,2) + Power(z,2))))*
+			     Cos((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.) + 
+			     2*r*z*(Power(r,2) + Power(z,2))*
+			     Sin((ArcTan(-1 + r,z) + ArcTan(1 + r,z))/2.)))/
 	(2.*(Power(-1 + r,2) + Power(z,2))*(Power(1 + r,2) + Power(z,2))*
 	 Power(Power(r + Power(Power(-1 + r,2) + Power(z,2),0.25)*
 		     Power(Power(1 + r,2) + Power(z,2),0.25)*
@@ -292,11 +385,11 @@ LagrangianCoordinates(const double& xi1_, const double& xi2_, const double& xi3_
       if(xi.size() != 3)
       {
 	ostringstream error_message;
-      error_message << "Error, wrong number of Lagrangian coordinates; expecting 3, given "
-		    << xi.size();
-      throw OomphLibError(error_message.str(),
-			  OOMPH_CURRENT_FUNCTION,
-			  OOMPH_EXCEPTION_LOCATION);
+	error_message << "Error, wrong number of Lagrangian coordinates; expecting 3, given "
+		      << xi.size();
+	throw OomphLibError(error_message.str(),
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
       }
 
       xi1 = xi[0];

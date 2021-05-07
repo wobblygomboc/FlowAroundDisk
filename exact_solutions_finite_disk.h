@@ -348,20 +348,7 @@ namespace FlatDiskExactSolutions
 
   // //////////////////////////////////////////////////////////////////////////
   // //////////////////////////////////////////////////////////////////////////
-
-  // rotation matrix for right-handed rotation of theta about e_y
-  DenseMatrix<double> R_y(const double& theta)
-  {  
-    DenseMatrix<double> R(3,3,0.0);
-    R(0,0) = cos(theta);
-    R(0,2) = sin(theta);
-    R(1,1) = 1;
-    R(2,0) = -sin(theta);
-    R(2,2) = cos(theta);
-
-    return R;
-  }
-
+  
   void out_of_plane_rotation_solution_cylindrical(const OblateSpheroidalCoordinates& obl_sph_coords,
 						  Vector<double>& u_cyl, double& p)
   {
@@ -505,6 +492,7 @@ namespace FlatDiskExactSolutions
   void total_exact_solution(const Vector<double>& x,			    
 			    const Vector<double>& u_disk,
 			    const Vector<double>& omega_disk,
+			    const DenseMatrix<double>& rotation_matrix,
 			    Vector<double>& u)
   {
     // make sure we've got enough space
@@ -513,9 +501,26 @@ namespace FlatDiskExactSolutions
     // zero out the solution, since we're going to be adding to it below
     std::fill(u.begin(), u.end(), 0.0);
 
+    Vector<double> x_inv_rot(3, 0.0);
+    Vector<double> u_disk_inv_rot(3, 0.0);
+
+    // compute the inverse of the rotation matrix
+    DenseMatrix<double> inv_rotation_matrix(3, 3, 0.0);
+    matrix_inverse(rotation_matrix, inv_rotation_matrix);
+
+    // apply the inverse rotation to the position and disk velocity
+    for(unsigned i=0; i<3; i++)
+    {
+      for(unsigned j=0; j<3; j++)
+      {
+	x_inv_rot[i]      += inv_rotation_matrix(i,j) * x[j];
+	u_disk_inv_rot[i] += inv_rotation_matrix(i,j) * u_disk[j];
+      }
+    }
+    
     // interpret the linear and angular velocities
-    const double U_in_plane    =  u_disk[0];
-    const double U_broadside   =  u_disk[2];
+    const double U_in_plane    =  u_disk_inv_rot[0];
+    const double U_broadside   =  u_disk_inv_rot[2];
     const double Omega_minus_y = -omega_disk[1];
     const double Omega_z       =  omega_disk[2];
       
@@ -525,7 +530,7 @@ namespace FlatDiskExactSolutions
     if (U_in_plane != 0)
     {
       // get the exact in plane velocity and pressure
-      in_plane_translation_solution(x, u_temp);      
+      in_plane_translation_solution(x_inv_rot, u_temp);      
       
       // scale and add to total
       for(unsigned i=0; i<4; i++)
@@ -535,7 +540,7 @@ namespace FlatDiskExactSolutions
     // broadside contribution
     if (U_broadside != 0)
     {
-      broadside_translation_solution(x, u_temp);
+      broadside_translation_solution(x_inv_rot, u_temp);
 
       // scale and add to total
       for(unsigned i=0; i<4; i++)
@@ -544,7 +549,7 @@ namespace FlatDiskExactSolutions
     
     if (Omega_minus_y != 0)
     {
-      out_of_plane_rotation_solution(x, u_temp);
+      out_of_plane_rotation_solution(x_inv_rot, u_temp);
 
       // scale and add to total
       for(unsigned i=0; i<4; i++)
@@ -553,12 +558,24 @@ namespace FlatDiskExactSolutions
     
     if (Omega_z != 0)
     {
-      in_plane_rotation_solution(x, u_temp);
+      in_plane_rotation_solution(x_inv_rot, u_temp);
 
       // scale and add to total
       for(unsigned i=0; i<4; i++)
       	u[i] += u_temp[i] * Omega_z; // no length because disk radius a=1
     }
+
+    // now rotate back again to finish
+    u_temp.initialise(0.0);
+    for(unsigned i=0; i<3; i++)
+    {
+      for(unsigned j=0; j<3; j++)
+      {
+	u_temp[i] += rotation_matrix(i,j) * u[j];
+      }
+    }
+
+    u = u_temp;
   }
 
   // //////////////////////////////////////////////////////////////////////////////
@@ -569,6 +586,7 @@ namespace FlatDiskExactSolutions
   void total_exact_velocity_gradient(const Vector<double>& x,				     
 				     const Vector<double>& u_disk,
 				     const Vector<double>& omega_disk,
+				     const DenseMatrix<double>& rotation_matrix,
 				     DenseMatrix<double>& du_dx)
   {
     // coordinate increment for finite-difference gradient
@@ -579,7 +597,7 @@ namespace FlatDiskExactSolutions
       
     // get the solution at the current point
     Vector<double> u0(4,0);
-    total_exact_solution(x, u_disk, omega_disk, u0);
+    total_exact_solution(x, u_disk, omega_disk, rotation_matrix, u0);
 
     for(unsigned j=0; j<3; j++)
     {
@@ -591,7 +609,7 @@ namespace FlatDiskExactSolutions
       
       // get the solution at the incremented coordinates
       Vector<double> u_plus_dx(4, 0.0);
-      total_exact_solution(x_plus_dx, u_disk, omega_disk, u_plus_dx);
+      total_exact_solution(x_plus_dx, u_disk, omega_disk, rotation_matrix, u_plus_dx);
 
       // now do the finite diff to get the velocity gradients
       for(unsigned i=0; i<3; i++)

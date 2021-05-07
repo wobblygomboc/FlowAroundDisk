@@ -2,7 +2,6 @@
 #define OOMPH_SINGULAR_FUNCTIONS_HEADER
 
 // the analytic solution for flow around an edge
-#include "moffatt_solution.h"
 #include "coordinate_conversions.h"
 #include "exact_solutions_finite_disk.h"
 #include "additional_maths.h"
@@ -289,6 +288,204 @@ namespace SingularFunctions
     return u;
   }
 
+  // @@@@@@@@@@@@@@@@@@@@@@@ QUEHACERES experimental
+
+  Vector<double> singular_fct_exact_broadside_rotation_no_az(const LagrangianCoordinates& lagr_coords)
+  {
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1 - dr : lagr_coords.xi1;
+
+    // set the angle to zero, so that we cut out the azimuthal component
+    // (u_az ~ sin(az) whereas u_r, u_z, p ~ cos(az) )
+    const double theta = 0.0;
+    
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, theta, lagr_coords.xi3);
+    
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
+
+    // pressure
+    double p = 0.0;
+    
+    // get the flat disk solution
+    FlatDiskExactSolutions::out_of_plane_rotation_solution_cylindrical(obl_sph_coords,
+								       u_lagr, p);
+    
+    // now convert to Cartesian
+    // ------------------------
+    Vector<double> u(3, 0.0);
+    CoordinateConversions::lagrangian_to_eulerian_velocity(lagr_coords, u_lagr, u);
+
+#ifdef PARANOID    
+    // QUEHACERES debug
+    bool inf_or_nan = isinf(u[0]) || isinf(u[1]) || isinf(u[2])
+      || isnan(u[0]) || isnan(u[1]) || isnan(u[2]);
+
+    if(inf_or_nan)
+    {
+      oomph_info << "INF or NAN in cartesian coords; "
+		 << "singular_fct_exact_in_plane_translation_no_az()" << std::endl;
+      abort();
+    }
+#endif
+    
+    // and add the pressure
+    u.push_back(p);
+
+    return u;
+  }
+
+  Vector<double> singular_fct_exact_broadside_rotation_az(const LagrangianCoordinates& lagr_coords)
+  {
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1 - dr : lagr_coords.xi1;
+
+    // set the angle to pi/2, so that we select only the azimuthal component
+    // (u_az ~ sin(az) whereas u_r, u_z, p ~ cos(az) )
+    const double theta = Pi/2.0;
+    
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, theta, lagr_coords.xi3);
+    
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
+
+    // pressure
+    double p = 0.0;
+    
+    // get the flat disk solution
+    FlatDiskExactSolutions::out_of_plane_rotation_solution_cylindrical(obl_sph_coords,
+								       u_lagr, p);
+    
+    // now convert to Cartesian
+    // ------------------------
+    Vector<double> u(3, 0.0);
+    CoordinateConversions::lagrangian_to_eulerian_velocity(lagr_coords, u_lagr, u);
+
+#ifdef PARANOID    
+    // QUEHACERES debug
+    bool inf_or_nan = isinf(u[0]) || isinf(u[1]) || isinf(u[2])
+      || isnan(u[0]) || isnan(u[1]) || isnan(u[2]);
+
+    if(inf_or_nan)
+    {
+      oomph_info << "INF or NAN in cartesian coords; "
+		 << "singular_fct_exact_in_plane_translation_az()" << std::endl;
+      abort();
+    }
+#endif
+    
+    // and "add" the pressure - it's already dealt with by the no-az version
+    // since the pressure varies in phase with the r and z velocity components
+    u.push_back(0.0);
+
+    return u;
+  }
+    
+  Vector<double> singular_fct_exact_in_plane_translation_no_az(const LagrangianCoordinates& lagr_coords)
+  {
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1 - dr : lagr_coords.xi1;
+
+    // set the angle to zero, so that we cut out the azimuthal component
+    // (u_az ~ sin(az) whereas u_r, u_z, p ~ cos(az) )
+    const double theta = 0.0;
+    
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, theta, lagr_coords.xi3);
+    
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
+
+    // pressure
+    double p = 0.0;
+    
+    // get the flat disk solution
+    FlatDiskExactSolutions::in_plane_translation_solution_cylindrical(obl_sph_coords,
+								      u_lagr, p);
+    
+    // now convert to Cartesian
+    // ------------------------
+    Vector<double> u(3, 0.0);
+    CoordinateConversions::lagrangian_to_eulerian_velocity(lagr_coords, u_lagr, u);
+
+#ifdef PARANOID    
+    // QUEHACERES debug
+    bool inf_or_nan = isinf(u[0]) || isinf(u[1]) || isinf(u[2])
+      || isnan(u[0]) || isnan(u[1]) || isnan(u[2]);
+
+    if(inf_or_nan)
+    {
+      oomph_info << "INF or NAN in cartesian coords; "
+		 << "singular_fct_exact_in_plane_translation_no_az()" << std::endl;
+      abort();
+    }
+#endif
+    
+    // and add the pressure
+    u.push_back(p);
+
+    return u;
+  }
+
+  // ==========================================================================
+
+  Vector<double> singular_fct_exact_in_plane_translation_az(const LagrangianCoordinates& lagr_coords)
+  {
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1 - dr : lagr_coords.xi1;
+
+    // set the angle to pi/2, so that we select only the azimuthal component
+    // (u_az ~ sin(az) whereas u_r, u_z, p ~ cos(az) )
+    const double theta = Pi/2.0;
+    
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, theta, lagr_coords.xi3);
+    
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
+
+    // pressure
+    double p = 0.0;
+    
+    // get the flat disk solution
+    FlatDiskExactSolutions::in_plane_translation_solution_cylindrical(obl_sph_coords,
+								      u_lagr, p);
+    
+    // now convert to Cartesian
+    // ------------------------
+    Vector<double> u(3, 0.0);
+    CoordinateConversions::lagrangian_to_eulerian_velocity(lagr_coords, u_lagr, u);
+
+#ifdef PARANOID    
+    // QUEHACERES debug
+    bool inf_or_nan = isinf(u[0]) || isinf(u[1]) || isinf(u[2])
+      || isnan(u[0]) || isnan(u[1]) || isnan(u[2]);
+
+    if(inf_or_nan)
+    {
+      oomph_info << "INF or NAN in cartesian coords; "
+		 << "singular_fct_exact_in_plane_translation_az()" << std::endl;
+      abort();
+    }
+#endif
+    
+    // and "add" the pressure - it's already dealt with by the no-az version
+    // since the pressure varies in phase with the r and z velocity components
+    u.push_back(0.0);
+
+    return u;
+  }
+  
   // ==========================================================================
   // ==========================================================================
   // ==========================================================================
@@ -495,7 +692,115 @@ namespace SingularFunctions
   }
 
   // --------------------------------------------------------------------------
-  
+
+  void du_in_plane_no_az_cylindrical_doblate_sph(const LagrangianCoordinates& lagr_coords,
+						 DenseMatrix<double>& du_cyl_doblate_sph)
+  {
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1.0 - dr : lagr_coords.xi1;
+    
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, lagr_coords.xi2, lagr_coords.xi3);
+
+    // shorthands
+    const double lambda = obl_sph_coords.lambda;
+    const double zeta   = obl_sph_coords.zeta;
+    const double theta  = obl_sph_coords.theta;
+    
+    du_cyl_doblate_sph.resize(3, 3, 0.0);
+
+    // du_r/dlambda
+    du_cyl_doblate_sph(0,0) = (4*(-((2 + 4*Power(lambda,2) + Power(lambda,4)) /
+				    Power(1 + Power(lambda,2),2)) - (2*Power(lambda,4)) /
+				  Power(Power(lambda,2) + Power(zeta,2),2) +
+				  (3*Power(lambda,2))/(Power(lambda,2) +
+						       Power(zeta,2))))/(3.*Pi);
+    
+    // du_r/dzeta
+    du_cyl_doblate_sph(0,1) = (-8*Power(lambda,3)*zeta)/(3.*Pi*Power(Power(lambda,2) + Power(zeta,2),2));
+
+    // du_r_dtheta
+    du_cyl_doblate_sph(0,2) = 0.0; 
+    
+    // du_theta/dlambda
+    du_cyl_doblate_sph(1,0) = 0.0;
+
+    // du_theta/dzeta
+    du_cyl_doblate_sph(1,1) = 0.0;
+
+    // du_theta/dtheta
+    du_cyl_doblate_sph(1,2) = 0.0; 
+    
+    // du_z/dlambda
+    du_cyl_doblate_sph(2,0) = (4*lambda*zeta*Sqrt((1 - Power(zeta,2)) /
+						  (1 + Power(lambda,2)))*(-Power(lambda,4) +
+									  (2 + Power(lambda,2))*
+									  Power(zeta,2)))/
+      (3.*(1 + Power(lambda,2))*Pi*Power(Power(lambda,2) + Power(zeta,2),2));
+
+    // du_z/dzeta
+    du_cyl_doblate_sph(2,1) = (-4*Power(lambda,2)*(Power(zeta,2) + Power(lambda,2)*
+						   (-1 + 2*Power(zeta,2)))) /
+      (3.*(1 + Power(lambda,2))*Pi*Sqrt((1 - Power(zeta,2)) /
+					(1 + Power(lambda,2)))*
+       Power(Power(lambda,2) + Power(zeta,2),2));
+    
+    // du_z/dtheta
+    du_cyl_doblate_sph(2,2) = 0.0; 
+  }
+
+  // --------------------------------------------------------------------------
+
+  void du_in_plane_az_cylindrical_doblate_sph(const LagrangianCoordinates& lagr_coords,
+					      DenseMatrix<double>& du_cyl_doblate_sph)
+  {
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1.0 - dr : lagr_coords.xi1;
+    
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords(xi1, lagr_coords.xi2, lagr_coords.xi3);
+
+    // shorthands
+    const double lambda = obl_sph_coords.lambda;
+    const double zeta   = obl_sph_coords.zeta;
+    const double theta  = obl_sph_coords.theta;
+    
+    du_cyl_doblate_sph.resize(3, 3, 0.0);
+
+    // du_r/dlambda
+    du_cyl_doblate_sph(0,0) = 0.0;
+    
+    // du_r/dzeta
+    du_cyl_doblate_sph(0,1) = 0.0;
+
+    // du_r_dtheta
+    du_cyl_doblate_sph(0,2) = 0.0; 
+    
+    // du_theta/dlambda
+    du_cyl_doblate_sph(1,0) = (4*(2 + Power(lambda,2)))/(3.*Power(1 + Power(lambda,2),2)*Pi);
+
+    // du_theta/dzeta
+    du_cyl_doblate_sph(1,1) = 0.0;
+
+    // du_theta/dtheta
+    du_cyl_doblate_sph(1,2) = 0.0; 
+    
+    // du_z/dlambda
+    du_cyl_doblate_sph(2,0) = 0.0;
+
+    // du_z/dzeta
+    du_cyl_doblate_sph(2,1) = 0.0;
+    
+    // du_z/dtheta
+    du_cyl_doblate_sph(2,2) = 0.0; 
+  }
+
+  // --------------------------------------------------------------------------
+
   void du_in_plane_rotation_cylindrical_doblate_sph(const LagrangianCoordinates& lagr_coords,
 						    DenseMatrix<double>& du_cyl_doblate_sph)
   {
@@ -605,6 +910,8 @@ namespace SingularFunctions
       {
 	for(unsigned k=0; k<3; k++)
 	{
+	  // i index on da_dxi effectively does the dot product with the ith
+	  // Cartesian unit vector
 	  du_eulerian_dxi(i,j) += da_dxi[k](i,j) * u_cyl[k]; 	    
 
 	  for(unsigned l=0; l<3; l++)
@@ -761,6 +1068,131 @@ namespace SingularFunctions
   }
 
   // --------------------------------------------------------------------------
+      
+  DenseMatrix<double> gradient_of_singular_fct_exact_broadside_rotation_no_az(
+    const LagrangianCoordinates& lagr_coords)
+  {
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1.0 - dr : lagr_coords.xi1;
+    
+    // set the 'azimuthal' angle to where cos(theta) = sin(theta) for slice solution
+    const double theta = 0.0;
+     
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords_slice(xi1, theta, lagr_coords.xi3);
+
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
+
+    // pressure
+    double p = 0.0;
+    
+    // get the flat disk solution
+    FlatDiskExactSolutions::out_of_plane_rotation_solution_cylindrical(obl_sph_coords_slice,
+								       u_lagr, p);
+
+    // get the derivatives of the 'cylindrical' components of the singular velocity
+    // w.r.t. the oblate spheroidal coordinates
+    DenseMatrix<double> du_cyl_doblate_sph;
+
+    // Lagrangian coordinates of the slice where cos(theta) = sin(theta)    
+    LagrangianCoordinates lagr_coords_slice(lagr_coords.xi1, theta, lagr_coords.xi3);
+    
+    du_broadside_rotation_cylindrical_doblate_sph(lagr_coords_slice, du_cyl_doblate_sph);
+    
+    // get the singular velocity gradient, passing the actual (non-sliced) Lagrangian coords
+    DenseMatrix<double> du_dx_sing(3, 3, 0.0);
+
+    du_sing_dx_eulerian(lagr_coords, u_lagr, du_cyl_doblate_sph, du_dx_sing);
+
+#ifdef PARANOID
+    for(unsigned i=0; i<3; i++)
+    {
+      for(unsigned j=0; j<3; j++)
+      {
+	if(!isfinite(du_dx_sing(i,j)))
+	{
+	  ostringstream error_message;
+
+	  error_message << "Error: du_dx_in_plane(" << i << "," << j << ") = "
+			<< du_dx_sing(i,j) << std::endl;
+	    
+	  throw OomphLibError(error_message.str().c_str(),
+			      OOMPH_CURRENT_FUNCTION,
+			      OOMPH_EXCEPTION_LOCATION);
+	}
+      }
+    }
+#endif
+    return du_dx_sing;
+  }
+
+  // --------------------------------------------------------------------------
+
+  DenseMatrix<double> gradient_of_singular_fct_exact_broadside_rotation_az(
+    const LagrangianCoordinates& lagr_coords)
+  {
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1.0 - dr : lagr_coords.xi1;
+    
+    // set the 'azimuthal' angle to where cos(theta) = 0, sin(theta) = 1 to extract the
+    // azimuthal component
+    const double theta = Pi/2.0;
+     
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords_slice(xi1, theta, lagr_coords.xi3);
+
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
+
+    // pressure
+    double p = 0.0;
+    
+    // get the flat disk solution
+    FlatDiskExactSolutions::out_of_plane_rotation_solution_cylindrical(obl_sph_coords_slice,
+								       u_lagr, p);
+
+    // get the derivatives of the 'cylindrical' components of the singular velocity
+    // w.r.t. the oblate spheroidal coordinates
+    DenseMatrix<double> du_cyl_doblate_sph;
+
+    // Lagrangian coordinates of the slice 
+    LagrangianCoordinates lagr_coords_slice(lagr_coords.xi1, theta, lagr_coords.xi3);
+    
+    du_broadside_rotation_cylindrical_doblate_sph(lagr_coords_slice, du_cyl_doblate_sph);
+    
+    // get the singular velocity gradient, passing the actual (non-sliced) Lagrangian coords
+    DenseMatrix<double> du_dx_sing(3, 3, 0.0);
+
+    du_sing_dx_eulerian(lagr_coords, u_lagr, du_cyl_doblate_sph, du_dx_sing);
+
+#ifdef PARANOID
+    for(unsigned i=0; i<3; i++)
+    {
+      for(unsigned j=0; j<3; j++)
+      {
+	if(!isfinite(du_dx_sing(i,j)))
+	{
+	  ostringstream error_message;
+
+	  error_message << "Error: du_dx_in_plane(" << i << "," << j << ") = "
+			<< du_dx_sing(i,j) << std::endl;
+	    
+	  throw OomphLibError(error_message.str().c_str(),
+			      OOMPH_CURRENT_FUNCTION,
+			      OOMPH_EXCEPTION_LOCATION);
+	}
+      }
+    }
+#endif
+    return du_dx_sing;
+  }
+  
+  // --------------------------------------------------------------------------
   
   DenseMatrix<double> gradient_of_singular_fct_exact_in_plane_translation(
     const LagrangianCoordinates& lagr_coords)
@@ -793,6 +1225,125 @@ namespace SingularFunctions
     // w.r.t. the oblate spheroidal coordinates
     DenseMatrix<double> du_cyl_doblate_sph;
     du_in_plane_cylindrical_doblate_sph(lagr_coords_slice, du_cyl_doblate_sph);
+    
+    // get the singular velocity gradient, passing the actual (non-sliced) Lagrangian coords
+    DenseMatrix<double> du_dx_sing(3, 3, 0.0);
+
+    du_sing_dx_eulerian(lagr_coords, u_lagr, du_cyl_doblate_sph, du_dx_sing);
+
+#ifdef PARANOID
+    for(unsigned i=0; i<3; i++)
+    {
+      for(unsigned j=0; j<3; j++)
+      {
+	if(!isfinite(du_dx_sing(i,j)))
+	{
+	  ostringstream error_message;
+
+	  error_message << "Error: du_dx_in_plane(" << i << "," << j << ") = "
+			<< du_dx_sing(i,j) << std::endl;
+	    
+	  throw OomphLibError(error_message.str().c_str(),
+			      OOMPH_CURRENT_FUNCTION,
+			      OOMPH_EXCEPTION_LOCATION);
+	}
+      }
+    }
+#endif
+    return du_dx_sing;
+  }
+
+  // --------------------------------------------------------------------------
+
+  DenseMatrix<double> gradient_of_singular_fct_exact_in_plane_translation_no_az(
+    const LagrangianCoordinates& lagr_coords)
+  {
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1.0 - dr : lagr_coords.xi1;
+    
+    // set the 'azimuthal' angle to where cos(theta) = sin(theta) for slice solution
+    const double theta = 0.0;
+     
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords_slice(xi1, theta, lagr_coords.xi3);
+
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
+
+    // pressure
+    double p = 0.0;
+    
+    // get the flat disk solution
+    FlatDiskExactSolutions::in_plane_translation_solution_cylindrical(obl_sph_coords_slice,
+								      u_lagr, p);
+
+    // get the derivatives of the 'cylindrical' components of the singular velocity
+    // w.r.t. the oblate spheroidal coordinates
+    DenseMatrix<double> du_cyl_doblate_sph;
+
+    // we pass the actual Lagrangian coords here, because the derivatives have their
+    // azimuthal dependence removed
+    du_in_plane_no_az_cylindrical_doblate_sph(lagr_coords, du_cyl_doblate_sph);
+    
+    // get the singular velocity gradient, passing the actual (non-sliced) Lagrangian coords
+    DenseMatrix<double> du_dx_sing(3, 3, 0.0);
+
+    du_sing_dx_eulerian(lagr_coords, u_lagr, du_cyl_doblate_sph, du_dx_sing);
+
+#ifdef PARANOID
+    for(unsigned i=0; i<3; i++)
+    {
+      for(unsigned j=0; j<3; j++)
+      {
+	if(!isfinite(du_dx_sing(i,j)))
+	{
+	  ostringstream error_message;
+
+	  error_message << "Error: du_dx_in_plane(" << i << "," << j << ") = "
+			<< du_dx_sing(i,j) << std::endl;
+	    
+	  throw OomphLibError(error_message.str().c_str(),
+			      OOMPH_CURRENT_FUNCTION,
+			      OOMPH_EXCEPTION_LOCATION);
+	}
+      }
+    }
+#endif
+    return du_dx_sing;
+  }
+
+  // --------------------------------------------------------------------------
+  
+  DenseMatrix<double> gradient_of_singular_fct_exact_in_plane_translation_az(
+    const LagrangianCoordinates& lagr_coords)
+  {
+    // catch the case where we're sat exactly at the singularity
+    const double xi1 = (abs(lagr_coords.xi1 - 1.0) < tol) && ((abs(lagr_coords.xi3) < tol)) ?
+      1.0 - dr : lagr_coords.xi1;
+    
+    // set the 'azimuthal' angle to where cos(theta) = sin(theta) for slice solution
+    const double theta = Pi/2.0;
+     
+    // convert the Lagrangian curvilinear coordinates into 'flat'
+    // oblate spheroidal coordinates
+    OblateSpheroidalCoordinates obl_sph_coords_slice(xi1, theta, lagr_coords.xi3);
+    
+    // velocity components in 'cylindrical' coordinates (r, theta, z)
+    Vector<double> u_lagr(3, 0.0);
+
+    // pressure
+    double p = 0.0;
+    
+    // get the flat disk solution
+    FlatDiskExactSolutions::in_plane_translation_solution_cylindrical(obl_sph_coords_slice,
+								      u_lagr, p);
+
+    // get the derivatives of the 'cylindrical' components of the singular velocity
+    // w.r.t. the oblate spheroidal coordinates
+    DenseMatrix<double> du_cyl_doblate_sph;
+    du_in_plane_az_cylindrical_doblate_sph(lagr_coords, du_cyl_doblate_sph);
     
     // get the singular velocity gradient, passing the actual (non-sliced) Lagrangian coords
     DenseMatrix<double> du_dx_sing(3, 3, 0.0);
@@ -876,61 +1427,89 @@ namespace SingularFunctions
     
     return du_dx_sing;
   }
-
+  
   // @@@@@@@@
   // FD versions - keep around for the time being
   
-  /* DenseMatrix<double> __gradient_of_singular_fct_exact_broadside_translation( */
-  /*   const LagrangianCoordinates& lagr_coords) */
-  /* { */
-  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
+  DenseMatrix<double> __gradient_of_singular_fct_exact_broadside_translation(
+    const LagrangianCoordinates& lagr_coords)
+  {
+    DenseMatrix<double> du_dx(3, 3, 0.0);
     
-  /*   // compute the velocity gradient via finite difference */
-  /*   generic_dudx_finite_diff(lagr_coords, */
-  /* 			     &__singular_fct_exact_broadside_translation, */
-  /* 			     du_dx); */
+    // compute the velocity gradient via finite difference
+    generic_dudx_finite_diff(lagr_coords,
+  			     &singular_fct_exact_broadside_translation,
+  			     du_dx);
 
-  /*   return du_dx; */
-  /* } */
+    return du_dx;
+  }
 
-  /* DenseMatrix<double> __gradient_of_singular_fct_exact_broadside_rotation( */
-  /*   const LagrangianCoordinates& lagr_coords) */
-  /* { */
-  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
+  DenseMatrix<double> __gradient_of_singular_fct_exact_broadside_rotation(
+    const LagrangianCoordinates& lagr_coords)
+  {
+    DenseMatrix<double> du_dx(3, 3, 0.0);
     
-  /*   // compute the velocity gradient via finite difference */
-  /*   generic_dudx_finite_diff(lagr_coords, */
-  /* 			     &__singular_fct_exact_broadside_rotation, */
-  /* 			     du_dx); */
+    // compute the velocity gradient via finite difference
+    generic_dudx_finite_diff(lagr_coords,
+  			     &singular_fct_exact_broadside_rotation,
+  			     du_dx);
 
-  /*   return du_dx; */
-  /* } */
+    return du_dx;
+  }
 
-  /* DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_translation( */
-  /*   const LagrangianCoordinates& lagr_coords) */
-  /* { */
-  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
+  DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_translation(
+    const LagrangianCoordinates& lagr_coords)
+  {
+    DenseMatrix<double> du_dx(3, 3, 0.0);
     
-  /*   // compute the velocity gradient via finite difference */
-  /*   generic_dudx_finite_diff(lagr_coords, */
-  /* 			     &__singular_fct_exact_in_plane_translation, */
-  /* 			     du_dx); */
+    // compute the velocity gradient via finite difference
+    generic_dudx_finite_diff(lagr_coords,
+  			     &singular_fct_exact_in_plane_translation,
+  			     du_dx);
 
-  /*   return du_dx; */
-  /* } */
+    return du_dx;
+  }
 
-  /* DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_rotation( */
-  /*   const LagrangianCoordinates& lagr_coords) */
-  /* { */
-  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
+  DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_rotation(
+    const LagrangianCoordinates& lagr_coords)
+  {
+    DenseMatrix<double> du_dx(3, 3, 0.0);
     
-  /*   // compute the velocity gradient via finite difference */
-  /*   generic_dudx_finite_diff(lagr_coords, */
-  /* 			     &__singular_fct_exact_in_plane_rotation, */
-  /* 			     du_dx); */
+    // compute the velocity gradient via finite difference
+    generic_dudx_finite_diff(lagr_coords,
+  			     &singular_fct_exact_in_plane_rotation,
+  			     du_dx);
 
-  /*   return du_dx; */
-  /* } */
+    return du_dx;
+  }
+
+  DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_translation_az(
+    const LagrangianCoordinates& lagr_coords)
+  {
+    DenseMatrix<double> du_dx(3, 3, 0.0);
+    
+    // compute the velocity gradient via finite difference
+    generic_dudx_finite_diff(lagr_coords,
+  			     &singular_fct_exact_in_plane_translation_az,
+  			     du_dx);
+
+    return du_dx;
+  }
+    
+  DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_translation_no_az(
+    const LagrangianCoordinates& lagr_coords)
+  {
+    DenseMatrix<double> du_dx(3, 3, 0.0);
+    
+    // compute the velocity gradient via finite difference
+    generic_dudx_finite_diff(lagr_coords,
+  			     &singular_fct_exact_in_plane_translation_no_az,
+  			     du_dx);
+
+    return du_dx;
+  }
+  
+  
 }
 
 #endif

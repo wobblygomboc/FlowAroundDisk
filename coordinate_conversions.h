@@ -151,23 +151,41 @@ namespace CoordinateConversions
   void eulerian_to_lagrangian_coordinates(const Vector<double>& x,
 					  LagrangianCoordinates& lagr_coords)
   {
+    // get the rotation matrix associated with the geom object
+    const DenseMatrix<double> rotation_matrix = disk_geom_obj_pt->rotation_matrix();
+    
+    // compute the inverse of the rotation matrix
+    DenseMatrix<double> inv_rotation_matrix(3, 3, 0.0);
+    matrix_inverse(rotation_matrix, inv_rotation_matrix);
+
+    // rotate the Eulerian position back as if the disk was tangent to the x-y plane
+    // in order to get a good starting guess for the Lagrangian coordinates
+    Vector<double> x_inv_rot(3, 0.0);
+    for(unsigned i=0; i<3; i++)
+    {
+      for(unsigned j=0; j<3; j++)
+      {
+	x_inv_rot[i] += inv_rotation_matrix(i,j) * x[j];
+      }
+    }
+    
     // the (flat) cylindrical radius of this point to use as an initial guess
-    double r0 = sqrt(x[0]*x[0] + x[1]*x[1]); // ### - r_disk(edge_coords.zeta);
+    double r0 = sqrt(x_inv_rot[0]*x_inv_rot[0] + x_inv_rot[1]*x_inv_rot[1]);
   
     Vector<double> unknowns(3, 0.0);
-  
+
     // starting guesses are the Lagrangian coordinates for a flat disk
-    unknowns[0] = r0;                // xi_1
-    unknowns[1] = atan2(x[1], x[0]); // xi_2
-    unknowns[2] = x[2];              // xi_3
-    
+    unknowns[0] = r0;                                // xi_1
+    unknowns[1] = atan2(x_inv_rot[1], x_inv_rot[0]); // xi_2
+    unknowns[2] = x_inv_rot[2];                      // xi_3
+
     // keep track of the last good values we had
     Vector<double> previous_converged_unknowns = unknowns;
       
     // back up the actual disk object
     CylindricallyWarpedCircularDiskWithAnnularInternalBoundary* warped_disk_backup_pt =
       disk_geom_obj_pt;
-
+  
     // disk parameters we're keeping fixed
     const double target_r_curvature = warped_disk_backup_pt->radius_of_curvature();
     const double r_torus = warped_disk_backup_pt->h_annulus();
@@ -187,8 +205,8 @@ namespace CoordinateConversions
     {
       // make a temporary copy to work with
       auto temp_disk_pt = std::make_unique<
-	CylindricallyWarpedCircularDiskWithAnnularInternalBoundary>(r_torus, 
-								    current_r_curvature);
+	CylindricallyWarpedCircularDiskWithAnnularInternalBoundary>
+	(r_torus, current_r_curvature, rotation_matrix);
 
       // slightly hacky, but grab the and assign the raw pointer, since the
       // black-box residual fct uses the raw disk_geom_obj_pt pointer

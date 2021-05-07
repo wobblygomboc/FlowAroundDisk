@@ -35,9 +35,17 @@
 #include "navier_stokes.h"
 #include "poisson.h"
 #include "chebyshev_gauss_integration.h"
+#include "coordinate_conversions.h"
 
 namespace oomph
-{  
+{
+  template <unsigned NNODE_1D>
+    class ScalableSingularityForNavierStokesLineElement;
+  
+  /// \short global typedef for the templated singular line element
+  typedef ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>
+      SingularLineElement;  
+  
   //----------------------ONE DIMENSIONAL CIRCULAR (LINE) MESH-----------------
 
   //============================================================================
@@ -195,7 +203,7 @@ namespace oomph
     
     /// \short Constructor
     ScalableSingularityForNavierStokesLineElement() :						  
-    Dim(1), Bulk_dim(3), Dzeta_dx_fct_pt(nullptr), Stress_fct_pt(nullptr),
+    Dim(1), Problem_dim(3), Dzeta_dx_fct_pt(nullptr), Stress_fct_pt(nullptr),
       Zeta_has_been_setup(false)
     {
       // QUEHACERES get this programmatically
@@ -234,7 +242,7 @@ namespace oomph
       const unsigned& sing_fct_id)
     {      
       // check if we've already got this ID
-      if(Singular_fct_index.find(sing_fct_id) != Singular_fct_index.end())
+      if(Singular_fct_index_map.find(sing_fct_id) != Singular_fct_index_map.end())
       {
 	throw OomphLibError(
 	"Can't add duplicate singular function, functions must have a unique ID",
@@ -265,7 +273,7 @@ namespace oomph
       // add the ID to the map, index is the current size of the vectors
       // of function pointers
       unsigned nsing = Unscaled_singular_fct_pt.size();
-      Singular_fct_index[sing_fct_id] = nsing; // since we're zero-indexed
+      Singular_fct_index_map[sing_fct_id] = nsing; // since we're zero-indexed
 
       // add the ID to the list
       Singular_fct_id.push_back(sing_fct_id);
@@ -292,7 +300,7 @@ namespace oomph
     {      
       // get the index for this ID from the map
       // (std::map::at() throws an exception if this index doesn't exist)
-      unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
+      unsigned sing_fct_index = Singular_fct_index_map.at(sing_fct_id);
       
       return Unscaled_singular_fct_pt[sing_fct_index](lagr_coords); 
     }
@@ -303,7 +311,7 @@ namespace oomph
     {
       // get the index for this ID from the map
       // (std::map::at() throws an exception if this index doesn't exist)
-      unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
+      unsigned sing_fct_index = Singular_fct_index_map.at(sing_fct_id);
       
       return Gradient_of_unscaled_singular_fct_pt[sing_fct_index](lagr_coords); 
     }
@@ -365,17 +373,13 @@ namespace oomph
       // get the Eulerian derivatives dzeta/dx from the function pointer
       Vector<double> dzeta_dx = Dzeta_dx_fct_pt(lagr_coords);
       
-      // number of rows and columns
-      const unsigned N = dudx_sing_unscaled.nrow();
-      const unsigned M = dudx_sing_unscaled.ncol();
-
       // the scaled Eulerian velocity gradient
-      DenseMatrix<double> dudx_sing(N,M, 0.0);
+      DenseMatrix<double> dudx_sing(Problem_dim, Problem_dim, 0.0);
       
       // now compute it: d(c*u_sing)/dx = dc/dzeta * dzeta/dx * u_sing + c*du_sing/dx      
-      for(unsigned i=0; i<N; i++)
+      for(unsigned i=0; i<Problem_dim; i++)
       {
-	for(unsigned j=0; j<M; j++)
+	for(unsigned j=0; j<Problem_dim; j++)
 	{
 	  dudx_sing(i,j) = u_sing_unscaled[i] * dc_dzeta * dzeta_dx[j] +
 	    c * dudx_sing_unscaled(i,j);
@@ -389,14 +393,13 @@ namespace oomph
 					       const Vector<double>& s) const
     {
       // total singular part of the solution
-      Vector<double> u_sing_total(lagr_coords.ncoord + 1, 0.0);
+      Vector<double> u_sing_total(Problem_dim + 1, 0.0);
 
       // loop over each singular function and add the contribution to the total
-      for(std::map<unsigned,unsigned>::const_iterator it = Singular_fct_index.begin();
-	  it != Singular_fct_index.end(); it++)
+      for(std::pair<unsigned,unsigned> id_index_pair : Singular_fct_index_map)
       {
 	// get the singular function ID
-	unsigned sing_fct_id = it->first;
+	unsigned sing_fct_id = id_index_pair.first;
 	
 	// get the contribution of the ith singular function
 	Vector<double> u_sing = singular_fct(lagr_coords, s, sing_fct_id);
@@ -411,29 +414,28 @@ namespace oomph
     // wrapper to get the total contribution of the derivatives of the
     // singular functions
     DenseMatrix<double>
-      total_singular_gradient_contribution(const LagrangianCoordinates& rzp_coords,
+      total_singular_gradient_contribution(const LagrangianCoordinates& lagr_coords,
 					   const Vector<double>& s) const
     {
-      const unsigned nval = rzp_coords.ncoord;
+      const unsigned nval = lagr_coords.ncoord;
       
       // total of the singular derivatives      
-      DenseMatrix<double> dudx_total(nval, nval, 0.0);
+      DenseMatrix<double> dudx_total(Problem_dim, Problem_dim, 0.0);
             
 
       // loop over each singular function and add the contribution to the total
-      for(std::map<unsigned,unsigned>::const_iterator it = Singular_fct_index.begin();
-	  it != Singular_fct_index.end(); it++)
+      for(std::pair<unsigned,unsigned> id_index_pair : Singular_fct_index_map)
       {
 	// get the singular function ID
-	unsigned sing_fct_id = it->first;
+	unsigned sing_fct_id = id_index_pair.first;
 	
 	// get the contribution of the ith singular function
-	DenseMatrix<double> dudx = gradient_of_singular_fct(rzp_coords, s, sing_fct_id);
+	DenseMatrix<double> dudx = gradient_of_singular_fct(lagr_coords, s, sing_fct_id);
 
 	// add it to the total
-	for(unsigned m=0; m<nval; m++)
+	for(unsigned m=0; m<Problem_dim; m++)
 	{
-	  for(unsigned n=0; n<nval; n++)
+	  for(unsigned n=0; n<Problem_dim; n++)
 	  {
 	    dudx_total(m,n) += dudx(m,n);
 	  }
@@ -455,9 +457,9 @@ namespace oomph
 	total_singular_gradient_contribution(lagr_coords, s);
       
       // now compute the singular strain rate
-      for(unsigned i=0; i<Dim; i++)
+      for(unsigned i=0; i<Problem_dim; i++)
       {
-	for(unsigned j=0; j<Dim; j++)
+	for(unsigned j=0; j<Problem_dim; j++)
 	{
 	  strain_rate_sing_total(i,j) = 0.5 * (dudx_sing_total(i,j) +
 					       dudx_sing_total(j,i));
@@ -470,12 +472,12 @@ namespace oomph
 			       DenseMatrix<double>& stress_sing_total) const
     {
       // get the total singular strain rate
-      DenseMatrix<double> strain_rate_sing_total(3, 3, 0.0);
+      DenseMatrix<double> strain_rate_sing_total(Problem_dim, Problem_dim, 0.0);
       total_singular_strain_rate(lagr_coords, s, strain_rate_sing_total);
 
       // get the total singular pressure      
       Vector<double> u_sing_total = total_singular_contribution(lagr_coords,s);      
-      double p_sing_total = u_sing_total[3];
+      double p_sing_total = u_sing_total[Problem_dim];
 
       // now use the function pointer to get the constitutive relation
       if(Stress_fct_pt == nullptr)
@@ -497,7 +499,7 @@ namespace oomph
     {
       // get the index for this ID from the map
       // (std::map::at() throws an exception if this index doesn't exist)
-      const unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
+      const unsigned sing_fct_index = Singular_fct_index_map.at(sing_fct_id);
       
       // make space for the shape functions
       Shape psi(this->nnode());
@@ -524,7 +526,7 @@ namespace oomph
     {
       // get the index for this ID from the map
       // (std::map::at() throws an exception if this index doesn't exist)
-      const unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
+      const unsigned sing_fct_index = Singular_fct_index_map.at(sing_fct_id);
 
       // shorthand
       unsigned nnode = this->nnode();
@@ -621,22 +623,20 @@ namespace oomph
 	
 	// now loop over the singular functions and get their
 	// interpolated amplitudes at this plot point
-	for(std::map<unsigned,unsigned>::iterator it = Singular_fct_index.begin();
-	  it != Singular_fct_index.end(); it++)
+	for(const std::pair<unsigned,unsigned>& id_index_pair : Singular_fct_index_map)
 	{
 	  // get the singular function ID
-	  unsigned sing_fct_id = it->first;
+	  unsigned sing_fct_id = id_index_pair.first;
 	  
 	  double amplitude = interpolated_amplitude(s, sing_fct_id);
 	  outfile << amplitude << " ";
 	}
 	
 	// and the gradients
-	for(std::map<unsigned,unsigned>::iterator it = Singular_fct_index.begin();
-	  it != Singular_fct_index.end(); it++)
+	for(const std::pair<unsigned,unsigned>& id_index_pair : Singular_fct_index_map)
 	{
 	  // get the singular function ID
-	  unsigned sing_fct_id = it->first;
+	  unsigned sing_fct_id = id_index_pair.first;
 	  
 	  double dc_dzeta = interpolated_dc_dzeta(s, sing_fct_id);
 	  outfile << dc_dzeta << " ";
@@ -649,6 +649,22 @@ namespace oomph
       this->write_tecplot_zone_footer(outfile, nplot);   
     }
 
+    // zero out all the singular amplitudes
+    void impose_zero_singular_amplitude() const
+    {
+      for(unsigned n=0; n<this->nnode(); n++)
+      {
+	Node* node_pt = this->node_pt(n);
+	const unsigned nval = node_pt->nvalue();
+
+	// set all the amplitudes to zero
+	for(unsigned i=0; i<nval; i++)
+	{
+	  node_pt->set_value(i, 0.0);
+	}
+      }
+    }
+    
     /// Call this to bypass the correct computation of the
     /// residual for the nth singular function and replace it by r_c = C-ampl
     void impose_singular_fct_amplitude(const unsigned& sing_fct_id,
@@ -672,7 +688,7 @@ namespace oomph
 
       // get the index for this ID from the map
       // (std::map::at() throws an exception if this index doesn't exist)
-      unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
+      unsigned sing_fct_index = Singular_fct_index_map.at(sing_fct_id);
       
       for(unsigned j=0; j<nnode; j++)
       {	
@@ -701,7 +717,7 @@ namespace oomph
     {
       // get the index for this ID from the map
       // (std::map::at() throws an exception if this index doesn't exist)
-      unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
+      unsigned sing_fct_index = Singular_fct_index_map.at(sing_fct_id);
       
       for(unsigned j=0; j<this->nnode(); j++)
       {
@@ -727,7 +743,7 @@ namespace oomph
     {
       // get the index for this ID from the map
       // (std::map::at() throws an exception if this index doesn't exist)
-      unsigned sing_fct_index = Singular_fct_index.at(sing_fct_id);
+      unsigned sing_fct_index = Singular_fct_index_map.at(sing_fct_id);
       
       // we're not allowing some nodes to be pinned and others unpinned at the moment,
       // so it's enough to check the first node
@@ -880,7 +896,7 @@ namespace oomph
     unsigned Dim;
 
     /// Dimensionality of the whole problem
-    unsigned Bulk_dim;
+    unsigned Problem_dim;
     
     /// Pointers to the singular functions
     Vector<UnscaledSingSolnFctPt> Unscaled_singular_fct_pt;
@@ -897,7 +913,7 @@ namespace oomph
     
     /// Object which maps an ID for a given singular function to it's
     // corresponding index in the vectors of singular function pointers
-    std::map<unsigned, unsigned> Singular_fct_index;
+    std::map<unsigned, unsigned> Singular_fct_index_map;
 
     /// The IDs of the singular functions, i.e. the keys for the above map
     Vector<unsigned> Singular_fct_id;
@@ -928,8 +944,9 @@ namespace oomph
     // QUEHACERES sort this out, don't get this from a global #define
     static const unsigned NNODE_1D = SINGULAR_ELEMENT_NNODE_1D; // ELEMENT::_NNODE_1D_;
 
-    // shorthand
-    typedef ScalableSingularityForNavierStokesLineElement<NNODE_1D> SingularLineElement;
+    // QUEHACERES delete
+    /* // shorthand */
+    /* typedef ScalableSingularityForNavierStokesLineElement<NNODE_1D> SingularLineElement; */
 
     typedef void (*ExactTractionFctPt)(const double& t,
 				       const Vector<double>& x,
@@ -1249,9 +1266,9 @@ namespace oomph
       return bulk_el_pt->strain_rate(s_bulk, _strain_rate);
     }
 
-    void integrated_force_and_moment(const Vector<double>& centre_of_rotation,
+    void integrated_force_and_torque(const Vector<double>& centre_of_rotation,
 				     Vector<double>& integrated_force,
-				     Vector<double>& integrated_moment) const
+				     Vector<double>& integrated_torque) const
     {
       //Find out how many nodes there are
       const unsigned n_node = this->nnode();
@@ -1275,8 +1292,8 @@ namespace oomph
       integrated_force.resize(Dim, 0.0);
       integrated_force.initialise(0.0);
 
-      integrated_moment.resize(3, 0.0);
-      integrated_moment.initialise(0.0);
+      integrated_torque.resize(3, 0.0);
+      integrated_torque.initialise(0.0);
   
       //Loop over the integration points
       for(unsigned ipt=0; ipt<n_intpt; ipt++)
@@ -1395,12 +1412,12 @@ namespace oomph
 	  integrated_force[i] += (total_traction[i] ) * W;
 	}
 
-	integrated_moment[2] += (r[0]*total_traction[1] - r[1]*total_traction[0]) * W;
+	integrated_torque[2] += (r[0]*total_traction[1] - r[1]*total_traction[0]) * W;
 	
 	if (Dim == 3)
 	{
-	  integrated_moment[0] += (r[1]*total_traction[2] - r[2]*total_traction[1]) * W;
-	  integrated_moment[1] += (r[2]*total_traction[0] - r[0]*total_traction[2]) * W;	 
+	  integrated_torque[0] += (r[1]*total_traction[2] - r[2]*total_traction[1]) * W;
+	  integrated_torque[1] += (r[2]*total_traction[0] - r[0]*total_traction[2]) * W;	 
 	}
 	
       } // end loop over integration points
@@ -1743,42 +1760,50 @@ namespace oomph
   ////////////////////////////////////////////////////////////////////////
   ////////////////////////////////////////////////////////////////////////
 
-  template<unsigned DIM, unsigned NNODE_1D>
-    class QSingularDragIntegralDiskElement : public QPoissonElement<DIM, NNODE_1D>
+  
+  // ==========================================================================
+  /// \short Rectangular element for computing the contribution to the drag
+  /// (i.e. the integral of the traction) from the singular functions. The
+  /// integration scheme is a tensor product of a Chebyshev-Gauss quadrature
+  /// in the radial direction (to handle the 1/sqrt(1-x^2) type end-point
+  /// singularity) with a standard Gauss quadrature in the azimuthal direction
+  /// (to handle the smooth variation of the amplitude c)
+  // ==========================================================================
+  template<unsigned NPT_XI1, unsigned NPT_XI2>
+    class SingularDragIntegralDiskElement : public GeneralisedElement
   {
   public:
-
-    // shorthand for a singular line element which provides all the
-    // singular function goodies
-    typedef ScalableSingularityForNavierStokesLineElement<NNODE_1D> SingularLineElement;
 
     // Function pointer to a function which provides the outer unit normal
     // at a given set of Lagrangian coordinates
     typedef void (*OuterUnitNormalFctPt)(const LagrangianCoordinates&, Vector<double>&);
     
-    // Default constructor
-  QSingularDragIntegralDiskElement() :
-    Sign_of_outer_unit_normal(1), Outer_unit_normal_fct_pt(nullptr)
+    // Constructor
+  SingularDragIntegralDiskElement(const double& r_torus,
+				  const bool& lower_disk_surface=false) :
+    Lower_disk_surface(lower_disk_surface), Outer_unit_normal_fct_pt(nullptr),
+      R_torus(r_torus), Dim(2)
     {
-      // set the integration scheme of this element to be our custom
-      // mixed Gauss/Cebyshev-Gauss scheme
-      this->set_integration_scheme(&Mixed_integration_scheme);
+      // QUEHACERES 
+      /* // set the integration scheme of this element to be our custom */
+      /* // mixed Gauss/Cebyshev-Gauss scheme */
+      // this->set_integration_scheme(&Mixed_integration_scheme);
 
-      // set the nodal dimension, since this is a surface embedded in a higher
-      // dimensional domain
-      this->set_nodal_dimension(DIM+1);
+      /* // set the nodal dimension, since this is a surface embedded in a higher */
+      /* // dimensional domain */
+      // this->set_nodal_dimension(DIM+1);
 	
       // QUEHACERES do some zeta shit
     }
     
-    QSingularDragIntegralDiskElement(const QSingularDragIntegralDiskElement&)
+    SingularDragIntegralDiskElement(const SingularDragIntegralDiskElement&)
     {
-      BrokenCopy::broken_copy("QSingularDragIntegralDiskElement");
+      BrokenCopy::broken_copy("SingularDragIntegralDiskElement");
     }
 
-    void operator=(const QSingularDragIntegralDiskElement&)
+    void operator=(const SingularDragIntegralDiskElement&)
     {
-      BrokenCopy::broken_assign("QSingularDragIntegralDiskElement");
+      BrokenCopy::broken_assign("SingularDragIntegralDiskElement");
     }
     
     /// Override this with a broken version to prevent these elements
@@ -1801,7 +1826,7 @@ namespace oomph
       line_element_and_local_coordinate_at_knot)
     {
       // number of knot points in this element
-      unsigned nknot = this->integral_pt()->nweight();
+      unsigned nknot = Mixed_integration_scheme.nweight();
 
       // number of coordinates supplied
       unsigned ncoords = line_element_and_local_coordinate_at_knot.size();
@@ -1831,47 +1856,23 @@ namespace oomph
 	  line_element_and_local_coordinate_at_knot[i];
       }
     }
-
-    // set the edge coordinates of each knot point
-    void set_lagr_coordinates_at_knot(const Vector<LagrangianCoordinates>& coords)
+    
+    // thin wrapper to get the Lagrangian coordinates at a given knot point
+    LagrangianCoordinates lagrangian_coordinates_at_knot(const unsigned& ipt) const
     {
-      // Number of integration points
-      const unsigned n_intpt = this->integral_pt()->nweight();
-      
-      if(coords.size() != n_intpt)
-      {
-	ostringstream error_message;
-	error_message << "number of sets of coordinates provided is not consistent "
-		      << "with number of integration points in this element\n"
-		      << "Number of supplied coordinate sets: " << coords.size() << "\n"
-		      << "Number of integration points:       " << n_intpt;
-	throw OomphLibError(
-	  error_message.str(),
-	  OOMPH_CURRENT_FUNCTION,
-	  OOMPH_EXCEPTION_LOCATION);
-      }
-
-      // make sure we've got enough space
-      Lagrangian_coordinates_at_knot.resize(n_intpt);
-
-      // set 'em
-      for(unsigned i=0; i<n_intpt; i++)
-      {
-	Lagrangian_coordinates_at_knot[i]  = coords[i];
-      }
+      LagrangianCoordinates lagr_coords(xi1(ipt), xi2(ipt), xi3());
+      return lagr_coords;
     }
 
-    // get the edge coordinates at the ith knot point
-    LagrangianCoordinates lagr_coordinate_at_knot(const unsigned& i) const
-    {
-      return Lagrangian_coordinates_at_knot[i];
-    }
-
+    // return a reference to the outer unit normal function pointer
     OuterUnitNormalFctPt& outer_unit_normal_fct_pt()
     {
       return Outer_unit_normal_fct_pt;
     }
-      
+
+    // compute the outer unit normal as a function of Lagrangian coordinates
+    // by calling the function pointer - really just a wrapper to check
+    // we have a function pointer
     void outer_unit_normal(const LagrangianCoordinates& lagr_coords,
 			   Vector<double>& unit_normal) const
     {
@@ -1887,43 +1888,48 @@ namespace oomph
       {
 	// get the unit normal from the function pointer
 	Outer_unit_normal_fct_pt(lagr_coords, unit_normal);
-	
-	// apply the correct sign (to account for upper/lower side of disk)
-	for(auto& ni : unit_normal)
-	  ni *= (double)(Sign_of_outer_unit_normal);
       }
     }
 
     /// \short main point of this element - function to compute this element's
     /// contribution to the singular hydrodynamic drag
-    Vector<double> compute_total_singular_drag() const
+    void compute_total_singular_drag_and_torque(const Vector<double>& centre_of_mass,
+						Vector<double>& total_sing_drag,
+						Vector<double>& total_sing_torque) const
     {
-      Vector<double> drag(DIM+1, 0.0);
+      // make enough space and zero out
+      total_sing_drag.resize(Dim+1, 0.0);
+      total_sing_torque.resize(Dim+1, 0.0);
       
-      // local coordinates of knot
-      Vector<double> s(DIM, 0.0);
+      total_sing_drag.initialise(0.0);
+      total_sing_torque.initialise(0.0);
 
-      for(unsigned ipt=0; ipt<this->integral_pt()->nweight(); ipt++)
+      // loop over the integration points
+      for(unsigned ipt=0; ipt<Mixed_integration_scheme.nweight(); ipt++)
       {
+	// local coordinates of knot
+	Vector<double> s(Dim, 0.0);
+	
 	//Assign values of s
-	for(unsigned i=0; i<DIM; i++)
+	for(unsigned i=0; i<Dim; i++)
 	{
-	  s[i] = this->integral_pt()->knot(ipt,i);
+	  s[i] = Mixed_integration_scheme.knot(ipt,i);
 	}
 
 	//Get the integral weight
-	double w = this->integral_pt()->weight(ipt);
-       
-	//Find the shape and test functions and return the Jacobian
-	//of the mapping
-	double J = this->J_eulerian(s); 
-       
-	//Premultiply the weights and the Jacobian
+	double w = Mixed_integration_scheme.weight(ipt);
+
+	// Jacobian of the (xi1, xi2) coordinate system is xi1,
+	// and from s->xi introduces a factor of (1 - (1-r_torus))/2 from
+	// the s0->xi1, and (2pi-0)/2 from s1->xi2
+	double J = xi1(ipt) * (R_torus/2.0) * MathematicalConstants::Pi;
+
+	// premultiply the weights and the Jacobian
 	double W = w*J;
-
-	// get the Lagrangian coordinates of this point
-	LagrangianCoordinates lagr_coords = Lagrangian_coordinates_at_knot[ipt];
-
+	
+	// get the Lagrangian coordinates of this knot
+	LagrangianCoordinates lagr_coords = lagrangian_coordinates_at_knot(ipt);
+	
 	// cast the GeomObject to a singular line element      
 	SingularLineElement* sing_el_pt = dynamic_cast<SingularLineElement*>
 	  (Line_element_and_local_coordinate_at_knot[ipt].first);
@@ -1932,48 +1938,104 @@ namespace oomph
 	Vector<double> s_singular_el =
 	  Line_element_and_local_coordinate_at_knot[ipt].second;
 
-	// the sum of all scaled singular functions
-	Vector<double> u_sing_total(DIM+2, 0.0);
-
-	DenseMatrix<double> stress_sing_total(DIM+1, DIM+1, 0.0);
+	// total contribution to the stress from the singular functions
+	DenseMatrix<double> stress_sing_total(Dim+1, Dim+1, 0.0);
 	sing_el_pt->total_singular_stress(lagr_coords, s_singular_el, stress_sing_total);
 
 	// get the outer unit normal
-	Vector<double> unit_normal(DIM+1, 0.0);
+	Vector<double> unit_normal(Dim+1, 0.0);
 	outer_unit_normal(lagr_coords, unit_normal);
 
-	// now compute traction
-	Vector<double> traction(DIM+1, 0.0);
-	for(unsigned i=0; i<DIM+1; i++)
+	// now compute traction t_i = \tau_{ij} n_j
+	Vector<double> traction(Dim+1, 0.0);
+	
+	for(unsigned i=0; i<Dim+1; i++)
 	{
-	  for(unsigned j=0; j<DIM+1; j++)
+	  for(unsigned j=0; j<Dim+1; j++)
 	  {
-	    traction[i] = stress_sing_total(i,j) * unit_normal[j];
+	    traction[i] += stress_sing_total(i,j) * unit_normal[j];
 	  }
 	}
 
 	// add the contribution of the traction at this knot to the integral
-	for(unsigned i=0; i<DIM+1; i++)
-	  drag[i] += traction[i] * W;
-      }
+	for(unsigned i=0; i<Dim+1; i++)
+	  total_sing_drag[i] += traction[i] * W;
 
-      return drag;
+	// -------------------
+	// Torque
+	// -------------------
+	
+	// get the Eulerian coordinates at this knot for the torque calculation
+	Vector<double> x(Dim+1, 0.0);
+	CoordinateConversions::lagrangian_to_eulerian_coordinates(lagr_coords, x);
+
+	// compute the radial vector of this knot from the CoM
+	Vector<double> r(Dim+1, 0.0);
+	for(unsigned i=0; i<Dim+1; i++)
+	  r[i] = x[i] - centre_of_mass[i];
+
+	// now get the torque G = r^F
+	Vector<double> torque(Dim+1, 0.0);
+	VectorHelpers::cross(r, traction, torque);
+
+	// add the contribution of the torque at this knot to the integral
+	for(unsigned i=0; i<Dim+1; i++)
+	  total_sing_torque[i] += torque[i] * W;
+      }
     }
     
     // if we're on the lower side of the disk, flip the sign of the unit normal
-    void is_lower_disk_element()
+    void set_lower_disk_element()
     {
-      Sign_of_outer_unit_normal = -1;
+      Lower_disk_surface = true;
+    }
+
+    // return a pointer to the integration scheme
+    Integral* integral_pt() const
+    {
+      return &Mixed_integration_scheme;
+    }
+
+    // get the xi1 coordinate associated with the ipt'th integration point
+    double xi1(const unsigned& ipt) const
+    {      
+      // get the nominal [-1,1] coordinate in the xi1 direction
+      double s = Mixed_integration_scheme.knot(ipt, 0);
+
+      // map from [-1,1] -> [1-r_torus, 1]
+      return (1.0 - R_torus/2.0 + R_torus * s / 2.0);
+    }
+    
+    // get the xi2 coordinate associated with the ipt'th integration point
+    double xi2(const unsigned& ipt) const
+    {
+      // shorthand
+      const double pi = MathematicalConstants::Pi;
+
+      // get the nominal [-1,1] coordinate in the xi2 direction
+      double s = Mixed_integration_scheme.knot(ipt, 1);
+
+      // map from [-1,1] -> [0,2pi]
+      return (pi + pi * s);
+    }
+
+    // get the signed xi3 coordinate
+    double xi3() const
+    {
+      return ( Lower_disk_surface ? -0.0 : 0.0 );
     }
     
   private:
 
-    // mixed Gauss/Chebyshev-Gauss integration scheme
-    static TwoDGaussTensorProductChebyshevGauss<NNODE_1D, NNODE_1D> Mixed_integration_scheme;
-
-    /// \short Edge coordinates (\rho, \zeta, \phi) of each of this element's
-    /// knot points
-    Vector<LagrangianCoordinates> Lagrangian_coordinates_at_knot;
+    int sign_of_xi3() const
+    {
+      return ( Lower_disk_surface ? -1 : 1 );
+    }
+    
+       
+    // mixed Chebyshev-Gauss/Gauss integration scheme
+    static TwoDChebyshevGaussTensorProductGaussLegendre<NPT_XI1, NPT_XI2>
+      Mixed_integration_scheme;
 
     /// \short The line element and its local coordinate(s) which correspond to the zeta
     /// values at each knot point in this bulk element. N.B. the element
@@ -1982,18 +2044,19 @@ namespace oomph
     Vector<std::pair<GeomObject*, Vector<double> > >
       Line_element_and_local_coordinate_at_knot;
 
-    /// \short these elements sit on the surface of the disk, so cannot determine
-    /// the sign of the unit normal from the Lagrangian coordinates
-    int Sign_of_outer_unit_normal;
-
+    /// \short keep track of whether this element represents the lower disk surface,
+    /// to get the sign of the unit normal, pressure jump etc. correct
+    bool Lower_disk_surface;
+      
     /// \short Function pointer to a function which computes the outer unit normal
     /// at given Lagrangian coordinates
     OuterUnitNormalFctPt Outer_unit_normal_fct_pt;
-      
-    // ********
-    // QUEHACERES start here - need same machinery as with the face elements,
-    // i.e. need to store sing elem and local coords for each knot point
+
+    // radius of the augmented region over which the singular integral is performed
+    double R_torus;
     
+    // Dimensions of this element (not the problem in which it is embedded)
+    unsigned Dim;
   };
 
   ////////////////////////////////////////////////////////////////////////
@@ -2013,10 +2076,11 @@ namespace oomph
   {
     
   public:
-    
-    // shorthand typedef for the baseclass typedef 
-      typedef typename
-	NavierStokesWithSingularityFaceElement<ELEMENT>::SingularLineElement SingularLineElement;
+
+    // QUEHACERES delete
+    /* // shorthand typedef for the baseclass typedef  */
+    /*   typedef typename */
+    /* 	NavierStokesWithSingularityFaceElement<ELEMENT>::SingularLineElement SingularLineElement; */
       
       /// \short Constructor, takes the pointer to the "bulk" element and the 
       /// index of the face to which the element is attached. Optional final
@@ -2497,39 +2561,43 @@ namespace oomph
 	// total singular contribution
 	u_sing = sing_el_pt->total_singular_contribution(lagr_coords_at_knot,
 							 s_singular_el);
-	
-	// the total contribution of the singular velocity gradients
-	dudx_sing_total = sing_el_pt->
-	  total_singular_gradient_contribution(lagr_coords_at_knot,
-					       s_singular_el);
 
-	// total singular pressure
-	double p_sing_total = u_sing[this->P_index_nst];
+	sing_el_pt->total_singular_stress(lagr_coords_at_knot,
+					  s_singular_el,
+					  stress_sing_total);
+	// ### QUEHACERES delete
+	/* // the total contribution of the singular velocity gradients */
+/* 	dudx_sing_total = sing_el_pt-> */
+/* 	  total_singular_gradient_contribution(lagr_coords_at_knot, */
+/* 					       s_singular_el); */
 
-	// total singular contribution to the strain-rate
-	DenseMatrix<double> strain_rate_sing_total(Dim, Dim, 0.0);
+/* 	// total singular pressure */
+/* 	double p_sing_total = u_sing[this->P_index_nst]; */
 
-	// compute the strain-rate from the velocity gradients,
-	// \epsion_{ij} = 1/2 (du_i/dx_j + du_j/dx_i)
-	for (unsigned i=0; i<Dim; i++)
-	{
-	  for(unsigned j=0; j<Dim; j++)
-	  {
-	    strain_rate_sing_total(i,j) = 0.5*(dudx_sing_total(i,j) + dudx_sing_total(j,i));
-	  }
-	}
+/* 	// total singular contribution to the strain-rate */
+/* 	DenseMatrix<double> strain_rate_sing_total(Dim, Dim, 0.0); */
 
-#ifdef PARANOID
-	if(bulk_el_pt->stress_fct_pt() == 0)
-	{
-	  throw OomphLibError(
-	    "Error: the stress function pointer has not been set for the augmented elements\n",
-	    OOMPH_CURRENT_FUNCTION,
-	    OOMPH_EXCEPTION_LOCATION);
-	}
-#endif 
-	stress_sing_total =
-	  (*bulk_el_pt->stress_fct_pt())(strain_rate_sing_total, p_sing_total);
+/* 	// compute the strain-rate from the velocity gradients, */
+/* 	// \epsion_{ij} = 1/2 (du_i/dx_j + du_j/dx_i) */
+/* 	for (unsigned i=0; i<Dim; i++) */
+/* 	{ */
+/* 	  for(unsigned j=0; j<Dim; j++) */
+/* 	  { */
+/* 	    strain_rate_sing_total(i,j) = 0.5*(dudx_sing_total(i,j) + dudx_sing_total(j,i)); */
+/* 	  } */
+/* 	} */
+
+/* #ifdef PARANOID */
+/* 	if(bulk_el_pt->stress_fct_pt() == 0) */
+/* 	{ */
+/* 	  throw OomphLibError( */
+/* 	    "Error: the stress function pointer has not been set for the augmented elements\n", */
+/* 	    OOMPH_CURRENT_FUNCTION, */
+/* 	    OOMPH_EXCEPTION_LOCATION); */
+/* 	} */
+/* #endif  */
+/* 	stress_sing_total = */
+/* 	  (*bulk_el_pt->stress_fct_pt())(strain_rate_sing_total, p_sing_total); */
       }
 
       // ======================================================================
@@ -2813,9 +2881,9 @@ namespace oomph
  
   public:
 
-    // shorthand typedef for the baseclass typedef 
-    typedef typename
-      NavierStokesWithSingularityFaceElement<ELEMENT>::SingularLineElement SingularLineElement;
+    /* // shorthand typedef for the baseclass typedef  */
+    /* typedef typename */
+    /*   NavierStokesWithSingularityFaceElement<ELEMENT>::SingularLineElement SingularLineElement; */
     
     /// \short Constructor, takes the pointer to the "bulk" element and the 
     /// index of the face to which the element is attached. 
@@ -4350,11 +4418,12 @@ namespace oomph
 
     // expose the dimension template argument
     static const unsigned _DIM_ = DIM;
-    
-    // shorthand for the singular line element
-    // QUEHACERES hacky! get rid of the #define at some point
-    typedef ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>
-      SingularLineElement;
+
+    // QUEHACERES delete
+    /* // shorthand for the singular line element */
+    /* // QUEHACERES hacky! get rid of the #define at some point */
+    /* typedef ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D> */
+    /*   SingularLineElement; */
 
     unsigned nnode_on_face() const
     {
@@ -4374,7 +4443,6 @@ namespace oomph
       Exact_non_singular_fct_pt(nullptr), Dfunctional_du_fct_pt(nullptr),
       Stress_fct_pt(nullptr), Body_force_fct_pt(nullptr), Nsingular_fct(0),
       Pressure_regularisation_factor(0.0), Velocity_regularisation_factor(0.0)
-      , random_var_to_alter_mem_map(0.0)
     { }
 
     TNavierStokesWithSingularityPdeConstrainedMinElement(
@@ -4697,16 +4765,16 @@ namespace oomph
       Is_lower_disk_element = true;
     }
 
-    void total_singular_contribution_and_gradient_at_knot(const unsigned& ipt,
-							  Vector<double>& u_sing_total,
-							  DenseMatrix<double>& dudx_sing_total) const
+    void total_singular_velocity_gradient_and_stress_at_knot(const unsigned& ipt,
+							     DenseMatrix<double>&dudx_sing_total,
+							     DenseMatrix<double>& stress_sing_total) const
     {
       // clear eveything out
-      u_sing_total.resize(DIM+1, 0.0);
-      dudx_sing_total.resize(DIM, DIM, 0.0);
+      /* ### QUEHACERES delete u_sing_total.resize(DIM+1, 0.0); */
+      stress_sing_total.resize(DIM, DIM, 0.0);
 
-      u_sing_total.initialise(0.0);
-      dudx_sing_total.initialise(0.0);
+      /* ### QUEHACERES delete u_sing_total.initialise(0.0); */
+      stress_sing_total.initialise(0.0);
       
       // get the line element and local coordinate which corresponds to the
       // singular amplitude for this point
@@ -4740,18 +4808,24 @@ namespace oomph
       Vector<double> s_singular_el = line_elem_and_local_coord.second;
       
       // get the \rho,\zeta,\phi coordinates at this knot
-      LagrangianCoordinates lagr_coords_at_point;
+      LagrangianCoordinates lagr_coords_at_knot;
       
-      lagr_coords_at_point = this->lagr_coordinate_at_knot(ipt);
+      lagr_coords_at_knot = this->lagr_coordinate_at_knot(ipt);
 
       // get 'em
-      u_sing_total =
-	sing_el_pt->total_singular_contribution(lagr_coords_at_point,
-						s_singular_el);
 
-      dudx_sing_total =
-	sing_el_pt->total_singular_gradient_contribution(lagr_coords_at_point,
-							 s_singular_el);
+      
+      // ### QUEHACERES delete
+      /* u_sing_total = */
+      /* 	sing_el_pt->total_singular_contribution(lagr_coords_at_knot, */
+      /* 						s_singular_el); */
+      
+      dudx_sing_total = sing_el_pt->total_singular_gradient_contribution(lagr_coords_at_knot,
+									 s_singular_el);
+	
+      sing_el_pt->total_singular_stress(lagr_coords_at_knot,
+					s_singular_el,
+					stress_sing_total);
     }
     
     // QUEHACERES make these time dependent
@@ -5106,6 +5180,10 @@ namespace oomph
 	  Vector<double> u_sing = sing_el_pt->singular_fct(lagr_coords_at_plot,
 							   s_singular_el,
 							   sing_fct_id);
+
+	  if(sing_fct_id == 104 && u_sing[3] > 100 && x[2]<-0.1)
+	    unsigned breakpoint = 1;
+	  
 	  for(unsigned i=0; i<DIM+1; i++)
 	  {
 	    outfile << u_sing[i] << " ";
@@ -5870,27 +5948,30 @@ namespace oomph
 
 	// total scaled contribution of the singular functions and their
 	// Eulerian derivatives
-	Vector<double> u_sing_total(DIM+1, 0.0);
-	DenseMatrix<double> dudx_sing_total(DIM, DIM, 0.0);
+	Vector<double> u_sing_total(DIM+1, 0.0);	
 	DenseMatrix<double> stress_sing_total(DIM, DIM, 0.0);
-	DenseMatrix<double> strain_rate_sing_total(DIM, DIM, 0.0);
+	DenseMatrix<double> dudx_sing_total(DIM, DIM, 0.0);
+	
+	// ### QUEHACERES delete	
+	/* DenseMatrix<double> strain_rate_sing_total(DIM, DIM, 0.0); */
 	
 	// get 'em
-	total_singular_contribution_and_gradient_at_knot(ipt, u_sing_total,
-							 dudx_sing_total);
-	
-	for(unsigned i=0; i<DIM; i++)
-	{
-	  for(unsigned j=0; j<DIM; j++)
-	  {
-	    strain_rate_sing_total(i,j) = 0.5 * (dudx_sing_total(i,j) +
-						 dudx_sing_total(j,i));
-	  }
-	}
+	total_singular_velocity_gradient_and_stress_at_knot(ipt, dudx_sing_total,
+							    stress_sing_total);
 
-	// and finally compute the total singular stress
-	double p_sing_total = u_sing_total[this->p_index_nst()];
-	stress_sing_total = Stress_fct_pt(strain_rate_sing_total, p_sing_total);
+	// ### QUEHACERES delete
+	/* for(unsigned i=0; i<DIM; i++) */
+	/* { */
+	/*   for(unsigned j=0; j<DIM; j++) */
+	/*   { */
+	/*     strain_rate_sing_total(i,j) = 0.5 * (dudx_sing_total(i,j) + */
+	/* 					 dudx_sing_total(j,i)); */
+	/*   } */
+	/* } */
+
+	/* // and finally compute the total singular stress */
+	/* double p_sing_total = u_sing_total[this->p_index_nst()]; */
+	/* stress_sing_total = Stress_fct_pt(strain_rate_sing_total, p_sing_total); */
 
 	// Get the Eulerian position
 	Vector<double> x(DIM, 0.0);
@@ -6615,8 +6696,6 @@ namespace oomph
 
     /// \short scaling factor for 
     double Velocity_regularisation_factor;
-
-    double random_var_to_alter_mem_map;
   };
 
 

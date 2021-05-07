@@ -61,7 +61,7 @@
 namespace Global_Parameters
 {
   // QUEHACERES hacky, but makes life easier for the hacky FSI fixed-point loop
-  Problem* Problem = nullptr;
+  Problem* problem_pt = nullptr;
   
   // QUEHACERES delete after debug
   double broadside_amplitude_pin          = 0.0;
@@ -77,12 +77,25 @@ namespace Global_Parameters
   /// (Half)height of the box
   double Box_half_height = 0.5; //1.0;
 
+  // state vector giving the 3 translational velocities and 3 rotational velocities
+  Vector<double> disk_rigid_body_motion(6, 0.0);
+    
   // velocity of the whole disk (rigid)
   Vector<double> u_disk_rigid_translation(3, 0.0);
 
   // angular velocity of whole disk about positive Cartesian axes
   Vector<double> omega_disk(3, 0.0);
 
+  // rotation of the disk about x and y axes - will be used to
+  // construct the rotation matrix below
+  double Disk_rotation_x = 0.0;
+  double Disk_rotation_y = 0.0;
+  
+    
+  // Eulerian rotation matrix to be applied to the position
+  // of the warped disk
+  DenseMatrix<double> rotation_matrix = identity_matrix();
+    
   // do we want to enforce no-slip (and on top boundary, zero-traction)?
   // if this is false then we're doing exact flat disk BCs
   bool No_slip_boundaries = false;
@@ -213,70 +226,6 @@ namespace Global_Parameters
     
     return u_disk;
   }
-
-  Vector<double> compute_singular_amplitudes_from_disk_velocity(
-    const double& zeta)
-  {
-  
-    // broadside speed is the z-velocity component
-    double u_broadside =  u_disk_rigid_translation[2];
-    
-    // in-plane speed is the magnitude of the x-y velocity
-    double u_in_plane = sqrt( pow(u_disk_rigid_translation[0], 2) +
-			      pow(u_disk_rigid_translation[1], 2) );
-
-    // azimuthal angle of the in-plane translation vector
-    double zeta_translation = atan2pi(u_disk_rigid_translation[1],
-				      u_disk_rigid_translation[0]);
-  
-    // azimuthal angle of the out-of-plane rotation vector
-    double zeta_rotation = atan2pi(omega_disk[1],
-				   omega_disk[0]);
-
-    // magnitude of the out-of-plane rotation vector
-    double omega_out_of_plane = sqrt(pow(omega_disk[0], 2) +
-				     pow(omega_disk[1], 2));
-
-
-    // broadside amplitude is the broadside translation plus the
-    // modulated contribution from out-of-plane rotations (with the factor of 2
-    // which appears for the out-of-plane solution to be locally equivalent
-    // to broadside motion)
-    double c_broadside = u_broadside + // 2 * omega_out_of_plane * sin(zeta - zeta_rotation);
-      2.0 * omega_out_of_plane * (cos(zeta) + sin(zeta));
-
-    double c_broadside_rotation = -omega_out_of_plane * sin(zeta) / sqrt(2);
-      
-    // in-plane amplitude is the in-plane speed modulated by
-    // an in-phase function of the angle of this point relative to the
-    // translation vector
-    double c_in_plane = u_in_plane * cos(zeta - zeta_rotation);
-  
-    // in-plane rotation amplitude is the in-plane speed modulated by
-    // a function pi/2 out of phase with the angle of this point relative to the
-    // translation vector
-    double c_in_plane_rotation = u_in_plane * (sin(zeta - zeta_translation) -
-					       cos(zeta - zeta_translation)) +
-      omega_disk[2];
-
-    // now package them up for return
-    Vector<double> amplitudes(4, 0.0);
-
-    // if we're doing the exact solution, then we don't want any modulation
-    if(CommandLineArgs::command_line_flag_has_been_set("--subtract_exact_solution"))
-    {
-      c_broadside = u_broadside > 0.0 ? 1 : 0;
-      c_in_plane = u_in_plane > 0.0 ? 1 : 0;
-      c_in_plane_rotation = 0; // QUEHACERES not doing this for the time being
-    }
-
-    amplitudes[0] = c_broadside;
-    amplitudes[1] = c_broadside_rotation;
-    amplitudes[2] = c_in_plane;
-    amplitudes[3] = c_in_plane_rotation;
-  
-    return amplitudes;
-  }
 }
 
 namespace Analytic_Functions
@@ -304,6 +253,7 @@ namespace Analytic_Functions
     FlatDiskExactSolutions::total_exact_solution(x,
 						 Global_Parameters::u_disk_rigid_translation,
 						 Global_Parameters::omega_disk,
+						 Global_Parameters::rotation_matrix,
 						 u_exact);
   }
 
@@ -318,6 +268,7 @@ namespace Analytic_Functions
     FlatDiskExactSolutions::total_exact_velocity_gradient(x,
     							  Global_Parameters::u_disk_rigid_translation,
     							  Global_Parameters::omega_disk,
+							  Global_Parameters::rotation_matrix,
     							  dudx);    
   }
 
@@ -405,9 +356,18 @@ public:
   
   static const unsigned NNODE_1D = ELEMENT::_NNODE_1D_;
 
+  // number of integration points in the xi1 and xi2 directions
+  // for the integration of the singular traction
+  static const unsigned NPT_XI1 = 200;
+  static const unsigned NPT_XI2 = 100;
+  
   // shorthand for the disk elements which compute the singular drag. We'll
   // use the same integration order as the normal elements
-  typedef QSingularDragIntegralDiskElement<2, NNODE_1D> SingularDragElement;
+  typedef SingularDragIntegralDiskElement<NPT_XI1, NPT_XI2> SingularDragElement;
+
+  // shorthand for the singular line elements which handle the
+  // singular functions and their amplitudes
+  typedef ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D> SingularLineElement;
   
   /// Constructor
   FlowAroundDiskProblem();
@@ -451,7 +411,7 @@ public:
 
   // function to directly impose the singular amplitude and bypass the 
   // proper calculation
-  void impose_fake_singular_amplitude(const bool& impose_zero_amplitude = false);
+  void impose_fake_singular_amplitude(const bool& impose_zero_amplitude = false) const;
 
   /// Assign nodal values to be the exact singular solution for debug
   void set_values_to_singular_solution() const;
@@ -474,20 +434,21 @@ public:
   /// a particular singular function
   void pin_singular_function(const unsigned& sing_fct_id, const double& val=0.0);
 
+  void read_and_recompute_singular_drag(const std::string& filename) const;
+  
   // QUEHACERES for debug: compute the condition number of the Jacobian
   // matrix
   double compute_jacobian_condition_number();
 
   void compute_and_assign_smallest_eigensolution(const double& threshold=1e-12);
 
-  void hacky_fixed_point_fsi_solve();
+  void hacky_fsi_solve();
 
   void fsi_residual_sweep();
   
   /// QUEHACERES good comment here
-  void get_total_disk_force_and_moment_residuals(
-    const Vector<double>& centre_of_rotation,
-    Vector<double>& residuals);
+  void get_total_disk_force_and_torque(const Vector<double>& centre_of_mass,
+				       Vector<double>& total_force_and_torque);
 
   /// Helper function to apply boundary conditions
   void apply_boundary_conditions();
@@ -627,15 +588,21 @@ private:
   /// boundary coordinate, i.e. c(zeta_bound).
   void create_one_d_singular_element_mesh(const unsigned& nsingular_el);
 
-  /// \short create a mesh of quad elements with a mixed Gauss/Chebyshev-Gauss
+  /// \short create the 2 elements with a mixed Chebyshev-Gauss/Gauss-Legendre
   /// integration scheme for integrating the singular contribution to the drag
-  void create_singular_drag_integration_mesh(const double& r_torus,
-					     const unsigned& nel_xi1,
-					     const unsigned& nel_xi2);
+  void create_singular_drag_integration_elements(const double& r_torus,
+						 const unsigned& nel_xi1,
+						 const unsigned& nel_xi2);
       
   /// Setup disk on disk plots
   void setup_disk_on_disk_plots();
 
+  Vector<std::pair<unsigned, double>>
+    compute_singular_amplitudes_from_disk_velocity(const double& zeta) const;
+
+  // use disk elements to compute the centre of mass
+  void compute_centre_of_mass(Vector<double>& com) const;
+  
   // --------------------------------------------------------------------------
   // Meshes
   // --------------------------------------------------------------------------
@@ -668,11 +635,12 @@ private:
   /// Mesh of elements within the torus region for the computation of Z2
   RefineableTetgenMesh<ELEMENT>* Torus_region_mesh_pt;
 
-  /// \short Mesh of quad elements with mixed gauss/chebyshev-gauss integration 
-  /// scheme for integrating the singular contribution to the drag
-  Mesh* Singular_drag_integration_mesh_pt;
-  Mesh* Singular_drag_integration_mesh_upper_pt;
-  Mesh* Singular_drag_integration_mesh_lower_pt;
+  // QUEHACERES delete
+  /* /// \short Mesh of quad elements with mixed gauss/chebyshev-gauss integration  */
+  /* /// scheme for integrating the singular contribution to the drag */
+  /* Mesh* Singular_drag_integration_mesh_pt; */
+  /* Mesh* Singular_drag_integration_mesh_upper_pt; */
+  /* Mesh* Singular_drag_integration_mesh_lower_pt; */
 
   // pointer to the GeomObject which characterises the disk
   CylindricallyWarpedCircularDiskWithAnnularInternalBoundary* Warped_disk_with_boundary_pt;
@@ -684,13 +652,21 @@ private:
   /// disk and torus boundary we don't want separate fields being interpolated
   enum{ bla_hierher, Stress_jump_el_id=1, BC_el_id=1, Lambda_hat_hat_id=2 };
 
+public:
+  
   // IDs to identify each singular function
   enum {Sing_fct_id_broadside=100,
 	Sing_fct_id_broadside_rotation,
+	Sing_fct_id_broadside_rotation_no_az,
+	Sing_fct_id_broadside_rotation_az_only,
 	Sing_fct_id_in_plane,
-	Sing_fct_id_in_plane_rotation};
-
+	Sing_fct_id_in_plane_rotation,
+	Sing_fct_id_in_plane_no_az,
+	Sing_fct_id_in_plane_az_only};
+  
   // --------------------------------------------------------------------------
+  
+private:
   
   /// Mesh as geom object representation of mesh  
   MeshAsGeomObject* Mesh_as_geom_object_pt;
@@ -751,7 +727,10 @@ private:
   Vector<unsigned> Boundary_id_for_upper_disk_outside_torus;
 
   /// Combined list of boundary IDs (upper and lower disk) within the torus
-  Vector<double> Disk_boundary_ids_in_torus;
+  Vector<unsigned> Disk_boundary_ids_in_torus;
+
+  /// All disk IDs (both sides of the disk, inside and outside the torus)
+  Vector<unsigned> All_disk_boundary_ids;
   
   /// \short vectors to hold pointers to the elements which have at least one
   /// node on the disk surface
@@ -793,6 +772,10 @@ private:
   /// \short Map which returns the corresponding bulk region element which
   /// shares a face with a given augmented region boundary element
   std::map<ELEMENT*, std::map<unsigned, ELEMENT*> > Torus_boundary_aug_to_non_aug_by_face_index_map;
+
+  /// \short the GeneralisedElements which will compute the singular contribution
+  /// to the drag
+  Vector<SingularDragElement*> Singular_drag_elements;
   
   // QUEHACERES taking out the vectorisation for now
   // ///This is vectorised

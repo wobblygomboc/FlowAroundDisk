@@ -99,9 +99,15 @@ namespace oomph
 
       // now compute weights
       w.resize(nnode, 0.0);
-      
-      for(auto& wi : w)
-	wi = MathematicalConstants::Pi / nnode;
+
+      // nominal weights are pi/n. Here we're also adding in the
+      // sqrt(1-s^2) factor into the weighting so that it doesn't
+      // need adding separately when evaluating an integral	  
+      for(unsigned i=0; i<nnode; i++)
+      {
+	w[i] = MathematicalConstants::Pi / nnode *
+	  sqrt(1.0 - x[i]*x[i]);
+      }
     }
     
   private:
@@ -115,27 +121,26 @@ namespace oomph
   };
 
   // ==========================================================================
-  // quadrature scheme formed by the 2D tensor product of a standard
-  // Gauss scheme in one direction and a Chebyshev-Gauss scheme in the
-  // perpendicular direction
+  // quadrature scheme formed by the 2D tensor product of a Chebyshev-Gauss
+  // scheme in the 1 direction and a standard Gauss scheme in the 2 direction
   // ==========================================================================
   template<unsigned NPTS_1, unsigned NPTS_2>
-    class TwoDGaussTensorProductChebyshevGauss : public Integral
+    class TwoDChebyshevGaussTensorProductGaussLegendre : public Integral
   {
   public:
     
-    TwoDGaussTensorProductChebyshevGauss()
+    TwoDChebyshevGaussTensorProductGaussLegendre()
     {
       // Temporary storage for the Chebyshev-Gauss knot points
-      Vector<double> s_cheb_gauss(NPTS_2, 0.0), weight_cheb_gauss(NPTS_2, 0.0);
+      Vector<double> s_cheb_gauss(NPTS_1, 0.0), weight_cheb_gauss(NPTS_1, 0.0);
 
       // get 'em
-      ChebyshevGauss<1, NPTS_2>::chebyshev_gauss_nodes(NPTS_2,
+      ChebyshevGauss<1, NPTS_1>::chebyshev_gauss_nodes(NPTS_1,
 						       s_cheb_gauss,
 						       weight_cheb_gauss);
 
       // now get the standard Gauss knots
-      Gauss<1, NPTS_1> gauss_quadrature;
+      GaussLegendre<1, NPTS_2> gauss_quadrature;
 
       // set total number of knots and make space
       Npts = NPTS_1 * NPTS_2;
@@ -153,12 +158,13 @@ namespace oomph
 	  // make space (this scheme is strictly 2D so this is hard-coded here)
 	  Knot[ipt].resize(2, 0.0);
 	
-	  // we're doing Gauss spacing in the x1 direction and Chebyshev-Gauss
-	  // spacing in the x2 direction
-	  Knot[ipt][0] = gauss_quadrature.knot(i, 0);
-	  Knot[ipt][1] = s_cheb_gauss[j];
-	  
-	  Weight[ipt] = gauss_quadrature.weight(i) * weight_cheb_gauss[j];
+	  // we're doing Chebyshev-Gauss spacing in the x1 direction and 
+	  // Gauss spacing in the x2 direction
+	  Knot[ipt][0] = s_cheb_gauss[i];
+	  Knot[ipt][1] = gauss_quadrature.knot(j, 0);
+
+	  // weight is just the tensor product of the weights of the two schemes
+	  Weight[ipt] = weight_cheb_gauss[i] * gauss_quadrature.weight(j);
 
 	  ipt++;
 	}
