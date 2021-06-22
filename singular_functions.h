@@ -131,7 +131,8 @@ namespace SingularFunctions
     double p = 0.0;
     
     // get the flat disk solution
-    FlatDiskExactSolutions::broadside_translation_solution_cylindrical(obl_sph_coords, u_lagr, p);
+    FlatDiskExactSolutions::broadside_translation_solution_cylindrical(obl_sph_coords,
+								       u_lagr, p);
     
     // now convert to Cartesian
     // ------------------------

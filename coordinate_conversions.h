@@ -37,8 +37,6 @@ namespace CoordinateConversions
     Vector<double> a2(3, 0.0);
     Vector<double> a3(3, 0.0);
     
-    Vector<double> xi = lagr_coords.vector();
-    
     // get 'em
     disk_geom_obj_pt->basis_vectors(lagr_coords, a1, a2, a3);
 

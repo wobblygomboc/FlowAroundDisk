@@ -102,13 +102,18 @@ namespace Global_Parameters
 
   // radius of the cylinder around which the disk is wrapped.
   // Default is ~inf, i.e. flat disk
-  double Radius_of_curvature = 1e3;
-    
-  // amount of pressure regularisation to add to the functional which we're
-  // minimising in the torus region
-  double Pressure_regularisation_factor = 0.1;
+  double Radius_of_curvature = 1e5;
 
-  double Velocity_regularisation_factor = 1.0;
+  // amount of regularisation of each quantity to add to the functional which we're
+  // minimising in the torus region,
+  // \Pi = (1/2)|u|^2 + (1/2)|p|^2 + (1/2)|dp|^2 + (1/2)|t|^2
+  double Velocity_gradient_regularisation_factor  = 0.0;  
+  double Pressure_jump_regularisation_factor      = 0.0;
+  double Pressure_regularisation_factor           = 0.0;
+  double Pressure_gradient_regularisation_factor  = 0.0;
+  double Velocity_regularisation_factor           = 0.0;
+  double Amplitude_regularisation_factor          = 0.0;
+  double Amplitude_gradient_regularisation_factor = 0.0;
   
   // Convergence tolerance for the outer FSI Newton solve
   double FSI_convergence_tol = 1e-6;
@@ -238,7 +243,7 @@ namespace Analytic_Functions
     // functional \Pi = sum_j 1/2|u_j|^2, so d\Pi/d u_i = u_i
     for(unsigned i=0; i<u.size(); i++)
       dpi_du[i] = (u[i]);
-
+    
     return dpi_du;
   }
   
@@ -337,6 +342,22 @@ namespace Analytic_Functions
     // (xi3 = -0.0 indicates a point on the lower side of the disk)
     for(double& ni : unit_normal)
       ni *= lagr_coords.sign_of_xi3();
+  }
+  
+  // wrapper function to get the a1 tangent vector as a function
+  // of the Lagrangian disk coordinates 
+  void a1_tangent_vector(const LagrangianCoordinates& lagr_coords,
+			 Vector<double>& a1)
+  {
+    // basis vectors (a3 is the outer unit normal)
+    Vector<double> a2_dummy, a3_dummy;
+
+    // get 'em from the disk GeomObject
+    Global_Parameters::Warped_disk_with_boundary_pt->basis_vectors(lagr_coords,
+								   a1,
+								   a2_dummy,
+								   a3_dummy);
+
   }
 }
 
@@ -453,6 +474,9 @@ public:
   /// Helper function to apply boundary conditions
   void apply_boundary_conditions();
   
+  // generic hook if we want to test anything to do with the setup before the solve
+  void debug_shizzle_before_solve();
+  
 private:
  
   /// Apply BCs and make elements functional
@@ -506,20 +530,6 @@ private:
 	delete Singular_fct_element_mesh_pt->element_pt(e);
       }
       Singular_fct_element_mesh_pt->flush_element_and_node_storage();
-      
-      for(unsigned e=0; e<Singular_fct_element_mesh_lower_pt->nelement(); e++)
-      {
-	// the destructor of the line element deletes the newly created nodes
-	delete Singular_fct_element_mesh_lower_pt->element_pt(e);
-      }      
-      Singular_fct_element_mesh_lower_pt->flush_element_and_node_storage();
-      
-      for(unsigned e=0; e<Singular_fct_element_mesh_upper_pt->nelement(); e++)
-      {
-	// the destructor of the line element deletes the newly created nodes
-	delete Singular_fct_element_mesh_upper_pt->element_pt(e);
-      }      
-      Singular_fct_element_mesh_upper_pt->flush_element_and_node_storage();
     }
   
   /// \short Helper function to create the face elements needed to:
@@ -563,7 +573,7 @@ private:
     FiniteElement* const& elem_pt,
     Vector<LagrangianCoordinates>& lagr_coordinates_at_knot_pt,
     Vector<std::pair<GeomObject*, Vector<double> > >& line_element_and_local_coordinate,
-    const bool& use_plot_points = false,
+    const unsigned& point_type = knot_points,
     const bool& use_undeformed_coords = false) const;
 
   /// \short function to compute the edge coordinates and corresponding
@@ -582,12 +592,33 @@ private:
     sanity_check_lagr_coords_on_disk() const;    
 
   void output_augmented_elements_eulerian_and_lagr_coords() const;
+
+  // shorthand
+  typedef NavierStokesWithSingularityBCFaceElement<ELEMENT> BC_ELEMENT;
+  
+  /// \short for a given line element on the circumference of the disk,
+  /// find the corresponding bulk elements which contain the normal (a1) and
+  /// binormal (a3) vectors, and also find the bulk coordinates of the line
+  /// element's knots in these elements
+  
+  void get_bulk_elements_and_normal_vectors_at_disk_edge(
+    FunctionalMinimisingLineElement<NavierStokesWithSingularityFaceElement<ELEMENT>>*
+    const& functional_elem_pt,
+    Vector<ELEMENT*>& normal_elem_at_knot,
+    Vector<ELEMENT*>& binormal_elem_at_knot,
+    Vector<Vector<double>>& s_bulk_at_knot_normal,
+    Vector<Vector<double>>& s_bulk_at_knot_binormal,
+    Vector<Vector<double>>& normal_vector_at_knot,
+    Vector<Vector<double>>& binormal_vector_at_knot);
   
   /// \short Helper to generate the 1D line mesh which runs around the outside of the
   /// disk and provides the amplitude of the singularity as a function of the
   /// boundary coordinate, i.e. c(zeta_bound).
   void create_one_d_singular_element_mesh(const unsigned& nsingular_el);
 
+  /// \short QUEHACERES
+  void create_one_d_functional_element_mesh();
+  
   /// \short create the 2 elements with a mixed Chebyshev-Gauss/Gauss-Legendre
   /// integration scheme for integrating the singular contribution to the drag
   void create_singular_drag_integration_elements(const double& r_torus,
@@ -613,6 +644,10 @@ private:
   /// \short Face element mesh which imposes the necessary traction
   /// onto the bulk elements on the boundary of the augmented region
   Mesh* Face_mesh_for_stress_jump_pt;
+
+  // QUEHACERES experimental - mesh of elements which computes the jump in
+  // pressure across the plate, which is added to the functional we're minimising
+  Mesh* Face_mesh_for_pressure_jump_pt;
   
   /// \short Meshes of face elements used to compute the amplitudes of the singular
   /// functions (one mesh per singular function)
@@ -621,16 +656,14 @@ private:
   /// \short Mesh of face
   Mesh* Traction_boundary_condition_mesh_pt;   
 
-  /// Meshes containing the line elements which store the amplitudes of the
+  /// Mesh containing the line elements which store the amplitudes of the
   /// singular functions
-  Mesh* Singular_fct_element_mesh_upper_pt;
-  Mesh* Singular_fct_element_mesh_lower_pt;
-
-  /// Mesh which combines the upper and lower halves, so we don't have to repeat code
   Mesh* Singular_fct_element_mesh_pt;
 
   /// Mesh of face elements which impose Dirichlet boundary conditions in augmented region
   Mesh* Face_mesh_for_bc_pt;
+
+  Mesh* Line_mesh_for_functional_minimisation_pt;
   
   /// Mesh of elements within the torus region for the computation of Z2
   RefineableTetgenMesh<ELEMENT>* Torus_region_mesh_pt;
@@ -652,17 +685,18 @@ private:
   /// disk and torus boundary we don't want separate fields being interpolated
   enum{ bla_hierher, Stress_jump_el_id=1, BC_el_id=1, Lambda_hat_hat_id=2 };
 
+  enum { knot_points, plot_points, nodes };
 public:
   
   // IDs to identify each singular function
   enum {Sing_fct_id_broadside=100,
-	Sing_fct_id_broadside_rotation,
+	/* Sing_fct_id_broadside_rotation, */
 	Sing_fct_id_broadside_rotation_no_az,
 	Sing_fct_id_broadside_rotation_az_only,
-	Sing_fct_id_in_plane,
-	Sing_fct_id_in_plane_rotation,
+	/* Sing_fct_id_in_plane, */	
 	Sing_fct_id_in_plane_no_az,
-	Sing_fct_id_in_plane_az_only};
+	Sing_fct_id_in_plane_az_only,
+	Sing_fct_id_in_plane_rotation,};
   
   // --------------------------------------------------------------------------
   
@@ -809,6 +843,9 @@ private:
 			 Vector<double>,std::pair<GeomObject*,Vector<double> > > > > >
   Disk_on_disk_plot_point;
 
+
+  // ------------------------------------------------------------------
+  
   bool Have_output_exact_soln;
   
   /// Sanity check: Exact bounded volume
@@ -823,6 +860,11 @@ private:
   DocInfo Doc_info;
 
   unsigned Fsi_iteration_counter;
+
+  /// \short After each FSI solve we want to store the solution,
+  /// so that we can then sum them in a linear combination to yield
+  /// the total solution
+  Vector<DoubleVector> Dofs_for_linearly_combined_soln;
 };
 
 #endif

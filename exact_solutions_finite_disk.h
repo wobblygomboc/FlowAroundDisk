@@ -98,7 +98,8 @@ namespace FlatDiskExactSolutions
 
   // compute the broadside solution in cylindrical components
   // from oblate spheroidal coordinates
-  void broadside_translation_solution_cylindrical(const OblateSpheroidalCoordinates& obl_sph_coords,
+  void broadside_translation_solution_cylindrical(const OblateSpheroidalCoordinates&
+						  obl_sph_coords,
 						  Vector<double>& u_cyl, double& p)
   {
     // the solution is only valid for the half-space z>=0,
@@ -352,44 +353,66 @@ namespace FlatDiskExactSolutions
   void out_of_plane_rotation_solution_cylindrical(const OblateSpheroidalCoordinates& obl_sph_coords,
 						  Vector<double>& u_cyl, double& p)
   {
-    // temporarily convert to Cartesians
-    Vector<double> x(3, 0.0);
+    /* // temporarily convert to Cartesians */
+    /* Vector<double> x(3, 0.0); */
 
-    x[0] = obl_sph_coords.r * cos(obl_sph_coords.theta);
-    x[1] = obl_sph_coords.r * sin(obl_sph_coords.theta);
-    x[2] = obl_sph_coords.z;
+    /* x[0] = obl_sph_coords.r * cos(obl_sph_coords.theta); */
+    /* x[1] = obl_sph_coords.r * sin(obl_sph_coords.theta); */
+    /* x[2] = obl_sph_coords.z; */
       
     bool in_lower_half_space = (obl_sph_coords.sign_of_z() < 0);
 
-    // the solution is only valid for the half-space z>=0,
-    // so if we're in the half-space z<0, rotate the point by Pi around the y-axis
-    if(in_lower_half_space)
-    {
-      Vector<double> x_rotated(3, 0.0);
-
-      // get the rotation matrix for a rotation of Pi around e_y
-      DenseMatrix<double> Ry = R_y(Pi);
+    /* // the solution is only valid for the half-space z>=0, */
+    /* // so if we're in the half-space z<0, rotate the point by Pi around the y-axis */
+    /* if(in_lower_half_space) */
+    /* { */
       
-      // now rotate the position vector
-      for(unsigned i=0; i<3; i++)
-      {
-	for(unsigned j=0; j<3; j++)
-	{
-	  x_rotated[i] += Ry(i,j) * x[j];
-	}
-      }
+    /*   Vector<double> x_rotated(3, 0.0); */
 
-      x = x_rotated;
+    /*   // get the rotation matrix for a rotation of Pi around e_y */
+    /*   DenseMatrix<double> Ry = R_y(Pi); */
+      
+    /*   // now rotate the position vector */
+    /*   for(unsigned i=0; i<3; i++) */
+    /*   { */
+    /* 	for(unsigned j=0; j<3; j++) */
+    /* 	{ */
+    /* 	  x_rotated[i] += Ry(i,j) * x[j]; */
+    /* 	} */
+    /*   } */
+
+    /*   x = x_rotated; */
+
+    /*   if(signbit(x[2]) == signbit(obl_sph_coords.z)) */
+    /*   { */
+    /* 	oomph_info << "obl_sph_coords.z = " << obl_sph_coords.z << ",\n" */
+    /* 		   << "x[2] = " << x[2] << std::endl; */
+    /* 	abort(); */
+    /*   } */
+    /* } */
+
+    /* // x-y radius */
+    /* const double r = sqrt(x[0]*x[0] + x[1]*x[1]); */
+
+    /* // azimuthal angle */
+    /* const double theta = atan2(x[1], x[0]); */
+
+    /* // z coordinate */
+    /* const double z = x[2]; */
+
+    const double r = obl_sph_coords.r;
+    const double theta = in_lower_half_space ?
+      map_angle_to_range_0_to_2pi(Pi - obl_sph_coords.theta) : obl_sph_coords.theta;
+    const double z = in_lower_half_space ? -obl_sph_coords.z : obl_sph_coords.z;
+
+    if(in_lower_half_space && signbit(z) == signbit(obl_sph_coords.z))
+    {
+      oomph_info << "obl_sph_coords.z = " << obl_sph_coords.z << ",\n"
+		 << "z = " << z << std::endl;
+      abort();
     }
-
-    // x-y radius
-    const double r = sqrt(x[0]*x[0] + x[1]*x[1]);
-
-    // azimuthal angle
-    const double theta = atan2(x[1], x[0]);
-
-    // z coordinate
-    const double z = x[2];
+    
+    // @@@@
     
     // compute the rotated oblate spheroidal coords
     OblateSpheroidalCoordinates obl_sph_coords_rotated(r, theta, z);
@@ -524,7 +547,7 @@ namespace FlatDiskExactSolutions
     const double Omega_minus_y = -omega_disk[1];
     const double Omega_z       =  omega_disk[2];
       
-    // temporary vector and matrix to hold the individual contributions
+    // temporary vector to hold the individual contributions
     Vector<double> u_temp(4, 0.0);
   
     if (U_in_plane != 0)
@@ -575,7 +598,14 @@ namespace FlatDiskExactSolutions
       }
     }
 
+    // temporarily backup the pressure
+    double p = u[3];
+
+    // assign the rotated velocities
     u = u_temp;
+
+    // add the pressure back in
+    u[3] = p;
   }
 
   // //////////////////////////////////////////////////////////////////////////////

@@ -39,14 +39,18 @@
 
 namespace oomph
 {
+  // forward declarations to avoid ordering issues
   template <unsigned NNODE_1D>
     class ScalableSingularityForNavierStokesLineElement;
-  
+
+  template <class ELEMENT>
+    class NavierStokesWithSingularityFaceElement;
+    
   /// \short global typedef for the templated singular line element
   typedef ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D>
       SingularLineElement;  
   
-  //----------------------ONE DIMENSIONAL CIRCULAR (LINE) MESH-----------------
+  //--------------------- ONE DIMENSIONAL CIRCULAR MESH ------------------------
 
   //============================================================================
   /// A simple one dimensional circular mesh: uniformly spaced nodes in a
@@ -70,6 +74,7 @@ namespace oomph
       // Find the number of nodes per element (N.B. all elements are identical
       // so we can determine this value once and for all). 
       unsigned n_node = finite_element_pt(0)->nnode();
+      
       //Loop over all the nodes of the first element
       for(unsigned n=0; n<n_node; n++)
       {
@@ -169,8 +174,7 @@ namespace oomph
   /// derivatives, etc.
   /// N.B. this has nothing to do with the Poisson equation! this class
   /// merely inherits from QPoissonElement to hijack useful functionality
-  //======================================================================
-  
+  //======================================================================  
   template <unsigned NNODE_1D>
   class ScalableSingularityForNavierStokesLineElement :
     public virtual QPoissonElement<1, NNODE_1D>    
@@ -202,12 +206,13 @@ namespace oomph
     // ------------------------------------------
     
     /// \short Constructor
-    ScalableSingularityForNavierStokesLineElement() :						  
-    Dim(1), Problem_dim(3), Dzeta_dx_fct_pt(nullptr), Stress_fct_pt(nullptr),
-      Zeta_has_been_setup(false)
+    ScalableSingularityForNavierStokesLineElement() :
+    Dim(1), Problem_dim(3), Amplitude_regularisation_factor(0.0),
+      Amplitude_gradient_regularisation_factor(0.0), Dzeta_dx_fct_pt(nullptr),
+      Stress_fct_pt(nullptr), Zeta_has_been_setup(false)
     {
       // QUEHACERES get this programmatically
-      this->set_nodal_dimension(3);      
+      this->set_nodal_dimension(3);
     }
 	    
     /// Broken copy constructor
@@ -235,6 +240,17 @@ namespace oomph
     {
       return Stress_fct_pt;
     }
+
+    void set_amplitude_regularisation_factor(const double& c_reg)
+    {
+      Amplitude_regularisation_factor = c_reg;
+    }
+
+    void set_amplitude_gradient_regularisation_factor(const double& grad_c_reg)
+    {
+      Amplitude_gradient_regularisation_factor = grad_c_reg;
+    }
+
     
     void add_unscaled_singular_fct_and_gradient_pt(
       const UnscaledSingSolnFctPt& sing_fct_pt,
@@ -416,9 +432,7 @@ namespace oomph
     DenseMatrix<double>
       total_singular_gradient_contribution(const LagrangianCoordinates& lagr_coords,
 					   const Vector<double>& s) const
-    {
-      const unsigned nval = lagr_coords.ncoord;
-      
+    {      
       // total of the singular derivatives      
       DenseMatrix<double> dudx_total(Problem_dim, Problem_dim, 0.0);
             
@@ -658,9 +672,11 @@ namespace oomph
 	const unsigned nval = node_pt->nvalue();
 
 	// set all the amplitudes to zero
+	// and pin
 	for(unsigned i=0; i<nval; i++)
 	{
 	  node_pt->set_value(i, 0.0);
+	  node_pt->pin(i);
 	}
       }
     }
@@ -725,17 +741,115 @@ namespace oomph
       }
     }
 
+    void fill_in_generic_residual_contribution_sing_amplitudes(Vector<double>& residuals,
+							       DenseMatrix<double>& jacobian,
+							       const bool& flag = false)
+    {
+      const unsigned nnode = this->nnode();
+      Vector<double> s(1, 0.0);
+
+      Shape psi(nnode);
+      DShape dpsi_dzeta(nnode, 1);
+	
+      const unsigned n_intpt = this->integral_pt()->nweight();
+      
+      //Loop over the integration points
+      for(unsigned ipt=0; ipt<n_intpt; ipt++)
+      {
+	s[0] = this->integral_pt()->knot(ipt, 0);
+
+	//Get the integral weight
+	double w = this->integral_pt()->weight(ipt);
+   
+	//Call the derivatives of the shape and test functions
+	double J = this->J_eulerian_at_knot(ipt);
+		  
+	//Premultiply the weights and the Jacobian
+	double W = w*J;
+
+	this->shape_at_knot(ipt, psi);
+
+	Vector<double> interpolated_dc_dzeta(nsingular_fct(), 0.0);
+
+	dshape_dzeta(s, dpsi_dzeta);
+
+	for(unsigned ising=0; ising<nsingular_fct(); ising++)
+	{
+	  for(unsigned j=0; j<nnode; j++)
+	    interpolated_dc_dzeta[ising] += dpsi_dzeta(j,0) * this->nodal_value(j, ising);
+	}
+	    
+	for(unsigned j=0; j<nnode; j++)
+	{
+	  // loop over the singular amplitudes
+	  for(unsigned ising=0; ising<nsingular_fct(); ising++)
+	  {
+	    int local_eqn = this->nodal_local_eqn(j, ising);
+
+	    // is it pinned?
+	    if(local_eqn >= 0)
+	    {
+	      // get the interpolated ising'th amplitude at this knot
+	      double interpolated_c =
+		interpolated_amplitude(s, Singular_fct_id[ising]);
+
+	      // contribution from functional Pi = (1/2)|c|^2
+	      residuals[local_eqn] += Amplitude_regularisation_factor *
+		interpolated_c * psi[j] * W;
+
+	      residuals[local_eqn] += Amplitude_gradient_regularisation_factor *
+		interpolated_dc_dzeta[ising] * dpsi_dzeta(j,0) * W;
+	      
+	      // Jacobian?
+	      if(flag)
+	      {
+		// singular amplitudes are independent, so don't need second loop
+		// over the singular functions - each function amplitude only depends on
+		// that same functions amplitude at the other nodes
+		for(unsigned j2=0; j2<nnode; j2++)
+		{
+		  int local_unknown = this->nodal_local_eqn(j2, ising);
+
+		  if(local_unknown >= 0)
+		  {
+		    jacobian(local_eqn, local_unknown) +=
+		      Amplitude_regularisation_factor * psi[j] * psi[j2] * W;
+
+		    jacobian(local_eqn, local_unknown) +=
+		      Amplitude_gradient_regularisation_factor * dpsi_dzeta(j,0) *
+		      dpsi_dzeta(j2,0) * W;
+		  }
+		}
+	      } // end Jacobian check
+	    } // end nodal amplitude pinned check
+	  } // end loop over sing fcts
+	} // end loop over nodes
+      } // end loop over integration points
+      
+    }
+      
     /// Add the element's contribution to its residual vector
     inline void fill_in_contribution_to_residuals(Vector<double>& residuals)
-    {  	      
-      // No local contributions - all done by external elements!	    
+    {
+      // QUEHACERES
+      /* // No local contributions - all done by external elements!	     */
+
+      fill_in_generic_residual_contribution_sing_amplitudes(
+	residuals, GeneralisedElement::Dummy_matrix, false);
     }
 
     // overload the Jacobian contributions (don't want Poisson!)
     inline void fill_in_contribution_to_jacobian(Vector<double>& residuals,
     						 DenseMatrix<double>& jacobian)
     {
-      // No local contributions - all done by external elements!
+#ifdef USE_FD_JACOBIAN
+      FiniteElement::fill_in_contribution_to_jacobian(residuals, jacobian);
+#else
+      // QUEHACERES
+      /* // No local contributions - all done by external elements! */
+      fill_in_generic_residual_contribution_sing_amplitudes(
+	residuals, jacobian, true);
+#endif
     }
     
     // function to return whether we're imposing the amplitude of the nth singular fct
@@ -835,6 +949,50 @@ namespace oomph
       }
     }
 
+    /// \short Function to compute the zeta derivatives of the shape
+    /// functions.
+    inline void dshape_dzeta(const Vector<double>& s,
+			     DShape& dpsi_dzeta) const
+    {      
+      //Find number of nodes
+      unsigned nnode = this->nnode();
+
+      Shape psi_dummy(nnode);
+      DShape dpsi_ds(nnode, 1);
+
+      // Get the derivatives of the shape functions
+      // w.r.t. the local (1D) coordinate
+      this->dshape_local(s, psi_dummy, dpsi_ds);
+
+      // get the derivative of zeta (which parameterises the line mesh of
+      // these elements) w.r.t. this elements local coordinate
+      double interpolated_dzeta_ds = 0.0;
+
+      for(unsigned l=0; l<nnode; l++) 
+      {
+	interpolated_dzeta_ds += zeta_nodal(l) * dpsi_ds(l,0);
+      }
+      
+#ifdef PARANOID
+      if (Dzeta_dx_fct_pt == nullptr)
+      {
+	throw OomphLibError("Error: function pointer for dzeta/dx hasn't been set\n",
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
+      }
+#endif
+
+      // now compute the zeta derivatives via chain rule:
+      // dshape/dzeta = dshape/ds * 1/(dzeta/ds)
+      // (this works because we're in 1D so don't have to compute the inverse
+      // of a matrix that would be needed for inverting functions of
+      // multiple variables)
+      for(unsigned n=0; n<nnode; n++)
+      {
+	dpsi_dzeta(n,0) = dpsi_ds(n,0) / interpolated_dzeta_ds;
+      }
+    }
+    
     double interpolated_zeta(const Vector<double>& s) const
     {
       // setup memory for shape functions
@@ -897,6 +1055,10 @@ namespace oomph
 
     /// Dimensionality of the whole problem
     unsigned Problem_dim;
+
+    double Amplitude_regularisation_factor;
+    
+    double Amplitude_gradient_regularisation_factor;
     
     /// Pointers to the singular functions
     Vector<UnscaledSingSolnFctPt> Unscaled_singular_fct_pt;
@@ -926,11 +1088,1054 @@ namespace oomph
     Vector<double> Zeta;
   };
 
+
+  
+  
+  /////////////////////////////////////////////////////////////////////////////
+  /////////////////////////////////////////////////////////////////////////////
+  /////////////////////////////////////////////////////////////////////////////
+  /////////////////////////////////////////////////////////////////////////////
+
+
+  
+  //===========================================================================
+  // \short a class which implements the minimisation of the functional
+  // \Pi = \frac{1}{2}||\Delta p||^2 + \frac{1}{2}||\bm\nabla p\cdot\bm a_1||^2
+  //       + \frac{1}{2}||(\bm\nabla \bm u\cdot\bm a_3)\cdot\bm a_3||^2
+  //===========================================================================
+  template <class FACE_ELEMENT>
+    class FunctionalMinimisingLineElement :
+    public virtual FaceGeometry<FACE_ELEMENT>, public virtual FaceElement    
+  {
+  public:
+
+    // expose the template argument
+    static const unsigned _NNODE_1D_ = FACE_ELEMENT::_NNODE_1D_;
+
+    // shorthand for the bulk (3D) element
+    typedef typename FACE_ELEMENT::_ELEMENT_ BULK_ELEMENT;
+	
+    // Function pointer to a function which provides the outer unit normal
+    // at a given set of Lagrangian coordinates
+    typedef void (*InPlaneOuterNormalFctPt)(const LagrangianCoordinates&, Vector<double>&);
+    typedef void (*OuterBinormalFctPt)(const LagrangianCoordinates&, Vector<double>&);
+    
+    /// \short Constructor
+  FunctionalMinimisingLineElement(FACE_ELEMENT* const& face_elem_pt,
+				  const int& face_index,
+				  // ### QUEHACERES delete if the face element stuff works
+    /* const Vector<Node*>& upper_edge_nodes_ordered, */
+				  const std::map<Node*,Node*>& upper_to_lower_node_map,
+				  BULK_ELEMENT* const& lower_bulk_elem_pt,				  
+				  const double& pressure_jump_regularisation_factor = 0.0,
+				  const double& pressure_gradient_regularisation_factor = 0.0,
+				  const double& velocity_gradient_regularisation_factor = 0.0) :
+    FaceGeometry<FACE_ELEMENT>(), FaceElement(), Dim_element(1), 
+      Pressure_jump_regularisation_factor(pressure_jump_regularisation_factor),
+      Pressure_gradient_regularisation_factor(pressure_gradient_regularisation_factor),
+      Velocity_gradient_regularisation_factor(velocity_gradient_regularisation_factor),
+      Lower_bulk_elem_pt(lower_bulk_elem_pt), Upper_to_lower_node_map(upper_to_lower_node_map)
+      {
+	// get the 2D disk element to build this line element on the disk edge
+	face_elem_pt->build_face_element(face_index, this);
+
+	
+	face_elem_pt->nodal_dimension();
+	
+	// get the problem dimensionality from the face element's nodal dimension
+	// and set the nodal dimension of this element
+	Dim = face_elem_pt->nodal_dimension();
+	this->set_nodal_dimension(Dim);
+
+	// get the (3D) bulk element from the face element
+	BULK_ELEMENT* bulk_elem_pt =
+	  dynamic_cast<BULK_ELEMENT*>(face_elem_pt->bulk_element_pt());
+	
+	// get the pressure index from the bulk element
+	P_index = bulk_elem_pt->p_index_nst();
+
+	// shorthand
+	const unsigned nnode = this->nnode();
+	
+	// compute the list of nodal indices in this element which
+	// contain pressure (seems the nodal indices in a 1D line element are not
+	// (necessarily) ordered starting with the end nodes
+	Pressure_nodes_index.resize(0);
+	for(unsigned n=0; n<nnode; n++)
+	{
+	  // node number in the face element we're attached to
+	  unsigned n_in_face = this->bulk_node_number(n);
+
+	  // node number in the bulk element the face element is attached to
+	  unsigned n_in_bulk =
+	    dynamic_cast<FACE_ELEMENT*>(this->bulk_element_pt())->bulk_node_number(n_in_face);
+
+	  if(bulk_elem_pt->p_stored_at_node(n_in_bulk))
+	  {
+	    Pressure_nodes_index.push_back(n);
+	  }
+
+	  // ### QUEHACERES delete
+	  /* // get the node number in the bulk element associated with */
+	  /* // the first knot point (doesn't matter which knot we choose here) */
+	  /* unsigned n_in_bulk = Node_number_in_normal_bulk_elem_at_knot_map[0].at(n); */
+
+	  /* // is this a pressure-storing node in the bulk element? */
+	  /* if(Normal_bulk_elem_at_knot[0]->p_stored_at_node(n_in_bulk)) */
+	  /* { */
+	  /*   // add it to the list and increment the counter */
+	  /*   Pressure_nodes_index.push_back(n); */
+	  /* } */
+	}
+	
+#ifdef PARANOID
+	if(Upper_to_lower_node_map.size() != nnode)
+	{
+	  std::stringstream ss;
+
+	  ss << "FunctionalMinimisingLineElement constructor called with the wrong "
+	     << "number of nodes; expecting: " << nnode << ", got: "
+	     << Upper_to_lower_node_map.size() << std::endl;
+	  
+	  throw OomphLibError(ss.str().c_str(),
+			      OOMPH_CURRENT_FUNCTION,
+			      OOMPH_EXCEPTION_LOCATION);
+	}
+#endif
+
+	// ### QUEHACERES delete, changed it to a map
+	/* // make space for nnode equations */
+	/* External_eqn_index_lower.resize(nnode, 0); */
+	
+	// add the lower *pressure* nodes as external data
+	/* for(unsigned j=0; j<nnode; j++) */
+	for(unsigned j : Pressure_nodes_index)
+	{
+	  // get a pointer to the lower node
+	  Node* lower_node_pt = upper_to_lower_node_map.at(this->node_pt(j));
+
+	  // and add it as external data
+	  External_eqn_index_lower[j] = this->add_external_data(lower_node_pt);
+	}
+	
+	const unsigned nknot = this->integral_pt()->nweight();
+	
+	Lower_bulk_coords_at_knot.resize(nknot);
+
+	// loop over the integral points and look for these locations in the
+	// bulk lower element
+	for(unsigned ipt=0; ipt<nknot; ipt++)
+	{
+	  // local coordinates of this knot
+	  Vector<double> s(1, 0.0);
+	  s[0] = this->integral_pt()->knot(ipt,0);
+
+	  // Eulerian coordinates of this knot
+	  Vector<double> x(Dim, 0.0);	  
+	  for(unsigned i=0; i<Dim; i++)
+	    x[i] = this->interpolated_x(s,i);
+
+	  // now look for this point in the lower bulk element
+	  GeomObject* dummy_geom_obj_pt = nullptr;
+	  Vector<double> s_bulk(Dim, 0.0);
+	  Lower_bulk_elem_pt->locate_zeta(x, dummy_geom_obj_pt, s_bulk);
+
+	  if(dummy_geom_obj_pt == nullptr)
+	  {
+	    throw OomphLibError("Couldn't find this line element's knot in the lower bulk element",
+				OOMPH_CURRENT_FUNCTION,
+				OOMPH_EXCEPTION_LOCATION);
+	  }
+	  else
+	  {
+	    Lower_bulk_coords_at_knot[ipt].resize(Dim, 0.0);
+	    Lower_bulk_coords_at_knot[ipt] = s_bulk;
+	  }	  
+	}
+
+	Node_number_in_lower_bulk.resize(nnode, 0);
+	for(unsigned j=0; j<nnode; j++)
+	{
+	  Node* lower_node_pt = Upper_to_lower_node_map[this->node_pt(j)];
+	  
+	  const unsigned nnode_bulk = Lower_bulk_elem_pt->nnode();
+
+	  bool found_node = false;
+	  for(unsigned n=0; n<nnode_bulk; n++)
+	  {
+	    if(lower_node_pt == Lower_bulk_elem_pt->node_pt(n))
+	    {
+	      Node_number_in_lower_bulk[j] = n;
+	      found_node = true;
+	    }	    
+	  }
+
+	  // sanity check
+	  if(!found_node)
+	  {
+	    throw OomphLibError("Couldn't find all the lower nodes in the "
+				"corresponding lower bulk element.",
+				OOMPH_CURRENT_FUNCTION,
+				OOMPH_EXCEPTION_LOCATION);
+	  }
+	}
+
+	// @@@ QUEHACERES fuck it, add all the bloody nodes as external data
+	for(unsigned j=0; j<Lower_bulk_elem_pt->nnode(); j++)
+	{
+	  this->add_external_data(Lower_bulk_elem_pt->node_pt(j));
+	  this->add_external_data(bulk_elem_pt->node_pt(j));
+	}
+	
+	// ### QUEHACERES delete
+	/* unsigned j=0; */
+	/* for(std::pair<Node*,Node*> upper_to_lower_node : Upper_to_lower_node_map) */
+	/* { */
+	/*   // ### QUEHACERES delete if the face element stuff works */
+	/*   /\* this->node_pt(j) = upper_edge_nodes_ordered[j]; *\/ */
+
+	/*   // add the lower node as external data and store the equation number */
+	/*   External_eqn_index_lower[j] = */
+	/*     this->add_external_data(upper_to_lower_node.second); */
+
+	/*   // increment the counter */
+	/*   j++; */
+	/* } */
+      }
+	    
+    /// Broken copy constructor
+    FunctionalMinimisingLineElement(
+      const FunctionalMinimisingLineElement&)
+    {
+      BrokenCopy::broken_copy("FunctionalMinimisingLineElement");
+    }
+
+    /// Broken assignment operator
+    void operator=(const FunctionalMinimisingLineElement&)
+      {
+	BrokenCopy::broken_assign("FunctionalMinimisingLineElement");
+      }
+
+    void set_bulk_elements_coordinates_and_vectors_at_knot(
+      const Vector<BULK_ELEMENT*>& normal_bulk_elem_at_knot,
+      const Vector<BULK_ELEMENT*>& binormal_bulk_elem_at_knot,
+      const Vector<Vector<double>>& normal_bulk_coords_at_knot,
+      const Vector<Vector<double>>& binormal_bulk_coords_at_knot,
+      const Vector<Vector<double>>& normal_vector_at_knot,
+      const Vector<Vector<double>>& binormal_vector_at_knot)
+    {
+      // shorthands
+      const unsigned nnode = this->nnode();
+      const unsigned nknot = this->integral_pt()->nweight();
+      
+#ifdef PARANOID
+     
+      if((normal_bulk_coords_at_knot.size()   != nknot) ||
+	 (binormal_bulk_coords_at_knot.size() != nknot) ||
+	 (normal_vector_at_knot.size()        != nknot) ||
+	 (binormal_vector_at_knot.size()      != nknot) )
+      {
+	std::stringstream ss;
+
+	ss << "FunctionalMinimisingLineElement constructor called with a "
+	   << "mismatch in the number of knots and the number of supplied "
+	   << "coordinates / vectors." << std::endl;
+	  
+	throw OomphLibError(ss.str().c_str(),
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
+      }
+      
+#endif
+
+      // make space
+      Normal_bulk_elem_at_knot.resize(nknot, nullptr);
+      Binormal_bulk_elem_at_knot.resize(nknot, nullptr);
+            
+      Normal_bulk_coords_at_knot.resize(nknot);
+      Binormal_bulk_coords_at_knot.resize(nknot);
+
+      Normal_vector_at_knot.resize(nknot);
+      Binormal_vector_at_knot.resize(nknot);
+
+      Node_number_in_normal_bulk_elem_at_knot_map.resize(nknot);
+      Node_number_in_binormal_bulk_elem_at_knot_map.resize(nknot);
+
+      External_eqn_index_at_knot_bulk_normal.resize(nknot);
+      External_eqn_index_at_knot_bulk_binormal.resize(nknot);
+      
+      // assign the coordinates
+      for(unsigned ipt=0; ipt<nknot; ipt++)
+      {	  
+	Normal_bulk_elem_at_knot[ipt]    =   normal_bulk_elem_at_knot[ipt];
+	Binormal_bulk_elem_at_knot[ipt]  = binormal_bulk_elem_at_knot[ipt];
+	
+	Normal_bulk_coords_at_knot[ipt]   =   normal_bulk_coords_at_knot[ipt];
+	Binormal_bulk_coords_at_knot[ipt] = binormal_bulk_coords_at_knot[ipt];
+
+	Normal_vector_at_knot[ipt]   =   normal_vector_at_knot[ipt];
+	Binormal_vector_at_knot[ipt] = binormal_vector_at_knot[ipt];
+
+	// and add these bulk nodes as external data to this element
+	// (repeated nodes are ignored so easiest to just do this in this loop
+	// even in the likely case that the same bulk element is used for
+	// multiple knots)
+	const unsigned nnode_bulk = Normal_bulk_elem_at_knot[ipt]->nnode();
+	const unsigned npres_bulk = Normal_bulk_elem_at_knot[ipt]->npres_nst();
+	
+	// make space
+	External_eqn_index_at_knot_bulk_normal[ipt].resize(npres_bulk);
+	External_eqn_index_at_knot_bulk_binormal[ipt].resize(nnode_bulk);
+	
+	for(unsigned n=0; n<nnode_bulk; n++)
+	{
+	  Node* normal_bulk_node_pt   =   Normal_bulk_elem_at_knot[ipt]->node_pt(n);
+	  Node* binormal_bulk_node_pt = Binormal_bulk_elem_at_knot[ipt]->node_pt(n);
+	  
+	  External_eqn_index_at_knot_bulk_binormal[ipt][n] =
+	    this->add_external_data(binormal_bulk_node_pt);
+
+	  // only adding the pressure nodes in the normal-containing
+	  // element as external data 
+	  if(Normal_bulk_elem_at_knot[ipt]->p_stored_at_node(n))
+	  {
+	    External_eqn_index_at_knot_bulk_normal[ipt][n] =
+	      this->add_external_data(normal_bulk_node_pt);
+	  }
+	}
+
+	// now compute the map from this line elements node numbers to the bulk
+	// node numbers
+	for(unsigned k=0; k<nnode; k++)
+	{
+	  for(unsigned n=0; n<nnode_bulk; n++)
+	  {
+	    Node* line_node_pt = this->node_pt(k);
+	    
+	    Node* normal_bulk_node_pt   =   Normal_bulk_elem_at_knot[ipt]->node_pt(n);
+	    Node* binormal_bulk_node_pt = Binormal_bulk_elem_at_knot[ipt]->node_pt(n);
+
+	    if(line_node_pt == normal_bulk_node_pt)
+	      Node_number_in_normal_bulk_elem_at_knot_map[ipt][k] = n;
+
+	    if(line_node_pt == binormal_bulk_node_pt)
+	      Node_number_in_binormal_bulk_elem_at_knot_map[ipt][k] = n;
+	  }
+	}
+
+	// double check we found them all
+	if(Node_number_in_normal_bulk_elem_at_knot_map[ipt].size() != nnode)
+	{
+	  throw OomphLibError(
+	  "Didn't find all the nodes in this element in the normal bulk element",
+	  OOMPH_CURRENT_FUNCTION,
+	  OOMPH_EXCEPTION_LOCATION);
+	}
+
+	if(Node_number_in_binormal_bulk_elem_at_knot_map[ipt].size() != nnode)
+	{
+	  throw OomphLibError(
+	  "Didn't find all the nodes in this element in the binormal bulk element",
+	  OOMPH_CURRENT_FUNCTION,
+	  OOMPH_EXCEPTION_LOCATION);
+	}
+	
+#ifdef PARANOID
+
+	Vector<double> s(1, 0.0);
+	s[0] = this->integral_pt()->knot(ipt,0);
+	
+	// check the bulk coordinates agree with the local coordinates at each knot
+	double x_local         = 0.0;
+	double x_bulk_normal   = 0.0;
+	double x_bulk_binormal = 0.0;
+
+	const double tol = 1e-6;
+	
+	for(unsigned i=0; i<Dim; i++)
+	{
+	  x_local = this->interpolated_x(s,i);
+	  
+	  x_bulk_normal = Normal_bulk_elem_at_knot[ipt]->interpolated_x(
+	    Normal_bulk_coords_at_knot[ipt],i);
+
+	  x_bulk_binormal = Binormal_bulk_elem_at_knot[ipt]->interpolated_x(
+	    Binormal_bulk_coords_at_knot[ipt],i);
+
+	  if((abs(x_local - x_bulk_normal)   > tol) ||
+	     (abs(x_local - x_bulk_binormal) > tol))
+	  {
+	    throw OomphLibError(
+	      "Bulk coordinates and local coordinates are not sufficiently in agreement",
+	      OOMPH_CURRENT_FUNCTION,
+	      OOMPH_EXCEPTION_LOCATION);
+	  }
+	}
+#endif
+      } // end loop over knots
+
+      
+      // ### QUEHACERES delete, moved to constructor
+      /* // and finally, compute the list of nodal indices in this element which */
+      /* // contain pressure */
+      /* Pressure_nodes_index.resize(0); */
+      /* for(unsigned n=0; n<nnode; n++) */
+      /* { */
+      /* 	// get the node number in the bulk element associated with */
+      /* 	// the first knot point (doesn't matter which knot we choose here) */
+      /* 	unsigned n_in_bulk = Node_number_in_normal_bulk_elem_at_knot_map[0].at(n); */
+
+      /* 	// is this a pressure-storing node in the bulk element? */
+      /* 	if(Normal_bulk_elem_at_knot[0]->p_stored_at_node(n_in_bulk)) */
+      /* 	{ */
+      /* 	  // add it to the list and increment the counter */
+      /* 	  Pressure_nodes_index.push_back(n); */
+      /* 	} */
+      /* } */
+    }
+
+    // QUEHACERES for debug
+    void get_normal_vectors_at_knot(Vector<Vector<double>>& normal_vector_at_knot,
+				    Vector<Vector<double>>& binormal_vector_at_knot) const
+    {
+      normal_vector_at_knot   =   Normal_vector_at_knot;
+      binormal_vector_at_knot = Binormal_vector_at_knot;
+    }
+      
+    inline void fill_in_contribution_to_residuals(Vector<double>& residuals)
+    {
+      fill_in_generic_residual_contribution_functional(
+	residuals, GeneralisedElement::Dummy_matrix, false);
+    }
+
+#define USE_FD_JACOBIAN_DEBUG
+#ifndef USE_FD_JACOBIAN_DEBUG    
+    /// \short Add the element's contribution to its residual vector and its
+    /// Jacobian matrix
+    inline void fill_in_contribution_to_jacobian(Vector<double>& residuals,
+						 DenseMatrix<double>& jacobian)
+    {
+
+      // ### QUEHACERES delete
+      /* FiniteElement::fill_in_contribution_to_jacobian(residuals, jacobian); */
+      /* #else */
+      fill_in_generic_residual_contribution_functional(
+	residuals, jacobian, true);
+    }
+#endif
+
+    void output(std::ostream& outfile, const unsigned& nplot = 2)
+    {
+      const unsigned nnode = this->nnode();
+      
+      // Tecplot header info
+      outfile << this->tecplot_zone_string(nplot);
+   
+      // Loop over the nodes
+      for (unsigned n=0; n<nnode; n++)
+      {
+	Vector<double> x(Dim, 0.0);
+	for(unsigned i=0; i<Dim; i++)
+	{
+	  outfile << this->node_pt(n)->x(i) << " ";
+	}
+	// and output the position of the corresponding nodes as an additional check
+	for(unsigned i=0; i<Dim; i++)
+	{
+	  outfile << Upper_to_lower_node_map.at(this->node_pt(n))->x(i) << " ";
+	}
+	
+	outfile << std::endl;
+      }
+      
+      // Write tecplot footer (e.g. FE connectivity lists)
+      write_tecplot_zone_footer(outfile, nplot);   
+    }
+
+    /* void output(std::ofstream& outfile, const unsigned& nplot = 2) */
+    /* { */
+    /*   output(outfile, nplot); */
+    /* } */
+    
+    void validate_shit()
+    {
+      const unsigned nknot = this->integral_pt()->nweight();
+
+      // sweep in the local coordinate
+      for(int j=0; j<5; j++)
+      {
+	Vector<double> s(1);
+	s[0] = double(j)/2.0 - 1.0;
+
+	oomph_info << "s = " << s[0] << ", \t x = ";
+	
+	Vector<double> x(Dim, 0.0);
+	for(unsigned i=0; i<Dim; i++)
+	{
+	  x[i] = this->interpolated_x(s,i);
+	  oomph_info << x[i] << " ";
+	}
+	oomph_info << ", azimuth = " << atan2(x[1],x[0]) << std::endl;	
+      }
+      
+      oomph_info << "This element's nodes: \n";
+      for(unsigned j=0; j<this->nnode(); j++)
+      {
+	Node* node_pt = this->node_pt(j);
+	oomph_info << node_pt << "\t";
+
+	for(unsigned i=0; i<Dim; i++)
+	  oomph_info << node_pt->x(i) << " ";
+	oomph_info << std::endl;
+      }
+
+      oomph_info << "\nCorresponding lower nodes: \n";
+      for(unsigned j=0; j<this->nnode(); j++)
+      {
+	Node* node_pt = Upper_to_lower_node_map.at(this->node_pt(j));
+	oomph_info << node_pt << "\t";
+
+	for(unsigned i=0; i<Dim; i++)
+	  oomph_info << node_pt->x(i) << " ";
+	oomph_info << std::endl;
+      }
+      
+      for(unsigned ipt=0; ipt<nknot; ipt++)
+      {
+	unsigned nnode = Normal_bulk_elem_at_knot[ipt]->nnode();
+
+	oomph_info << "\nipt = " << ipt << "\n-----------\n\nNormal bulk nodes: \n";
+	for(unsigned j=0; j<nnode; j++)
+	{
+	  Node* node_pt = Normal_bulk_elem_at_knot[ipt]->node_pt(j);
+	  oomph_info << node_pt << "\t";
+	  
+	  for(unsigned i=0; i<Dim; i++)
+	    oomph_info << node_pt->x(i) << " ";
+	  oomph_info << std::endl;
+	}
+	oomph_info << "\nBinormal bulk nodes: \n";
+	for(unsigned j=0; j<nnode; j++)
+	{
+	  Node* node_pt = Binormal_bulk_elem_at_knot[ipt]->node_pt(j);
+	  oomph_info << node_pt << "\t";
+
+	  for(unsigned i=0; i<Dim; i++)
+	    oomph_info << node_pt->x(i) << " ";
+	  oomph_info << std::endl;
+	}
+      }
+
+      unsigned nnode_1d = _NNODE_1D_;
+      ofstream some_file("DEBUG_functional_elem.dat");
+      this->output(some_file, nnode_1d);
+      some_file.close();
+
+      some_file.open("DEBUG_normal_elem.dat");
+      Normal_bulk_elem_at_knot[0]->output(some_file, 2);
+      some_file.close();
+
+      some_file.open("DEBUG_binormal_elem.dat");
+      Binormal_bulk_elem_at_knot[0]->output(some_file, 2);
+      some_file.close();
+    }
+    
+  private:
+
+    void fill_in_generic_residual_contribution_functional(Vector<double>& residuals,
+							  DenseMatrix<double>& jacobian,
+							  const bool& flag = false);
+
+    // number of dimensions in this line element and the overall problem
+    unsigned Dim;
+    unsigned Dim_element;
+
+    // nodal index for the pressure
+    unsigned P_index;
+    
+    // scaling factors for the pressure jump above and below the plate,
+    // the outer normal pressure gradient in the plane of the plate,
+    // and the outer normal velocity gradient out-of-the-plane of the plate
+    double Pressure_jump_regularisation_factor;
+    double Pressure_gradient_regularisation_factor;
+    double Velocity_gradient_regularisation_factor;
+          
+    // bulk elements which contain the normal (a1) and binormal (a3) vectors
+    Vector<BULK_ELEMENT*> Normal_bulk_elem_at_knot;
+    Vector<BULK_ELEMENT*> Binormal_bulk_elem_at_knot;
+
+    // bulk element which corresponds to this line element's face element, but
+    // on the lower side of the disk. Needed to get the pressure shape functions
+    BULK_ELEMENT* Lower_bulk_elem_pt;
+
+    // coordinates in the lower bulk element which correspond to this line element's knots
+    Vector<Vector<double>> Lower_bulk_coords_at_knot;
+
+    // the lower bulk node number correponding to this elements nodes
+    Vector<unsigned> Node_number_in_lower_bulk;
+    
+    // the bulk coordinates of this line elements knots in the above bulk elements
+    Vector<Vector<double>> Normal_bulk_coords_at_knot;
+    Vector<Vector<double>> Binormal_bulk_coords_at_knot;
+
+    // the Lagrangian coordinates of this line elements knots
+    Vector<LagrangianCoordinates> Lagr_coords_at_knot;
+
+    // the node number in the face element which corresponds to the nodes in
+    // this line element
+    Vector<std::map<unsigned, unsigned>> Node_number_in_normal_bulk_elem_at_knot_map;
+    Vector<std::map<unsigned, unsigned>> Node_number_in_binormal_bulk_elem_at_knot_map;
+    
+    // map from the upper (this) node index to the external equation numbers
+    // corresponding to the lower disk nodes
+    std::map<unsigned, unsigned> External_eqn_index_lower;
+
+    Vector<Vector<unsigned>> External_eqn_index_at_knot_bulk_normal;
+    Vector<Vector<unsigned>> External_eqn_index_at_knot_bulk_binormal;
+    
+    // map from the upper (this element's) nodes to the lower nodes
+    std::map<Node*, Node*> Upper_to_lower_node_map;
+
+    // vector of the nodal indices in this element which store pressure
+    // (seems that 1D face elements are not ordered vertices first, which
+    // creates a potential problem with computing pressures
+    Vector<unsigned> Pressure_nodes_index;
+    
+    // the outer unit normal vectors at each knot
+    Vector<Vector<double>> Normal_vector_at_knot;
+    Vector<Vector<double>> Binormal_vector_at_knot;
+  };
+
+  /////////////////////////////////////////////////////////////////////////////
+  /////////////////////////////////////////////////////////////////////////////
+  /////////////////////////////////////////////////////////////////////////////
+
+
+  //===========================================================================
+  /// \short Compute the element's residual vector and the Jacobian matrix.
+  /// Here we add the contributions from the functional, i.e.
+  /// - the pressure jump from the top to bottom of the plate
+  /// - the pressure gradient in the outer in-plane normal direction (a1)
+  /// - the velocity gradient in the outer binormal direction (a3)
+  //===========================================================================
+  /* template <class ELEMENT> */
+  template <class FACE_ELEMENT>
+    void FunctionalMinimisingLineElement<FACE_ELEMENT>::
+    fill_in_generic_residual_contribution_functional(Vector<double>& residuals,
+						     DenseMatrix<double>& jacobian,
+						     const bool& flag)
+  {
+    // number of nodes in this and the bulk elements
+    const unsigned n_node      = this->nnode();
+    const unsigned n_node_bulk = Normal_bulk_elem_at_knot[0]->nnode();
+
+    // number of pressure dofs in this, the face and the bulk elements
+    const unsigned n_pres      = Dim_element + 1;
+    const unsigned n_pres_bulk = Normal_bulk_elem_at_knot[0]->npres_nst();
+
+    // Number of knots in this element
+    const unsigned nknot = this->integral_pt()->nweight();
+
+    FACE_ELEMENT* upper_face_elem_pt =
+      dynamic_cast<FACE_ELEMENT*>(this->bulk_element_pt());
+    
+    // shape functions for the velocity and pressure
+    Shape psi(n_node);
+    Shape psip_bulk_norm(n_pres_bulk);
+    Shape psip_upper(n_pres_bulk);
+    Shape psip_lower(n_pres_bulk);
+    
+    Shape psi_bulk_norm(n_node_bulk);
+    Shape psi_bulk_binorm(n_node_bulk);
+
+    // shape function derivatives from the bulk elements
+    DShape dpsidx_norm(n_node_bulk, Dim);    
+    DShape dpsidx_binorm(n_node_bulk, Dim);
+    DShape dpsipdx_norm(n_pres_bulk, Dim);
+    
+    // loop over the integration points
+    for(unsigned ipt=0; ipt<nknot; ipt++)
+    {
+      // get the local coordinates of this knot
+      Vector<double> s(Dim_element, 0.0);
+
+      // local coordinates in the upper face element we're attached to
+      Vector<double> s_face(Dim_element+1, 0.0);
+      
+      for(unsigned i=0; i<Dim_element; i++) 
+	s[i] = this->integral_pt()->knot(ipt, i);
+
+      this->get_local_coordinate_in_bulk(s, s_face);
+      
+      // get the integral weight
+      double w = this->integral_pt()->weight(ipt);
+
+      // get the shape functions
+      this->shape(s, psi);
+            
+      // get the Jacobian of the mapping from Eulerian -> local coords
+      double J = this->J_eulerian(s);
+
+      // premultiply the weights and the Jacobian
+      double W = w * J;
+
+      // get the shape functions and derivatives from the bulk elements
+      Normal_bulk_elem_at_knot[ipt]->dshape_eulerian(Normal_bulk_coords_at_knot[ipt],
+						     psi_bulk_norm, dpsidx_norm);
+      
+      Binormal_bulk_elem_at_knot[ipt]->dshape_eulerian(Binormal_bulk_coords_at_knot[ipt],
+						       psi_bulk_binorm, dpsidx_binorm);
+
+      // pressure shape function derivatives (only need normal not binormal)
+      Normal_bulk_elem_at_knot[ipt]->dpshape_eulerian_nst(Normal_bulk_coords_at_knot[ipt],
+							  psip_bulk_norm, dpsipdx_norm);
+
+      // get the upper and lower shape functions from the respective
+      // bulk elements
+      upper_face_elem_pt->pshape_nst(s_face, psip_upper);	
+      Lower_bulk_elem_pt->pshape_nst(Lower_bulk_coords_at_knot[ipt], psip_lower);
+	
+      // ===========================================================
+      // Compute stuff:
+      //   - pressure jump across plate
+      //   - binormal velocity gradient (grad(u).a3).a3
+      //   - normal pressure gradient grad(p).a1
+      // ===========================================================
+
+      // pressure jump
+      // ----------------------------------------------
+      
+      // interpolated pressures on the upper and lower sides of the disk at
+      // this integration point
+      double interpolated_p_upper = 0.0;
+      double interpolated_p_lower = 0.0;
+
+      // compute the interpolated pressure. Need to be careful here;
+      // we're getting the upper nodal pressure values from this elements nodes,
+      // and the lower nodal pressure values from the upper->lower node map;
+      // but we also need to convert the node number in this element to the
+      // node number in the bulk element so that we index the shape functions correctly.
+      for(unsigned n : Pressure_nodes_index)
+      {
+	/* // index of this node in the bulk element */
+	/* const unsigned n_in_bulk = */
+	/*   Node_number_in_normal_bulk_elem_at_knot_map[ipt].at(n); */
+
+	// indices of this node in the upper and lower bulk elements
+	const unsigned n_bulk_upper =
+	  upper_face_elem_pt->bulk_node_number(this->bulk_node_number(n));
+	
+	const unsigned n_bulk_lower = Node_number_in_lower_bulk[n];
+	
+	// upper pressure is straight forward since this line element
+	// shares its nodes with the upper face element
+	interpolated_p_upper +=
+	  this->nodal_value(n, P_index) * psip_upper[n_bulk_upper];
+
+	// for the lower pressure we need to get the corresponding node from the
+	// map, but the shape functions are the same.
+	interpolated_p_lower +=
+	  Upper_to_lower_node_map.at(this->node_pt(n))->value(P_index) *
+	  psip_lower[n_bulk_lower];
+      }
+
+      // now compute the pressure jump 
+      double p_jump = interpolated_p_upper - interpolated_p_lower;
+
+      // pressure gradient
+      // ----------------------------------------------
+      double grad_p_dot_a1 = 0.0;
+
+      // loop over the normal bulk elements pressure nodes
+      for(unsigned n=0; n<n_pres_bulk; n++)
+      {
+	for(unsigned i=0; i<Dim; i++)
+	{
+	  grad_p_dot_a1 += Normal_vector_at_knot[ipt][i] * 
+	    Normal_bulk_elem_at_knot[ipt]->nodal_value(n,P_index) * dpsipdx_norm(n,i);
+	}
+      }
+
+      // velocity gradient
+      // ----------------------------------------------
+      double grad_u_dot_a3_dot_a3 = 0.0;
+
+      // loop over the binormal bulk elements velocity nodes
+      for(unsigned n=0; n<n_node_bulk; n++)
+      {
+	for(unsigned i=0; i<Dim; i++)
+	{
+	  for(unsigned j=0; j<Dim; j++)
+	  {
+	    grad_u_dot_a3_dot_a3 +=
+	      Binormal_vector_at_knot[ipt][i] * Binormal_vector_at_knot[ipt][j] *
+	      Binormal_bulk_elem_at_knot[ipt]->nodal_value(n,i) * dpsidx_binorm(n,j);
+	  }
+	}
+      }
+      
+      // ============================================================
+      // Now add to the appropriate equations
+      // ============================================================
+
+      // Pressure-jump equation
+      // -----------------------
+      
+      // loop over the pressure nodes in this line element
+      for(unsigned l : Pressure_nodes_index)
+      {
+	// index of this node in the (normal) bulk element
+	const unsigned l_in_bulk = 	
+	  Node_number_in_normal_bulk_elem_at_knot_map[ipt].at(l);
+
+	const unsigned l_bulk_upper =
+	  upper_face_elem_pt->bulk_node_number(this->bulk_node_number(l));
+	
+	const unsigned l_bulk_lower = Node_number_in_lower_bulk[l];
+
+	// @@@ ultra paranoid
+	
+	if(this->node_pt(l) !=
+	   dynamic_cast<FiniteElement*>(upper_face_elem_pt->bulk_element_pt())->node_pt(l_bulk_upper))
+	{
+	  oomph_info << "upper node number wrong." << std::endl;
+	  abort();
+	}
+	if(Upper_to_lower_node_map.at(this->node_pt(l)) !=
+	   Lower_bulk_elem_pt->node_pt(l_bulk_lower))
+	{
+	  oomph_info << "lower node number wrong." << std::endl;
+	  abort();
+	}
+	// @@@@
+	
+	int local_eqn = this->nodal_local_eqn(l, P_index);
+
+	// check the upper pressure dof isn't pinned
+	if(local_eqn >= 0)
+	{
+	  residuals[local_eqn] +=
+	    Pressure_jump_regularisation_factor * p_jump * psip_upper[l_bulk_upper] * W;
+
+	  // jacobian?
+	  if(flag)
+	  {
+	    // loop over this line element's pressure dofs again
+	    for(unsigned l2 : Pressure_nodes_index)
+	    {
+	      // index of this node in the (normal) bulk element
+	      const unsigned l2_in_bulk = 	
+		Node_number_in_normal_bulk_elem_at_knot_map[ipt].at(l2);
+
+	      const unsigned l2_bulk_upper =
+		upper_face_elem_pt->bulk_node_number(this->bulk_node_number(l2));
+	
+	      const unsigned l2_bulk_lower = Node_number_in_lower_bulk[l2];
+	
+	      // variation of the pressure jump w.r.t. the upper (this) element's nodes' pressures
+	      int local_unknown = this->nodal_local_eqn(l2, P_index);
+
+	      // is the upper pressure unknown pinned?
+	      if(local_unknown >= 0)
+	      {
+		// dr_p_upper/dp_upper
+		jacobian(local_eqn, local_unknown) += Pressure_jump_regularisation_factor * 
+		  psip_upper[l_bulk_upper] * psip_upper[l2_bulk_upper] * W;
+	      }
+
+	      // and again for the lower disk node
+	      int ext_unknown = this->external_local_eqn(External_eqn_index_lower.at(l2), P_index);
+
+	      // is the lower pressure unknown pinned?
+	      if(ext_unknown >= 0)
+	      {
+		// dr_p_upper/dp_lower
+		jacobian(local_eqn, ext_unknown) -= Pressure_jump_regularisation_factor *
+		  psip_upper[l_bulk_upper] * psip_lower[l2_bulk_lower] * W;
+	      }
+	    }
+	  }
+	} // end check of upper pressure pinned
+
+	// and the same again for the lower disk nodes with opposite signs
+	// ---------------------------------------------------------------
+
+	// lower (external) pressure dof
+	int ext_eqn = this->external_local_eqn(External_eqn_index_lower.at(l), P_index);
+
+	// is the lower pressure dof pinned?
+	if(ext_eqn >= 0)
+	{
+	  // equation for p_lower
+	  residuals[ext_eqn] -=
+	    Pressure_jump_regularisation_factor * p_jump * psip_lower[l_bulk_lower] * W;
+
+	  // jacobian?
+	  if(flag)
+	  {
+	    // loop over this line element's pressure dofs again
+	    for(unsigned l2 : Pressure_nodes_index)
+	    {
+	      // index of this node in the (normal) bulk element
+	      const unsigned l2_in_bulk = 	
+		Node_number_in_normal_bulk_elem_at_knot_map[ipt].at(l2);
+
+	      const unsigned l2_bulk_upper =
+		upper_face_elem_pt->bulk_node_number(this->bulk_node_number(l2));
+	
+	      const unsigned l2_bulk_lower = Node_number_in_lower_bulk[l2];
+	      
+	      // variation of the pressure jump w.r.t. the upper disk nodes' pressures
+	      int local_unknown = this->nodal_local_eqn(l2, P_index);
+
+	      // is the upper pressure unknown pinned?
+	      if(local_unknown >= 0)
+	      {
+		// dr_p_lower/dp_upper
+		jacobian(ext_eqn, local_unknown) -= Pressure_jump_regularisation_factor *
+		  psip_lower[l_bulk_lower] * psip_upper[l2_bulk_upper] * W;
+	      }
+	      
+	      // and again for the lower disk node
+	      int ext_unknown = this->external_local_eqn(External_eqn_index_lower.at(l2), P_index);
+
+	      // is the lower pressure unknown pinned?
+	      if(local_unknown >= 0)
+	      {
+		// dr_p_lower/dp_lower
+		jacobian(ext_eqn, ext_unknown) += Pressure_jump_regularisation_factor *
+		  psip_lower[l_bulk_lower] * psip_lower[l2_bulk_lower] * W;
+	      }
+	    }
+	  }
+	} // end check of lower pressure pinned
+      } // end loop over this line element's pressure dofs
+
+      // Now pressure gradient equation
+      // ----------------------------------------
+      for(unsigned l=0; l<n_pres_bulk; l++)
+      {
+	// get the local equation number for the pressure at this vertex node
+	int ext_eqn_p =
+	  this->external_local_eqn(External_eqn_index_at_knot_bulk_normal[ipt][l],
+				   P_index);
+
+	// is this normal bulk pressure dof pinned?
+	if(ext_eqn_p >= 0)
+	{
+	  for(unsigned j=0; j<Dim; j++)
+	  {
+	    residuals[ext_eqn_p] += Pressure_gradient_regularisation_factor *
+	      dpsipdx_norm(l,j) * Normal_vector_at_knot[ipt][j] * grad_p_dot_a1 * W;
+
+	    // Jacobian?
+	    if(flag)
+	    {
+	      // loop over the bulk pressure dofs again
+	      for(unsigned l2=0; l2<n_pres_bulk; l2++)
+	      {
+		unsigned ext_index = External_eqn_index_at_knot_bulk_normal[ipt][l2];
+		int ext_unknown_p = this->external_local_eqn(ext_index, P_index);
+
+		// is the pressure unknown pinned?
+		if(ext_unknown_p >= 0)
+		{
+		  for(unsigned j2=0; j2<Dim; j2++)
+		  {
+		    jacobian(ext_eqn_p, ext_unknown_p) +=
+		      Pressure_gradient_regularisation_factor *
+		      dpsipdx_norm(l,j) * dpsipdx_norm(l2, j2) *
+		      Normal_vector_at_knot[ipt][j] * Normal_vector_at_knot[ipt][j2] * W;
+		  }
+		}
+	      }
+	    } // end Jacobian check
+	  } // end loop over dimensions
+	}
+      } // end loop over (normal) bulk pressure dofs
+
+      // Finally, the velocity gradient equation
+      // ----------------------------------------
+
+      // loop over all the nodes in the (binormal) bulk element 
+      for(unsigned l=0; l<n_node_bulk; l++)
+      {
+	for(unsigned i=0; i<Dim; i++)
+	{
+	  unsigned ext_index = External_eqn_index_at_knot_bulk_binormal[ipt][l];
+	  
+	  // get the local velocity equation number for the external bulk element
+	  int ext_eqn_u = this->external_local_eqn(ext_index, i);
+
+	  // is this velocity dof pinned?
+	  if(ext_eqn_u >= 0)
+	  {
+	    for(unsigned j=0; j<Dim; j++)
+	    {
+	      residuals[ext_eqn_u] += Velocity_gradient_regularisation_factor *
+		dpsidx_binorm(l, j) * Binormal_vector_at_knot[ipt][i] *
+		Binormal_vector_at_knot[ipt][j] * grad_u_dot_a3_dot_a3 * W;
+	    }
+
+	    if(flag)
+	    {
+	      // loop over the bulk velocity unknowns again
+	      for(unsigned l2=0; l2<n_node_bulk; l2++)
+	      {		
+		unsigned ext_index2 = External_eqn_index_at_knot_bulk_binormal[ipt][l2];
+
+		for(unsigned i2=0; i2<Dim; i2++)
+		{
+		  int ext_unknown_u = this->external_local_eqn(ext_index2, i2);
+
+		  // external velocity unknown pinned?
+		  if(ext_unknown_u >= 0)
+		  {		    
+		    for(unsigned j=0; j<Dim; j++)
+		    {
+		      for(unsigned j2=0; j2<Dim; j2++)
+		      {
+			jacobian(ext_eqn_u, ext_unknown_u) +=
+			  Velocity_gradient_regularisation_factor *
+			  dpsidx_binorm(l,j) * Binormal_vector_at_knot[ipt][i] *
+			  Binormal_vector_at_knot[ipt][j] * dpsidx_binorm(l2,j2) *
+			  Binormal_vector_at_knot[ipt][i2] * Binormal_vector_at_knot[ipt][j2] * W;
+		      }
+		    }
+		  }
+		}
+	      } 
+	    } // end Jacobian check
+	  } // end pinned velocity dof check
+	} // end loop over dimensions
+      } // end loop over bulk velocity dofs      
+      
+    } // end loop over integration points  
+    
+  } // end of fill_in_generic_residual_contribution_functional()
+  
   //////////////////////////////////////////////////////////////////////////////
   //////////////////////////////////////////////////////////////////////////////
   //////////////////////////////////////////////////////////////////////////////
   //////////////////////////////////////////////////////////////////////////////
 
+  // ### QUEHACERES delete if the face element stuff works
+  /* template <class FACE_ELEMENT> */
+  /*   class NavierStokesWithSingularityFaceOnFaceElement : */
+  /*   public virtual FaceGeometry<FACE_ELEMENT>, public virtual FaceElement */
+  /* { */
+  /* public: */
+    
+  /*   NavierStokesWithSingularityFaceOnFaceElement(FiniteElement* const& bulk_el_pt, */
+  /* 						 const int& face_index) */
+  /*   {       */
+  /*     // Let the bulk element build the FaceElement, i.e. setup the pointers  */
+  /*     // to its nodes (by referring to the appropriate nodes in the bulk */
+  /*     // element), etc. */
+  /*     bulk_el_pt->build_face_element(face_index, this); */
+  /*   } */
+  /* }; */
+  
   //===========================================================================
   // Generic base class for augmented face elements
   //===========================================================================
@@ -940,10 +2145,14 @@ namespace oomph
   {
   public:
 
-    /* // Extract the number of nodes per side from the templated element */
-    // QUEHACERES sort this out, don't get this from a global #define
-    static const unsigned NNODE_1D = SINGULAR_ELEMENT_NNODE_1D; // ELEMENT::_NNODE_1D_;
+    // Extract the number of nodes per side from the templated element    
+    // QUEHACERES sort this out, don't get this from a global #define    
+    static const unsigned _NNODE_1D_ = SINGULAR_ELEMENT_NNODE_1D; // ELEMENT::_NNODE_1D_;
+    static const unsigned _DIM_ = ELEMENT::_DIM_;
 
+    // and expose the ELEMENT template
+    typedef ELEMENT _ELEMENT_;
+    
     // QUEHACERES delete
     /* // shorthand */
     /* typedef ScalableSingularityForNavierStokesLineElement<NNODE_1D> SingularLineElement; */
@@ -1016,13 +2225,50 @@ namespace oomph
       	Lagrangian_coordinates_at_knot[i] = coords[i];          
     }
 
+    // set the edge coordinates at each node
+    void set_lagr_coordinates_at_node(const Vector<LagrangianCoordinates>& coords)
+    {
+      // number of nodes in this element
+      unsigned nnode = this->nnode();
+
+      // number of coordinates supplied
+      unsigned ncoords = coords.size();
+
+      // check the right number of coordinates have been passed in
+      if(ncoords != nnode)
+      {
+	ostringstream error_message;
+	error_message << "Number of sets of coordinates provided is not consistent "
+		      << "with the number of nodes.\n"
+		      << "Number of supplied coordinate sets: " << ncoords << "\n"
+		      << "Number of nodes:                    " << nnode;
+	
+	throw OomphLibError(
+	  error_message.str(),
+	  OOMPH_CURRENT_FUNCTION,
+	  OOMPH_EXCEPTION_LOCATION);
+      }
+
+      // make enough space
+      Lagrangian_coordinates_at_node.resize(nnode);
+	
+      // set 'em
+      for(unsigned i=0; i<nnode; i++)
+      	Lagrangian_coordinates_at_node[i] = coords[i];          
+    }
+          
     // ========================================================================
-    // get the edge coordinates at the ith knot
+    // get the Lagrangian coordinates at the ith knot
     LagrangianCoordinates lagr_coordinate_at_knot(const unsigned& i) const
     {
       return Lagrangian_coordinates_at_knot[i];
     }
 
+    LagrangianCoordinates lagr_coordinate_at_node(const unsigned& n) const
+    {
+      return Lagrangian_coordinates_at_node[n];
+    }
+    
     // ========================================================================
     // set the line element and local coordinate for the ith knot
     void set_line_element_and_local_coordinate_at_knot(
@@ -1030,10 +2276,10 @@ namespace oomph
       line_element_and_local_coordinate_at_knot)
     {
       // number of knot points in this element
-      unsigned nknot = this->integral_pt()->nweight();
+      const unsigned nknot = this->integral_pt()->nweight();
 
       // number of coordinates supplied
-      unsigned ncoords = line_element_and_local_coordinate_at_knot.size();
+      const unsigned ncoords = line_element_and_local_coordinate_at_knot.size();
 
       // check the right number of coordinates have been passed in
       if(ncoords != nknot)
@@ -1065,6 +2311,44 @@ namespace oomph
       set_singular_amplitudes_as_external_data();
     }
 
+    // -----------------------------------------------------------
+    // set the line element and local coordinate for the nth node
+    void set_line_element_and_local_coordinate_at_node(
+      const Vector<std::pair<GeomObject*, Vector<double> > >&
+      line_element_and_local_coordinate_at_node)
+    {
+      // number of nodes in this element
+      const unsigned nnode = this->nnode();
+
+      // number of coordinates supplied
+      const unsigned ncoords = line_element_and_local_coordinate_at_node.size();
+
+      // check the right number of coordinates have been passed in
+      if(ncoords != nnode)
+      {
+	ostringstream error_message;
+	error_message << "Number of element-coordinate pairs provided is not consistent "
+		      << "with the number of knots.\n"
+		      << "Number of supplied coordinate sets: " << ncoords << "\n"
+		      << "Number of nodes:                    " << nnode;
+	
+	throw OomphLibError(
+	  error_message.str(),
+	  OOMPH_CURRENT_FUNCTION,
+	  OOMPH_EXCEPTION_LOCATION);
+      }
+
+      // make enough space
+      Line_element_and_local_coordinate_at_node.resize(nnode);
+      
+      // set 'em
+      for(unsigned i=0; i<nnode; i++)
+      {
+	Line_element_and_local_coordinate_at_node[i] =
+	  line_element_and_local_coordinate_at_node[i];
+      }
+    }
+    
     // ========================================================================
     // get the line element and local coordinate for the ith knot
     std::pair<GeomObject*, Vector<double> >
@@ -1082,14 +2366,29 @@ namespace oomph
       return Line_element_and_local_coordinate_at_knot[i];
     }
 
+    // get the line element and local coordinate for the nth node
+    std::pair<GeomObject*, Vector<double> >
+      line_element_and_local_coordinate_at_node(const unsigned& n) const
+    {
+      if(Line_element_and_local_coordinate_at_node.size() <= n)
+      {
+	GeomObject* dummy_gom_obj_pt = nullptr;
+	std::pair<GeomObject*, Vector<double> > dummy_pair =
+	  std::make_pair(dummy_gom_obj_pt, Vector<double>(0));
+	  
+	return dummy_pair;
+      }
+      
+      return Line_element_and_local_coordinate_at_node[n];
+    }
+    
     // ========================================================================
-    // get the edge coordinates and (a pointer to) the element which stores
+    // get the Lagragian coordinates and (a pointer to) the element which stores
     // the singular amplitudes
-    void lagr_coords_and_singular_element_at_knot(
-      const unsigned& ipt,
-      LagrangianCoordinates& lagr_coords,
-      SingularLineElement*& sing_el_pt,
-      Vector<double>& s_singular_el) const
+    void lagr_coords_and_singular_element_at_knot(const unsigned& ipt,
+						  LagrangianCoordinates& lagr_coords,
+						  SingularLineElement*& sing_el_pt,
+						  Vector<double>& s_singular_el) const
     {
       // get the line element and local coordinate which corresponds to the
       // singular amplitude for this knot
@@ -1127,6 +2426,83 @@ namespace oomph
       lagr_coords = this->lagr_coordinate_at_knot(ipt);
     }
 
+    // get the Lagragian coordinates and (a pointer to) the element which stores
+    // the singular amplitudes
+    void lagr_coords_and_singular_element_at_node(const unsigned& n,
+						  LagrangianCoordinates& lagr_coords,
+						  SingularLineElement*& sing_el_pt,
+						  Vector<double>& s_singular_el) const
+    {
+      // get the line element and local coordinate which corresponds to the
+      // singular amplitude for this node
+      std::pair<GeomObject*, Vector<double> > line_elem_and_local_coord = 
+	this->line_element_and_local_coordinate_at_node(n);
+
+      // cast the GeomObject to a singular line element      
+      sing_el_pt = dynamic_cast<SingularLineElement*>
+	(line_elem_and_local_coord.first);
+
+      // check we've actually got one, or we're in trouble
+      if(sing_el_pt == nullptr)
+      {
+	if(this->No_throw_if_no_singular_elem_pt)
+	{
+	  return;
+	}
+	else
+	{ 
+	  ostringstream error_message;
+
+	  error_message << "Error: this singular face element has no "
+			<< "singular line element pointer\n";
+	    
+	  throw OomphLibError(error_message.str().c_str(),
+			      OOMPH_CURRENT_FUNCTION,
+			      OOMPH_EXCEPTION_LOCATION);
+	}
+      }
+
+      // local coordinate in the singular element for the zeta of this node
+      s_singular_el = line_elem_and_local_coord.second;
+
+      // get the \rho,\zeta,\phi coordinates at this node
+      lagr_coords = this->lagr_coordinate_at_node(n);
+    }
+
+    // ========================================================================
+
+    /// \short get the total singular velocity and pressure contributions at
+    /// a specified knot point
+    Vector<double> u_sing_total_at_knot(const unsigned& ipt) const
+    {
+      LagrangianCoordinates lagr_coords;
+      SingularLineElement* sing_el_pt = nullptr;
+      Vector<double> s_singular_el;
+      
+      lagr_coords_and_singular_element_at_knot(ipt,
+					       lagr_coords,
+					       sing_el_pt,
+					       s_singular_el);
+
+      return sing_el_pt->total_singular_contribution(lagr_coords, s_singular_el);
+    }
+
+    /// \short get the total singular velocity and pressure contributions at
+    /// the nth node
+    Vector<double> u_sing_total_at_node(const unsigned& n) const
+    {
+      LagrangianCoordinates lagr_coords;
+      SingularLineElement* sing_el_pt = nullptr;
+      Vector<double> s_singular_el;
+      
+      lagr_coords_and_singular_element_at_node(n,
+					       lagr_coords,
+					       sing_el_pt,
+					       s_singular_el);
+      
+      return sing_el_pt->total_singular_contribution(lagr_coords, s_singular_el);
+    }
+    
     // ========================================================================
     // Assign the singular line elements associated with this face elements
     // integration points as external data for this element, since it will
@@ -1246,7 +2622,38 @@ namespace oomph
       //Get pressure from bulk
       return bulk_el_pt->interpolated_p_nst(s_bulk);
     }
-    
+
+    // wrapper for external classes which don't have access to the
+    // ELEMENT template but have the bulk coordinates
+    double interpolated_p_nst_bulk(const Vector<double>& s_bulk) const
+    {
+      return dynamic_cast<ELEMENT*>(bulk_element_pt())->interpolated_p_nst(s_bulk);
+    }
+
+    // get the pressure shape functions from the bulk element
+    void pshape_nst(const Vector<double>& s, Shape& psip) const
+    {
+      // number of dimensions in the bulk
+      unsigned dim_bulk = Dim + 1;
+      
+      // local coordinates in bulk element
+      Vector<double> s_bulk(dim_bulk, 0.0);
+      
+      // Get pointer to assocated bulk element
+      ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(bulk_element_pt());
+
+      this->get_local_coordinate_in_bulk(s, s_bulk);
+      
+      //Get pressure basis functions from the bulk element
+      bulk_el_pt->pshape_nst(s_bulk, psip);
+    }
+
+    // forward to the bulk element
+    unsigned p_index_nst() const
+    {
+      return dynamic_cast<ELEMENT*>(bulk_element_pt())->p_index_nst();
+    }
+      
     // function to get the strain rate at local coordinates s in the face element
     // via the bulk element
     void strain_rate(const Vector<double>& s, DenseMatrix<double>& _strain_rate) const
@@ -1265,7 +2672,7 @@ namespace oomph
       //Get pressure from bulk
       return bulk_el_pt->strain_rate(s_bulk, _strain_rate);
     }
-
+    
     void integrated_force_and_torque(const Vector<double>& centre_of_rotation,
 				     Vector<double>& integrated_force,
 				     Vector<double>& integrated_torque) const
@@ -1592,10 +2999,12 @@ namespace oomph
     /// edge coordinates, i.e. dxi/dx
     DxiDxFctPt Dxi_dx_fct_pt;
     
-    /// \short Edge coordinates (\rho, \zeta, \phi) of each of this element's
-    /// knot points
+    /// \short Lagragian coordinates of each of this element's knot points
     Vector<LagrangianCoordinates> Lagrangian_coordinates_at_knot;
 
+    /// Lagragian coordinates of each of this element's nodes
+    Vector<LagrangianCoordinates> Lagrangian_coordinates_at_node;
+    
     /// \short Edge coordinates (\rho, \zeta, \phi) of each of this element's nodes
     Vector<LagrangianCoordinates> Nodal_lagr_coordinates;
     
@@ -1606,14 +3015,24 @@ namespace oomph
     Vector<std::pair<GeomObject*, Vector<double> > >
       Line_element_and_local_coordinate_at_knot;
 
-    /// \short The line element and its local coordinate(s) which correspond to the zeta
-    /// values at eachnode in this bulk element. N.B. the element
-    /// is 1D so only has 1 local coordinate, but we keep this as a vector
-    /// for consistency with the general case
     Vector<std::pair<GeomObject*, Vector<double> > >
       Line_element_and_local_coordinate_at_node;
   };
 
+  template <class ELEMENT>
+    class FaceGeometry<NavierStokesWithSingularityFaceElement<ELEMENT> > :
+  public virtual TElement<1,ELEMENT::_NNODE_1D_>
+  {
+
+  public:
+ 
+    /// \short Constructor: Call the constructor for the
+    /// appropriate lower-dimensional TElement
+  FaceGeometry() : TElement<1,ELEMENT::_NNODE_1D_>() {}
+    
+  };
+  
+  
   //===========================================================================
   /// Constructor, takes the pointer to the "bulk" element, the 
   /// index of the fixed local coordinate and its value represented
@@ -1660,7 +3079,6 @@ namespace oomph
 
     // Extract the dimension of the problem from the dimension of 
     // the first node
-    // QUEHACERES this fixes the weird link error when building with -O3
     Dim = this->node_pt(0)->ndim();
 
     // Set up P_index_nst. Initialise to Dim, (since we have Dim velocity components indexed
@@ -1783,18 +3201,7 @@ namespace oomph
 				  const bool& lower_disk_surface=false) :
     Lower_disk_surface(lower_disk_surface), Outer_unit_normal_fct_pt(nullptr),
       R_torus(r_torus), Dim(2)
-    {
-      // QUEHACERES 
-      /* // set the integration scheme of this element to be our custom */
-      /* // mixed Gauss/Cebyshev-Gauss scheme */
-      // this->set_integration_scheme(&Mixed_integration_scheme);
-
-      /* // set the nodal dimension, since this is a surface embedded in a higher */
-      /* // dimensional domain */
-      // this->set_nodal_dimension(DIM+1);
-	
-      // QUEHACERES do some zeta shit
-    }
+    { }
     
     SingularDragIntegralDiskElement(const SingularDragIntegralDiskElement&)
     {
@@ -1890,7 +3297,7 @@ namespace oomph
 	Outer_unit_normal_fct_pt(lagr_coords, unit_normal);
       }
     }
-
+      
     /// \short main point of this element - function to compute this element's
     /// contribution to the singular hydrodynamic drag
     void compute_total_singular_drag_and_torque(const Vector<double>& centre_of_mass,
@@ -2077,6 +3484,15 @@ namespace oomph
     
   public:
 
+    // expose the nestedtemplate arguments
+    static const unsigned _NNODE_1D_ = ELEMENT::_NNODE_1D_;
+
+    // ### QUEHACERES delete when functional elements work
+    /* /// \short Function pointer to a function which provides the tangent vector a1 */
+    /* /// at the specified Lagrangian coordinates */
+    /* typedef void (*TangentVectorFctPt)(const LagrangianCoordinates& lagr_coords, */
+    /* 				       Vector<double>& a1); */
+      
     // QUEHACERES delete
     /* // shorthand typedef for the baseclass typedef  */
     /*   typedef typename */
@@ -2088,8 +3504,25 @@ namespace oomph
       NavierStokesWithSingularityBCFaceElement(ELEMENT* const& bulk_el_pt, 
 					       const int& face_index,					       
 					       const unsigned& id = 0,
-					       const bool& is_on_upper_disk_surface = false); 
-  
+					       const bool& is_on_upper_disk_surface = false);
+      // ### QUEHACERES delete when functional elements work
+      /* , */
+      /* 					       const double& grad_u_reg_factor = 0.0, */
+      /* 					       const double& grad_p_reg_factor = 0.0);  */
+
+      /* // version with traction regularisation specified but upper disk flag not specified; */
+      /* // just forward with the default flag supplied */
+      /* NavierStokesWithSingularityBCFaceElement(ELEMENT* const& bulk_el_pt,  */
+      /* 					       const int& face_index,					        */
+      /* 					       const unsigned& id = 0, */
+      /* 					       const double& grad_u_reg_factor = 0.0, */
+      /* 					       const double& grad_p_reg_factor = 0.0) */
+      /* 	: NavierStokesWithSingularityBCFaceElement(bulk_el_pt,  */
+      /* 						   face_index,					        */
+      /* 						   id, */
+      /* 						   false, */
+      /* 						   grad_u_reg_factor) { } */
+      
       ///\short  Broken empty constructor
       NavierStokesWithSingularityBCFaceElement()
       {
@@ -2233,9 +3666,90 @@ namespace oomph
       {
 	Is_on_upper_disk_surface = true;
       }
-	
-    private:
 
+      // ### QUEHACERES delete when functional elements work
+      /* void set_velocity_gradient_regularisation_factor(const double& grad_u_reg) */
+      /* { */
+      /* 	Normal_velocity_gradient_regularisation_factor = grad_u_reg; */
+      /* } */
+
+      /* void set_pressure_gradient_regularisation_factor(const double& grad_p_reg) */
+      /* { */
+      /* 	Pressure_gradient_regularisation_factor = grad_p_reg; */
+      /* } */
+
+      /* /// \short Get the function pointer which points to a function which */
+      /* /// provides the tangent vector a1 */
+      /* TangentVectorFctPt& tangent_vector_fct_pt() */
+      /* { */
+      /* 	return A1_tangent_vector_fct_pt; */
+      /* } */
+      
+      double compute_l2_traction_fe() const
+      {
+	// shorthand
+	const unsigned n_node = this->nnode();
+	const unsigned Dim = this->Dim;
+	
+	//Set up memory for the shape and test functions
+	Shape psi(n_node), test(n_node);
+     
+	// The number of integration points (knots)
+	const unsigned n_intpt = this->integral_pt()->nweight();
+     
+	//Set the Vector to hold local coordinates
+	Vector<double> s(Dim-1);
+	
+	// shorthand
+	ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(this->bulk_element_pt());
+
+	// the l2 traction norm over this element
+	double l2_traction_fe = 0.0;
+	
+	//Loop over the integration points
+	for(unsigned ipt=0; ipt<n_intpt; ipt++)
+	{       
+	  //Assign values of s
+	  for(unsigned i=0; i<(Dim-1); i++)
+	  {
+	    s[i] = this->integral_pt()->knot(ipt,i);
+	  }
+
+	  // get the local bulk coordinates    
+	  Vector<double> s_bulk = this->local_coordinate_in_bulk(s);
+	  
+	  //Get the integral weight
+	  double w = this->integral_pt()->weight(ipt);
+       
+	  //Find the shape and test functions and return the Jacobian
+	  //of the mapping
+	  double J = this->J_eulerian(s); 
+       
+	  //Premultiply the weights and the Jacobian
+	  double W = w*J;
+	
+	  // get the outer unit normal on this boundary point
+	  Vector<double> unit_normal(Dim, 0.0);
+	  this->outer_unit_normal(s, unit_normal);
+
+	  // FE traction at this knot point
+	  Vector<double> traction_knot(Dim, 0.0);
+      
+	  // get the FE traction along this Dirchlet boundary
+	  bulk_el_pt->get_traction(s_bulk, unit_normal, traction_knot);
+
+	  // add to the integral
+	  for(unsigned j=0; j<Dim; j++)
+	  { 
+	    l2_traction_fe += traction_knot[j] * traction_knot[j] * W;
+	  }
+	}
+
+	return l2_traction_fe;
+      }
+      
+  private:
+      
       /// \short Add the element's contribution to its residual vector.
       /// flag=1(or 0): do (or don't) compute the contribution to the
       /// Jacobian as well. 
@@ -2243,11 +3757,27 @@ namespace oomph
 	Vector<double>& residuals, DenseMatrix<double>& jacobian, 
 	const unsigned& flag);
 
+      // ### QUEHACERES delete when functional elements work
+      /* /// \short the bulk nodal velocities are external data to this face element */
+      /* /// because the functional we're minimising depends on the traction, i.e. */
+      /* /// the velocity gradient, which is affected by the bulk velocity unknowns */
+      /* Vector<unsigned> External_eqn_index_bulk; */
+	
       /// Desired boundary values at nodes
       DenseMatrix<double> Nodal_boundary_value;
 
       /// are we attached to the upper or lower surface?
       bool Is_on_upper_disk_surface;
+
+      // ### QUEHACERES delete when functional elements work
+      /* /// Multiplication factor for functional Pi = (1/2)|t|^2  */
+      /* double Normal_velocity_gradient_regularisation_factor; */
+
+      /* /// Multiplication factor for functional Pi = (1/2)|(grad P).a_1|^2 */
+      /* double Pressure_gradient_regularisation_factor; */
+
+      /* /// Function pointer to a function which provides the tangent vector a1 */
+      /* TangentVectorFctPt A1_tangent_vector_fct_pt; */
       
   }; // end of NavierStokesWithSingularityBCFaceElement class 
 
@@ -2267,9 +3797,18 @@ namespace oomph
     NavierStokesWithSingularityBCFaceElement(ELEMENT* const& bulk_el_pt, 
 					     const int& face_index,					     
 					     const unsigned& id,
-					     const bool& is_on_upper_disk_surface) : 
+					     const bool& is_on_upper_disk_surface)
+    // ### QUEHACERES delete when functional elements work
+    /* , */
+    /* 					     const double& grad_u_reg_factor, */
+    /* 					     const double& grad_p_reg_factor) */ : 
   NavierStokesWithSingularityFaceElement<ELEMENT>(bulk_el_pt, face_index, id),
     Is_on_upper_disk_surface(is_on_upper_disk_surface)
+      // ### QUEHACERES delete when functional elements work
+      /* , */
+    /* Normal_velocity_gradient_regularisation_factor(grad_u_reg_factor), */
+    /* Pressure_gradient_regularisation_factor(grad_p_reg_factor), */
+    /* A1_tangent_vector_fct_pt(nullptr) */
   { 
     unsigned n_node = this->nnode();
 
@@ -2287,6 +3826,21 @@ namespace oomph
     // and so the default is for the normal to point downwards, but the upper
     // disk normal points upwards
     this->normal_sign() = -this->normal_sign();
+
+    // now add the bulk nodes as external data, since this element will add
+    // the contribution from the functional we're minimising, which depends on
+    // the traction, i.e. on the bulk velocity unknowns
+    const unsigned n_node_bulk = bulk_el_pt->nnode();
+
+    // ### QUEHACERES delete when functional elements work
+    /* // make enough space  */
+    /* External_eqn_index_bulk.resize(n_node_bulk, 0.0); */
+
+    /* // add the extra equation numbers */
+    /* for(unsigned n=0; n<n_node_bulk; n++) */
+    /* {       */
+    /*   External_eqn_index_bulk[n] = this->add_external_data(bulk_el_pt->node_pt(n)); */
+    /* } */
     
   } // end NavierStokesWithSingularityBCFaceElement constructor
 
@@ -2456,6 +4010,14 @@ namespace oomph
     Shape psi_bulk(n_node_bulk);
 	  
     DShape dpsidx(n_node_bulk, Dim);
+
+    // number of pressure nodes in this face element
+    const unsigned n_pres = Dim;
+    const unsigned n_pres_bulk = bulk_el_pt->npres_nst();
+    
+    // shape functions from bulk
+    Shape psip(n_pres_bulk);
+    DShape dpsipdx(n_pres_bulk, Dim);
     
     //Set the value of Nintpt
     const unsigned n_intpt = this->integral_pt()->nweight();
@@ -2485,6 +4047,9 @@ namespace oomph
 	
       // get the derivatives of the shape functions from the bulk element      
       bulk_el_pt->dshape_eulerian(s_bulk, psi_bulk, dpsidx);
+
+      // Get the the pressure shape and test functions and their derivatives
+      bulk_el_pt->dpshape_eulerian_nst(s_bulk, psip, dpsipdx);
       
       // premultiply the weights and the Jacobian
       double W = w * J;
@@ -2565,39 +4130,6 @@ namespace oomph
 	sing_el_pt->total_singular_stress(lagr_coords_at_knot,
 					  s_singular_el,
 					  stress_sing_total);
-	// ### QUEHACERES delete
-	/* // the total contribution of the singular velocity gradients */
-/* 	dudx_sing_total = sing_el_pt-> */
-/* 	  total_singular_gradient_contribution(lagr_coords_at_knot, */
-/* 					       s_singular_el); */
-
-/* 	// total singular pressure */
-/* 	double p_sing_total = u_sing[this->P_index_nst]; */
-
-/* 	// total singular contribution to the strain-rate */
-/* 	DenseMatrix<double> strain_rate_sing_total(Dim, Dim, 0.0); */
-
-/* 	// compute the strain-rate from the velocity gradients, */
-/* 	// \epsion_{ij} = 1/2 (du_i/dx_j + du_j/dx_i) */
-/* 	for (unsigned i=0; i<Dim; i++) */
-/* 	{ */
-/* 	  for(unsigned j=0; j<Dim; j++) */
-/* 	  { */
-/* 	    strain_rate_sing_total(i,j) = 0.5*(dudx_sing_total(i,j) + dudx_sing_total(j,i)); */
-/* 	  } */
-/* 	} */
-
-/* #ifdef PARANOID */
-/* 	if(bulk_el_pt->stress_fct_pt() == 0) */
-/* 	{ */
-/* 	  throw OomphLibError( */
-/* 	    "Error: the stress function pointer has not been set for the augmented elements\n", */
-/* 	    OOMPH_CURRENT_FUNCTION, */
-/* 	    OOMPH_EXCEPTION_LOCATION); */
-/* 	} */
-/* #endif  */
-/* 	stress_sing_total = */
-/* 	  (*bulk_el_pt->stress_fct_pt())(strain_rate_sing_total, p_sing_total); */
       }
 
       // ======================================================================
@@ -2697,13 +4229,50 @@ namespace oomph
       
       // get the FE traction along this Dirchlet boundary
       bulk_el_pt->get_traction(s_bulk, unit_normal, traction_fe);
-	
+
+      // ### QUEHACERES delete when functional elements work
+      /* // rate of strain tensor */
+      /* DenseMatrix<double> strain_rate_fe(Dim, Dim, 0.0); */
+
+      /* // rate of strain tensor dot unit normal */
+      /* Vector<double> strain_rate_fe_dot_n(Dim, 0.0); */
+      
+      /* bulk_el_pt->strain_rate(s_bulk, strain_rate_fe); */
+
+      /* for(unsigned i=0; i<Dim; i++) */
+      /* { */
+      /* 	for(unsigned j=0; j<Dim; j++) */
+      /* 	{ */
+      /* 	  strain_rate_fe_dot_n[i] += 2.0 * (strain_rate_fe(i,j) * unit_normal[j]); */
+      /* 	} */
+      /* } */
+
+      // ### QUEHACERES delete when functional elements work
+      /* // compute (grad(u).n).n */
+      /* // ------------------------------------- */
+      /* double grad_u_dot_n_dot_n = 0.0; */
+      /* for(unsigned l=0; l<n_node_bulk; l++) */
+      /* { */
+      /* 	for(unsigned i=0; i<Dim; i++) */
+      /* 	{ */
+      /* 	  for(unsigned j=0; j<Dim; j++) */
+      /* 	  { */
+      /* 	    grad_u_dot_n_dot_n += bulk_el_pt->nodal_value(l, i) * */
+      /* 	      dpsidx(l,j) * unit_normal[i] * unit_normal[j]; */
+      /* 	  } */
+      /* 	} */
+      /* } */
+      // ------------------------------------
+      
       //Loop over the test functions
       for(unsigned l=0; l<n_node; l++)
       {
 	// grab a pointer to the current node
 	Node* node_pt = this->node_pt(l);
-	  
+
+	// get the corresponding bulk node number
+	const unsigned l_in_bulk = this->bulk_node_number(l);
+	    
 	// get the map which gives the starting nodal index for
 	// the Lagrange multipliers associated with each boundary ID
 	std::map<unsigned, unsigned> first_index = *(
@@ -2747,6 +4316,7 @@ namespace oomph
 	      {
 		// QUEHACERES again, get this index more systematically
 		int local_unknown_u_fe = this->nodal_local_eqn(l2, d);
+		
 		if (local_unknown_u_fe >= 0)
 		{
 		  // dlambda_tilde/du
@@ -2757,12 +4327,14 @@ namespace oomph
 	  }
 
 	  // ========================================================
-	  // Contribution of Lagrange multipliers to augmented velocity eqn:
+	  // Contribution of Lagrange multipliers and functional
+	  // to augmented velocity eqn:
 	  // ========================================================
 	  if (local_eqn_u_fe >= 0)
-	  { 
+	  {
+	    // LMs
 	    residuals[local_eqn_u_fe] += lambda_bc[d] * psi[l] * W;
-
+	    
 	    if (flag == 1)
 	    {
 	      for(unsigned l2=0; l2<n_node; l2++)
@@ -2770,6 +4342,9 @@ namespace oomph
 		// grab a pointer to the second node
 		Node* node2_pt = this->node_pt(l2);
 
+		// get the bulk node number
+		const unsigned l2_in_bulk = this->bulk_node_number(l2);
+				    
 		// get the map which gives the starting nodal index for
 		// the Lagrange multipliers associated with each boundary ID
 		std::map<unsigned, unsigned> first_index2 = *(
@@ -2783,10 +4358,9 @@ namespace oomph
 		    
 		if (local_unknown_lambda_bc >= 0)
 		{
-		  // QUEHACERES write-up transpose of Eqn. 1.16
 		  jacobian(local_eqn_u_fe, local_unknown_lambda_bc) += psi[l2] * psi[l] * W;
-		}   
-	      }
+		}
+	      } // end loop over nodal velocity unknowns 
 	    }	// end Jacobian check    
 	  }
 
@@ -2796,15 +4370,134 @@ namespace oomph
 	} // end loop over directions	
       } // end loop over nodes
 
+      // ### QUEHACERES delete once functional elements work
+      /* // Now loop over the bulk nodes and add the contributions from the */
+      /* // velocity gradients from the traction in the functional we're minimising */
+      /* for(unsigned l_in_bulk=0; l_in_bulk<n_node_bulk; l_in_bulk++) */
+      /* { */
+      /* 	// loop over the velocity components */
+      /* 	for(unsigned i=0; i<Dim; i++) */
+      /* 	{ */
+      /* 	  unsigned ext_index = External_eqn_index_bulk[l_in_bulk]; */
+      /* 	  int ext_eqn_u_fe = this->external_local_eqn(ext_index, i); */
+
+      /* 	  if(ext_eqn_u_fe >= 0) */
+      /* 	  { */
+      /* 	    // Now add contribution of velocity derivatives from functional @@@ */
+      /* 	    for(unsigned j=0; j<Dim; j++) */
+      /* 	    { */
+      /* 	      // QUEHACERES changing to (grad(u).n).n */
+      /* 	      residuals[ext_eqn_u_fe] += Normal_velocity_gradient_regularisation_factor * */
+      /* 		dpsidx(l_in_bulk, j) * unit_normal[i]*unit_normal[j] * grad_u_dot_n_dot_n * W; */
+	      
+      /* 	      /\* // QUEHACERES changing to strain rate as an experiment *\/ */
+      /* 	      /\* residuals[ext_eqn_u_fe] += Normal_velocity_gradient_regularisation_factor * *\/ */
+      /* 	      /\* 	( dpsidx(l_in_bulk, j) * unit_normal[j] * strain_rate_fe_dot_n[i] + *\/ */
+      /* 	      /\* 	  dpsidx(l_in_bulk, j) * unit_normal[i] * strain_rate_fe_dot_n[j] ) * W; *\/ */
+	      
+      /* 	      /\* residuals[ext_eqn_u_fe] += Normal_velocity_gradient_regularisation_factor * *\/ */
+      /* 	      /\* 	( dpsidx(l_in_bulk, j) * unit_normal[j] * traction_fe[i] + *\/ */
+      /* 	      /\* 	  dpsidx(l_in_bulk, j) * unit_normal[i] * traction_fe[j] ) * W; *\/ */
+      /* 	    } */
+
+      /* 	    if(flag) */
+      /* 	    { */
+      /* 	      // loop over the bulk velocity unknowns again */
+      /* 	      for(unsigned l2_in_bulk=0; l2_in_bulk<n_node_bulk; l2_in_bulk++) */
+      /* 	      { */
+      /* 		// Now the contribution of the velocity gradients to the velocity eqns */
+      /* 		// (via the functional) @@@ */
+      /* 		for(unsigned i2=0; i2<Dim; i2++) */
+      /* 		{ */
+      /* 		  unsigned ext_index2 = External_eqn_index_bulk[l2_in_bulk]; */
+      /* 		  int ext_unknown_u_fe = this->external_local_eqn(ext_index2, i2); */
+
+      /* 		  if(ext_unknown_u_fe >= 0) */
+      /* 		  {		     */
+      /* 		    for(unsigned j=0; j<Dim; j++) */
+      /* 		    { */
+      /* 		      for(unsigned j2=0; j2<Dim; j2++) */
+      /* 		      { */
+      /* 			jacobian(ext_eqn_u_fe, ext_unknown_u_fe) += */
+      /* 			  Normal_velocity_gradient_regularisation_factor * */
+      /* 			  dpsidx(l_in_bulk,j) * unit_normal[i]*unit_normal[j] * */
+      /* 			  dpsidx(l2_in_bulk,j2) * unit_normal[i2] * unit_normal[j2] * W; */
+      /* 		      } */
+      /* 		      // QUEHACERES changing to (grad(u).n).n */
+		      
+      /* 		      /\* jacobian(ext_eqn_u_fe, ext_unknown_u_fe) += *\/ */
+      /* 		      /\* 	Normal_velocity_gradient_regularisation_factor * *\/ */
+      /* 		      /\* 	(dpsidx(l_in_bulk,j)  * dpsidx(l2_in_bulk,i) * unit_normal[j]*unit_normal[i2] + *\/ */
+      /* 		      /\* 	 dpsidx(l_in_bulk,i2) * dpsidx(l2_in_bulk,j) * unit_normal[j]*unit_normal[i] + *\/ */
+      /* 		      /\* 	 dpsidx(l_in_bulk,j)  * dpsidx(l2_in_bulk,j) * unit_normal[i]*unit_normal[i2])*W; *\/ */
+
+      /* 		      /\* if(i == i2) *\/ */
+      /* 		      /\* { *\/ */
+      /* 		      /\* 	for(unsigned m=0; m<Dim; m++) *\/ */
+      /* 		      /\* 	{ *\/ */
+      /* 		      /\* 	  jacobian(ext_eqn_u_fe, ext_unknown_u_fe) += *\/ */
+      /* 		      /\* 	    Normal_velocity_gradient_regularisation_factor * *\/ */
+      /* 		      /\* 	    (dpsidx(l_in_bulk,j) * dpsidx(l2_in_bulk, m)*unit_normal[j]*unit_normal[m])*W; *\/ */
+      /* 		      /\* 	} *\/ */
+      /* 		      /\* } *\/ */
+      /* 		    } */
+      /* 		  } // end loop over unknown pinned check */
+      /* 		} // end loop over unknown velocity components */
+      /* 	      } // end loop over bulk velocity unknowns */
+
+      /* 	      // QUEHACERES taking out while we experiment with just doing strain rate */
+      /* 	      /\* // now add the contribution of the face pressure unknowns to the bulk  *\/ */
+      /* 	      /\* // velocity equations *\/ */
+      /* 	      /\* for(unsigned k=0; k<n_pres; k++) *\/ */
+      /* 	      /\* { *\/ */
+      /* 	      /\* 	// get the bulk node number corresponding to this face element vertex node *\/ */
+      /* 	      /\* 	const unsigned k_in_bulk = this->bulk_node_number(k); *\/ */
+		
+      /* 	      /\* 	// Now the contribution of the pressure to the velocity eqns *\/ */
+      /* 	      /\* 	// (via the functional) @@@ *\/ */
+      /* 	      /\* 	int local_unknown_p = this->nodal_local_eqn(k, this->P_index_nst); *\/ */
+
+      /* 	      /\* 	if(local_unknown_p >= 0) *\/ */
+      /* 	      /\* 	{ *\/ */
+      /* 	      /\* 	  for(unsigned j=0; j<Dim; j++) *\/ */
+      /* 	      /\* 	  { *\/ */
+      /* 	      /\* 	    jacobian(ext_eqn_u_fe, local_unknown_p) += Normal_velocity_gradient_regularisation_factor * *\/ */
+      /* 	      /\* 	      2 * (-dpsidx(l_in_bulk,j)*unit_normal[j]*unit_normal[i]*psip[k_in_bulk] ) * W; *\/ */
+      /* 	      /\* 	  } *\/ */
+      /* 	      /\* 	} *\/ */
+      /* 	      /\* } // end loop over face pressure dofs *\/ */
+	      
+      /* 	    } // end Jacobian check */
+	    
+      /* 	  } // end bulk velocity pinned check */
+      /* 	} // end loop over bulk velocity components   */
+      /* } // end loop over bulk velocity equations */
+      
       // Boundary contributions of momentum LMs to the pressure residual
       // --------------------------------------------------------------------
 
-      // number of pressure nodes in this face element
-      const unsigned n_pres = Dim;
-      
-      // shape functions from bulk
-      Shape psip(bulk_el_pt->npres_nst());
+      // ### QUEHACERES delete when functional elements work
+      /* // get the a1 tangent vector at this knot */
+      /* Vector<double> a1(Dim, 0.0); */
+      /* A1_tangent_vector_fct_pt(lagr_coords_at_knot, a1); */
 
+      /* // now compute (grad P).a1 */
+      /* double grad_p_dot_a1 = 0.0; */
+      
+      /* // loop over the pressure shape functions */
+      /* for(unsigned k=0; k<n_pres; k++) */
+      /* { */
+      /* 	// get this node index in the bulk element */
+      /* 	unsigned k_in_bulk = this->bulk_node_number(k); */
+	
+      /* 	// loop over the directions */
+      /* 	for(unsigned j=0; j<Dim; j++) */
+      /* 	{ */
+      /* 	  grad_p_dot_a1 += this->nodal_value(k, this->P_index_nst) * */
+      /* 	    dpsipdx(k_in_bulk, j) * a1[j]; */
+      /* 	} */
+      /* } */
+      
       // loop over the pressure shape functions
       // N.B. this works because the vertex nodes are enumerated first, so
       // looping over the first DIM (=n_pres) nodes gives the nodes which store
@@ -2817,31 +4510,620 @@ namespace oomph
       for(unsigned k=0; k<n_pres; k++)
       {
 	// get the bulk node number corresponding to this face element vertex node
-	unsigned k_in_bulk = this->bulk_node_number(k);
-
-	// get the pressure basis functions from the bulk element
-	bulk_el_pt->pshape_nst(s_bulk, psip);
+	const unsigned k_in_bulk = this->bulk_node_number(k);
 
 	// get the local equation number for the pressure at this vertex node
-	int local_eqn_p = this->nodal_local_eqn(k, bulk_el_pt->p_index_nst());
+	int local_eqn_p = this->nodal_local_eqn(k, this->P_index_nst);
 
 	if(local_eqn_p >= 0)
 	{
 	  for(unsigned j=0; j<Dim; j++)
 	  {
-	    // QUEHACERES write-up Eq. 4.26, \partial\Gamma_C part of term 2
 	    residuals[local_eqn_p] -=
 	      lambda_momentum[j] * unit_normal[j] * psip[k_in_bulk] * W;
-	  }
 
-	  // no Jacobian contributions to momentum-enforcing LMs,
-	  // since they are zero on Dirchlet boundaries
+	    // ### QUEHACERES delete when functional elements work
+	    /* residuals[local_eqn_p] += Pressure_gradient_regularisation_factor * */
+	    /*   dpsipdx(k_in_bulk, j) * a1[j] * grad_p_dot_a1 * W; */
+	      
+	    // QUEHACERES taking out while we experiment with strain rate
+	    /* // and the contribution from the functional @@@ */
+	    /* residuals[local_eqn_p] -= Normal_velocity_gradient_regularisation_factor * */
+	    /*   traction_fe[j] * unit_normal[j] * psip[k_in_bulk] * W; */
 	  
-	}
-      }
+
+	    // no Jacobian contributions to momentum-enforcing LMs,
+	    // since they are zero on Dirchlet boundaries
+
+	    // ### QUEHACERES delete when functional elements work
+	    /* if(flag) */
+	    /* { */
+	    /*   for(unsigned k2=0; k2<n_pres; k2++) */
+	    /*   { */
+	    /* 	const unsigned k2_in_bulk = this->bulk_node_number(k2); */
+
+	    /* 	int local_unknown_p = this->nodal_local_eqn(k2, this->P_index_nst); */
+
+	    /* 	if(local_unknown_p >= 0) */
+	    /* 	{ */
+	    /* 	  for(unsigned j2=0; j2<Dim; j2++) */
+	    /* 	  { */
+	    /* 	    jacobian(local_eqn_p, local_unknown_p) += */
+	    /* 	      Pressure_gradient_regularisation_factor * */
+	    /* 	      dpsipdx(k_in_bulk,j) * dpsipdx(k2_in_bulk, j2) * a1[j] * a1[j2] * W; */
+	    /* 	  } */
+	    /* 	} */
+	    /*   } */
+	    /* } // end Jacobian check */
+	  } // end loop over dimensions
+	  
+	    // QUEHACERES taking out while we experiment with strain rate
+	    /* // only Jacobian contributions from functional @@@ */
+	    /* for(unsigned k2=0; k2<n_pres; k2++) */
+	    /* { */
+	    /*   // get the bulk node number corresponding to this face element pressure unknown */
+	    /*   const unsigned k2_in_bulk = this->bulk_node_number(k2); */
+
+	    /*   int local_unknown_p = this->nodal_local_eqn(k2, this->P_index_nst); */
+
+	    /*   // is it pinned? */
+	    /*   if(local_unknown_p >= 0) */
+	    /*   { */
+	    /* 	for(unsigned i=0; i<Dim; i++) */
+	    /* 	{ */
+	    /* 	  jacobian(local_eqn_p, local_unknown_p) += Normal_velocity_gradient_regularisation_factor * */
+	    /* 	    unit_normal[i] * unit_normal[i] * psip[k_in_bulk] * psip[k2_in_bulk] * W; */
+	    /* 	} */
+	    /*  }  */
+	    /* } // end loop over pressure dofs */
+	    
+	    /* // now loop over the bulk velocity unknowns and add their contribution */
+	    /* // to the pressure (via the traction functional, i.e. velocity gradients) @@@ */
+	    /* for(unsigned l2=0; l2<n_node_bulk; l2++) */
+	    /* { */
+	    /*   // loop over bulk velocity components */
+	    /*   for(unsigned i2=0; i2<Dim; i2++) */
+	    /*   { */
+	    /* 	unsigned ext_index = External_eqn_index_bulk[l2]; */
+	    /* 	int ext_unknown_u = this->external_local_eqn(ext_index, i2); */
+
+	    /* 	if(ext_unknown_u >= 0) */
+	    /* 	{ */
+	    /* 	  for(unsigned j=0; j<Dim; j++) */
+	    /* 	  { */
+	    /* 	    jacobian(local_eqn_p, ext_unknown_u) -= Normal_velocity_gradient_regularisation_factor * */
+	    /* 	      2 * dpsidx(l2,j) * unit_normal[j]*unit_normal[i2] * psip[k_in_bulk] * W; */
+	    /* 	  } */
+	    /* 	} */
+	    /*   } */
+	    /* } // end loop over bulk velocity unknowns */
+	    
+	  /* } // end Jacobian check */
+	} // end pinned pressure check
+	
+      } // end loop over pressure unknowns
+      
     } // end loop over integration points
   } // end of fill_in_generic_residual_contribution_navier_stokes_bc()
 
+  
+  //////////////////////////////////////////////////////////////////////////////
+  //////////////////////////////////////////////////////////////////////////////
+  //////////////////////////////////////////////////////////////////////////////
+  //////////////////////////////////////////////////////////////////////////////
+
+  template<class ELEMENT>
+  class NavierStokesPressureJumpFaceElement :
+    public virtual FaceGeometry<ELEMENT>, public virtual FaceElement
+  {
+  public:
+
+    NavierStokesPressureJumpFaceElement(
+      ELEMENT* const& upper_disk_bulk_el_pt,
+      const int& face_index,
+      ELEMENT* const& lower_disk_bulk_el_pt,
+      const std::map<unsigned, unsigned>& upper_face_to_lower_bulk_node_index_map,
+      const double& pressure_jump_regularisation_factor = 1.0)
+      : Lower_disk_bulk_el_pt(lower_disk_bulk_el_pt),
+      Upper_face_to_lower_bulk_node_index_map(upper_face_to_lower_bulk_node_index_map),
+      Pressure_jump_regularisation_factor(pressure_jump_regularisation_factor)
+    {
+      // build the bastard
+      upper_disk_bulk_el_pt->build_face_element(face_index, this);
+
+      // get the dimensionality of the bulk element and this face element
+      const unsigned bulk_dim = upper_disk_bulk_el_pt->dim();;
+      Dim = bulk_dim - 1;
+      
+#ifdef PARANOID
+      {
+	//Check that the element is not a refineable 3d element
+	ELEMENT* elem_pt = dynamic_cast<ELEMENT*>(upper_disk_bulk_el_pt);
+	//If it's three-d
+	if(elem_pt->dim() == 3)
+	{
+	  //Is it refineable
+	  RefineableElement* ref_el_pt = dynamic_cast<RefineableElement*>(elem_pt);
+	  if(ref_el_pt != nullptr)
+	  {
+	    if (this->has_hanging_nodes())
+	    {
+	      throw OomphLibError(
+		"This face element will not work correctly if nodes are hanging\n",
+		OOMPH_CURRENT_FUNCTION,
+		OOMPH_EXCEPTION_LOCATION);
+	    }
+	  }
+	}
+      }
+#endif   
+
+      // Set up P_index_nst. Initialise to Dim, (since we have Dim velocity components indexed
+      // from zero, followed by the pressure) which probably won't change
+      // in most cases, oh well, the price we pay for generality
+      P_index = bulk_dim;
+
+      // Cast to the appropriate NavierStokesEquation so that we can
+      // find the index at which the variable is stored
+      // We assume that the dimension of the full problem is the same
+      // as the dimension of the node, if this is not the case you will have
+      // to write custom elements, sorry
+      switch(bulk_dim)
+      {
+	//One dimensional problem
+	case 1:
+	{
+	  throw OomphLibError("1D fluid dynamics makes no sense!\n",
+			      OOMPH_CURRENT_FUNCTION,
+			      OOMPH_EXCEPTION_LOCATION);
+	}
+	break;
+    
+	//Two dimensional problem
+	case 2:
+	{
+	  NavierStokesEquations<2>* eqn_pt = 
+	    dynamic_cast<NavierStokesEquations<2>*>(upper_disk_bulk_el_pt);
+	  //If the cast has failed die
+	  if(eqn_pt == nullptr)
+	  {
+	    std::string error_string =
+	      "Bulk element must inherit from NavierStokesEquations.";
+	    error_string += 
+	      "Nodes are two dimensional, but cannot cast the bulk element to\n";
+	    error_string += "NavierStokesEquations<2>\n.";
+	    error_string += 
+	      "If you desire this functionality, you must implement it yourself\n";
+       
+	    throw OomphLibError(error_string,
+				OOMPH_CURRENT_FUNCTION,
+				OOMPH_EXCEPTION_LOCATION);
+	  }
+	  else
+	  {
+	    //Read the index from the (cast) bulk element.
+	    P_index = eqn_pt->p_nodal_index_nst();
+	  }
+	}
+	break;
+    
+	//Three dimensional problem
+	case 3:
+	{
+	  NavierStokesEquations<3>* eqn_pt = 
+	    dynamic_cast<NavierStokesEquations<3>*>(upper_disk_bulk_el_pt);
+	
+	  //If the cast has failed die
+	  if(eqn_pt == nullptr)
+	  {
+	    std::string error_string =
+	      "Bulk element must inherit from NavierStokesEquations.";
+	    error_string += 
+	      "Nodes are three dimensional, but cannot cast the bulk element to\n";
+	    error_string += "NavierStokesEquations<3>\n.";
+	    error_string += 
+	      "If you desire this functionality, you must implement it yourself\n";
+       
+	    throw OomphLibError(error_string,
+				OOMPH_CURRENT_FUNCTION,
+				OOMPH_EXCEPTION_LOCATION);       
+	  }
+	  else
+	  {
+	    //Read the index from the (cast) bulk element.
+	    P_index = eqn_pt->p_nodal_index_nst();
+	  }
+	}
+	break;
+
+	//Any other case is an error
+	default:
+	  std::ostringstream error_stream; 
+	  error_stream <<  "Dimension of node is " << Dim 
+		       << ". It should be 2, or 3!" << std::endl;
+     
+	  throw OomphLibError(error_stream.str(),
+			      OOMPH_CURRENT_FUNCTION,
+			      OOMPH_EXCEPTION_LOCATION);
+	  break;
+      }
+      
+      // Now add the upper and lower nodes as external data
+      // ---------------------------------------------------
+      
+      const unsigned npressure_nodes = Dim+1;
+      External_eqn_index_lower.resize(npressure_nodes, 0.0);
+      
+      for(unsigned l=0; l<npressure_nodes; l++)
+      {
+	// get the corresponding lower node index
+	unsigned lower_node_index = Upper_face_to_lower_bulk_node_index_map.at(l);
+	  
+	// get node pointer	
+	Node* lower_node_pt = Lower_disk_bulk_el_pt->node_pt(lower_node_index);
+
+	// now add this node as external data and save the equation number
+	External_eqn_index_lower[l] = this->add_external_data(lower_node_pt);
+      }
+      
+    }
+      
+    NavierStokesPressureJumpFaceElement()
+    {
+      throw OomphLibError(
+	"Don't call empty constructor for NavierStokesPressureJumpFaceElement",
+	OOMPH_CURRENT_FUNCTION,
+	OOMPH_EXCEPTION_LOCATION);
+    }
+  
+    /// Broken copy constructor
+    NavierStokesPressureJumpFaceElement(
+      const NavierStokesPressureJumpFaceElement& dummy) 
+    { 
+      BrokenCopy::broken_copy("NavierStokesPressureJumpFaceElement");
+    } 
+  
+    /// Broken assignment operator
+    void operator=(const NavierStokesPressureJumpFaceElement&) 
+      {
+	BrokenCopy::broken_assign("NavierStokesPressureJumpFaceElement");
+      }
+
+    /// Add the element's contribution to its residual vector
+    inline void fill_in_contribution_to_residuals(Vector<double>& residuals)
+    {
+      //Call the generic residuals function with flag set to 0
+      //using a dummy matrix argument
+      fill_in_generic_residual_contribution_navier_stokes_pressure_jump(
+	residuals, GeneralisedElement::Dummy_matrix, 0);
+    }
+      
+#ifndef USE_FD_JACOBIAN
+    /// \short Add the element's contribution to its residual vector and its
+    /// Jacobian matrix
+    inline void fill_in_contribution_to_jacobian(Vector<double>& residuals,
+						 DenseMatrix<double>& jacobian)
+    {
+      //Call the generic routine with the flag set to 1
+      fill_in_generic_residual_contribution_navier_stokes_pressure_jump(residuals, jacobian, 1);
+    }
+#endif
+
+    void fill_in_generic_residual_contribution_navier_stokes_pressure_jump(
+      Vector<double>& residuals, DenseMatrix<double>& jacobian, const bool& flag);
+
+    /// Compute the pressure jump integrated over this face element 
+    double contribution_to_pressure_jump_integral() const;
+
+    /// accessor to the lower bulk element pointer
+    ELEMENT* lower_disk_bulk_el_pt()
+    {
+      return Lower_disk_bulk_el_pt;
+    }
+
+    /// \short get the local coordinates in the lower bulk element associated
+    /// with local face coordinates in the upper element
+    void get_lower_bulk_coords_from_upper_face_coords(const Vector<double>& s_upper,
+						      Vector<double>& s_lower) const;
+	
+  private:
+
+    // compute the jump in pressure above/below the plate at a given knot point
+    double Pressure_jump_at_knot(const unsigned& ipt) const;
+    
+    // pointer to the lower disk bulk element
+    ELEMENT* Lower_disk_bulk_el_pt;
+
+    // equation numbers for the lower element's pressure dofs to which this
+    // element makes a contribution
+    Vector<unsigned> External_eqn_index_lower;
+    
+    // map which gives the node index in the lower element of the node corresponding
+    // to a given upper element node.
+    std::map<unsigned, unsigned> Upper_face_to_lower_bulk_node_index_map;
+      
+    /// QUEHACERES experimental - regularisation factor for the contribution
+    /// of the jump in pressure across the disk to the functional
+    /// we're minimising
+    double Pressure_jump_regularisation_factor;
+
+    unsigned Dim;
+
+    unsigned P_index;
+  };
+
+  // ==========================================================================
+  template<class ELEMENT>
+    void NavierStokesPressureJumpFaceElement<ELEMENT>::
+    get_lower_bulk_coords_from_upper_face_coords(const Vector<double>& s_upper,
+						 Vector<double>& s_lower) const
+  {
+    s_lower.resize(Dim+1, 0.0);
+    s_lower.initialise(0.0);
+    
+    // now get the interpolated Eulerian position
+    Vector<double> x(Dim+1, 0.0);
+    
+    for(unsigned i=0; i<(Dim+1); i++) 
+      x[i] = this->interpolated_x(s_upper, i);
+    
+    // now find the local coordinates of this Eulerian position for the lower element
+    GeomObject* geom_object_pt = nullptr;
+    
+    Lower_disk_bulk_el_pt->locate_zeta(x, geom_object_pt, s_lower);
+
+    // did we find the point?
+    if(geom_object_pt == nullptr)
+    {
+      // backup the current tolerance
+      double locate_zeta_tol_backup = Locate_zeta_helpers::Newton_tolerance;
+
+      // try again with a slightly looser tolerance
+      Locate_zeta_helpers::Newton_tolerance = 1e-6;
+
+      Lower_disk_bulk_el_pt->locate_zeta(x, geom_object_pt, s_lower);
+
+      // reset the tolerance
+      Locate_zeta_helpers::Newton_tolerance = locate_zeta_tol_backup;
+
+      // if we still didn't find it, then throw
+      if(geom_object_pt == nullptr)
+      { 
+	throw OomphLibError(
+	  "Couldn't find corresponding point in lower element to compute pressure jump",
+	  OOMPH_CURRENT_FUNCTION,
+	  OOMPH_EXCEPTION_LOCATION);
+      }
+    }
+  }
+    
+  // ==========================================================================
+  template<class ELEMENT>
+  double NavierStokesPressureJumpFaceElement<ELEMENT>::
+    Pressure_jump_at_knot(const unsigned& ipt) const
+  {
+    Vector<double> s(Dim, 0.0), s_lower(Dim+1, 0.0);
+
+    // Get local coordinates at this knot
+    for(unsigned i=0; i<Dim; i++) 
+    {
+      s[i] = this->integral_pt()->knot(ipt, i);
+    }
+
+    // get the associated bulk coordinates
+    Vector<double> s_bulk(Dim+1,0.0);
+    this->get_local_coordinate_in_bulk(s, s_bulk);
+
+    // get the local coordinates in the lower bulk element
+    Vector<double> s_lower_bulk(Dim+1, 0.0);
+    get_lower_bulk_coords_from_upper_face_coords(s, s_lower_bulk);
+    
+    // now get the interpolated pressure from both elements
+    double p_upper =  dynamic_cast<ELEMENT*>(bulk_element_pt())->interpolated_p_nst(s_bulk);
+    double p_lower = Lower_disk_bulk_el_pt->interpolated_p_nst(s_lower_bulk);
+    
+    return p_upper - p_lower;
+  }
+
+  // ==========================================================================
+  /// Compute the pressure jump integrated over this face element
+  // ==========================================================================
+  template<class ELEMENT>
+    double NavierStokesPressureJumpFaceElement<ELEMENT>::
+    contribution_to_pressure_jump_integral() const
+  {
+    double p_jump_integral = 0.0;
+
+    // number of knots in this face element
+    const unsigned nknot = this->integral_pt()->nweight();
+
+    // loop over the knots
+    for(unsigned ipt=0; ipt<nknot; ipt++)
+    {
+      // get the integral weight
+      double w = this->integral_pt()->weight(ipt);
+       
+      // find the shape and test functions and return the Jacobian
+      //of the mapping from Eulerian -> local coords
+      double J = this->J_eulerian_at_knot(ipt);
+
+      // premultiply the weights and the Jacobian
+      double W = w * J;
+
+      // get the pressure jump at this knot
+      double p_jump = Pressure_jump_at_knot(ipt);
+
+      // add to the total
+      p_jump_integral += p_jump * W;
+    }
+
+    // return the integral over this element
+    return p_jump_integral;
+  }
+  
+  template<class ELEMENT>
+  void NavierStokesPressureJumpFaceElement<ELEMENT>::
+    fill_in_generic_residual_contribution_navier_stokes_pressure_jump(
+      Vector<double>& residuals, DenseMatrix<double>& jacobian, const bool& flag)
+  {
+    // QUEHACERES strategy: loop over the knots in this element, then loop over
+    // the nodes in the upper element and use the map to get the corresponding
+    // lower element node to compute the jump
+
+    const unsigned nknot = this->integral_pt()->nweight();    
+
+    // shorthand to the bulk element we're attached to
+    ELEMENT* bulk_el_pt = dynamic_cast<ELEMENT*>(bulk_element_pt());
+
+    // number of pressure nodes in the bulk element
+    const unsigned npressure_node = bulk_el_pt->npres_nst();
+    
+    // pressure basis functions
+    Shape psip_upper(npressure_node);
+    Shape psip_lower(npressure_node);
+
+    // loop over the integration points in this face element
+    for(unsigned ipt=0; ipt<nknot; ipt++)
+    {
+      Vector<double> s(Dim, 0.0);
+      
+      //Assign values of s
+      for(unsigned i=0; i<(Dim); i++) 
+      {
+	s[i] = this->integral_pt()->knot(ipt, i);
+      }
+
+      // get the local coordinates in the bulk element
+      Vector<double> s_bulk(Dim+1,0.0);
+      this->get_local_coordinate_in_bulk(s, s_bulk);
+      
+      // get the integral weight
+      double w = this->integral_pt()->weight(ipt);
+       
+      // find the shape and test functions and return the Jacobian
+      //of the mapping from Eulerian -> local coords
+      double J = this->J_eulerian(s);
+	
+      // premultiply the weights and the Jacobian
+      double W = w * J;
+
+      // get the local coordinates in the lower bulk element
+      Vector<double> s_bulk_lower(Dim+1, 0.0);
+      get_lower_bulk_coords_from_upper_face_coords(s, s_bulk_lower);
+      
+      // get the pressure basis functions from the bulk element
+      bulk_el_pt->pshape_nst(s_bulk, psip_upper);
+      Lower_disk_bulk_el_pt->pshape_nst(s_bulk_lower, psip_lower);
+      
+      // compute the pressure jump at this knot
+      double p_jump = Pressure_jump_at_knot(ipt);
+
+      // Now add to the right equations
+      // --------------------------------------------
+
+      // QUEHACERES this is not general, but we're going to assume we've got
+      // one fewer pressure dofs in this lower order element
+      const unsigned npres_face = npressure_node-1;
+
+      // loop over the pressure dofs in this face element
+      for(unsigned l=0; l<npres_face; l++) 
+      {
+	// get the bulk node number corresponding to this face element vertex node
+	unsigned l_in_bulk_upper = this->bulk_node_number(l);
+
+	int local_eqn = this->nodal_local_eqn(l, P_index);
+
+	// check the upper pressure dof isn't pinned
+	if(local_eqn >= 0)
+	{
+	  residuals[local_eqn] +=
+	    Pressure_jump_regularisation_factor * p_jump * psip_upper[l_in_bulk_upper] * W;
+
+	  // jacobian?
+	  if(flag == 1)
+	  {
+	    // loop over the pressure dofs again
+	    for (unsigned k=0; k<npres_face; k++)
+	    {
+	      // get the node numbers for the associated bulk elements
+	      unsigned k_in_bulk_upper = this->bulk_node_number(k);
+	      unsigned k_in_bulk_lower = Upper_face_to_lower_bulk_node_index_map[k];
+	      
+	      // variation of the pressure jump w.r.t. the upper (this) element's nodes' pressures
+	      int local_unknown = this->nodal_local_eqn(k, P_index);
+
+	      // dr_p_upper/dp_upper
+	      if(local_unknown >= 0)
+	      {
+		jacobian(local_eqn, local_unknown) += Pressure_jump_regularisation_factor * 
+		  psip_upper[l_in_bulk_upper] * psip_upper[k_in_bulk_upper] * W;
+	      }
+	      
+	      // and again for the lower disk node
+	      int ext_unknown = external_local_eqn(External_eqn_index_lower[k], P_index);
+
+	      // dr_p_upper/dp_lower
+	      if(ext_unknown >= 0)
+	      {
+		jacobian(local_eqn, ext_unknown) -= Pressure_jump_regularisation_factor *
+		  psip_upper[l_in_bulk_upper] * psip_lower[k_in_bulk_lower] * W;
+	      }
+	    }
+	  }
+	}
+
+	// and the same again for the lower disk nodes with opposite signs
+	// ---------------------------------------------------------------
+
+	// now need this same index in the lower element - get it from the map
+	unsigned l_in_bulk_lower = Upper_face_to_lower_bulk_node_index_map[l];
+	
+	int ext_eqn = this->external_local_eqn(External_eqn_index_lower[l], P_index);
+
+	// is the lower pressure dof pinned?
+	if(ext_eqn >= 0)
+	{
+	  // equation for p_lower
+	  residuals[ext_eqn] -=
+	    Pressure_jump_regularisation_factor * p_jump * psip_lower[l_in_bulk_lower] * W;
+
+	  // jacobian?
+	  if(flag == 1)
+	  {
+	    // loop over the face element pressure dofs again
+	    for (unsigned k=0; k<npres_face; k++)
+	    {
+	      // get the node numbers for the associated bulk elements
+	      unsigned k_in_bulk_upper = this->bulk_node_number(k);
+	      unsigned k_in_bulk_lower = Upper_face_to_lower_bulk_node_index_map[k];
+	      
+	      // variation of the pressure jump w.r.t. the upper disk nodes' pressures
+	      int local_unknown = this->nodal_local_eqn(k, P_index);
+
+	      // dr_p_lower/dp_upper
+	      if(local_unknown >= 0)
+	      {
+		jacobian(ext_eqn, local_unknown) -= Pressure_jump_regularisation_factor *
+		  psip_lower[l_in_bulk_lower] * psip_upper[k_in_bulk_upper] * W;
+	      }
+	      
+	      // and again for the lower disk node
+	      int ext_unknown = this->external_local_eqn(External_eqn_index_lower[k], P_index);
+
+	      // dr_p_lower/dp_lower
+	      if(local_unknown >= 0)
+	      {
+		jacobian(ext_eqn, ext_unknown) += Pressure_jump_regularisation_factor *
+		  psip_lower[l_in_bulk_lower] * psip_lower[k_in_bulk_lower] * W;
+	      }
+	    }
+	  }
+	}
+	
+      } // end loop over face element pressure dofs
+    }
+  }
+  
 ////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////
@@ -3072,7 +5354,10 @@ namespace oomph
 	{
 	  s[i] = this->integral_pt()->knot(ipt,i);
 	}
-   
+
+	// get the shape functions
+	this->shape(s, psi);
+	
 	//Calculate stuff at integration point
 	Vector<double> x(Dim, 0.0);
 	Vector<double> u_augmented(Dim, 0.0);
@@ -3803,8 +6088,8 @@ namespace oomph
       // now get the traction from the non-augmented bulk element
       Vector<double> traction_non_aug(Dim, 0.0);
       Non_augmented_bulk_element_pt->get_traction(s_bulk_non_aug,
-					       unit_normal,
-					       traction_non_aug);
+						  unit_normal,
+						  traction_non_aug);
 
       Vector<double> lambda_momentum_non_aug = 
 	Non_augmented_bulk_element_pt->interpolated_lambda(s_bulk_non_aug);
@@ -4442,7 +6727,8 @@ namespace oomph
     Nplot(0), Is_lower_disk_element(false), Is_augmented_element(false),     
       Exact_non_singular_fct_pt(nullptr), Dfunctional_du_fct_pt(nullptr),
       Stress_fct_pt(nullptr), Body_force_fct_pt(nullptr), Nsingular_fct(0),
-      Pressure_regularisation_factor(0.0), Velocity_regularisation_factor(0.0)
+      Pressure_regularisation_factor(0.0), Velocity_regularisation_factor(0.0),
+      Amplitude_regularisation_factor(0.0), Rho_weighted_functional(false)
     { }
 
     TNavierStokesWithSingularityPdeConstrainedMinElement(
@@ -4456,6 +6742,13 @@ namespace oomph
       BrokenCopy::broken_assign("TNavierStokesWithSingularityPdeConstrainedMinElement");
     }
 
+    // helper to determine if pressure is stored at a given index
+    bool p_stored_at_node(const unsigned& j) const
+    {
+      // pressure is only stored at the vertices
+      return j < (DIM + 1);
+    }
+    
     // add extra values at each node and record the index of the first one.
     // These are the Lagrange multipliers which weakly enforce the Stokes momentum eqs
     void add_lagrange_multiplier_dofs(std::map<Node*,unsigned>& node_to_first_lm_index_map)
@@ -4641,6 +6934,18 @@ namespace oomph
       }
     }
 
+    // switch on the 1/sqrt(rho) weighting for the functional
+    void use_rho_weighted_functional()
+    {
+      Rho_weighted_functional = true;
+    }
+
+    // switch off the 1/sqrt(rho) weighting for the functional
+    void use_uniformly_weighted_functional()
+    {
+      Rho_weighted_functional = false;
+    }
+      
     // compute the body force at this Eulerian position
     void get_body_force(const Vector<double>& x, Vector<double>& body_force) const
     {
@@ -5181,9 +7486,6 @@ namespace oomph
 							   s_singular_el,
 							   sing_fct_id);
 
-	  if(sing_fct_id == 104 && u_sing[3] > 100 && x[2]<-0.1)
-	    unsigned breakpoint = 1;
-	  
 	  for(unsigned i=0; i<DIM+1; i++)
 	  {
 	    outfile << u_sing[i] << " ";
@@ -5665,12 +7967,15 @@ namespace oomph
     {
       Velocity_regularisation_factor = u_reg;
     }
+
+    void set_amplitude_regularisation_factor(const double& c_reg)
+    {
+      Amplitude_regularisation_factor = c_reg;
+    }
     
     /// Add the element's contribution to its residual vector
     inline void fill_in_contribution_to_residuals(Vector<double>& residuals)
     {
-      // if this is an augmented element, it's residuals are determined
-      // by PDE-constrained minimisation
       fill_in_generic_residual_contribution_pde_constrained_min(residuals,
 								GeneralisedElement::Dummy_matrix,
 								0);
@@ -5782,6 +8087,16 @@ namespace oomph
       }
 
       return integral;
+    }
+
+    // wrapper function to expose the protected TTaylorHood method
+    void dpshape_eulerian_nst(const Vector<double>& s, Shape& psip, DShape& dpsipdx) const
+    {
+      Shape testp_dummy(this->npres_nst());
+      DShape dtestpdx_dummy(this->npres_nst(), DIM);
+
+      // forward
+      this->dpshape_and_dptest_eulerian_nst(s, psip, dpsipdx, testp_dummy, dtestpdx_dummy);
     }
     
     // override the NavierStokesEquations residual function, as we
@@ -5959,20 +8274,6 @@ namespace oomph
 	total_singular_velocity_gradient_and_stress_at_knot(ipt, dudx_sing_total,
 							    stress_sing_total);
 
-	// ### QUEHACERES delete
-	/* for(unsigned i=0; i<DIM; i++) */
-	/* { */
-	/*   for(unsigned j=0; j<DIM; j++) */
-	/*   { */
-	/*     strain_rate_sing_total(i,j) = 0.5 * (dudx_sing_total(i,j) + */
-	/* 					 dudx_sing_total(j,i)); */
-	/*   } */
-	/* } */
-
-	/* // and finally compute the total singular stress */
-	/* double p_sing_total = u_sing_total[this->p_index_nst()]; */
-	/* stress_sing_total = Stress_fct_pt(strain_rate_sing_total, p_sing_total); */
-
 	// Get the Eulerian position
 	Vector<double> x(DIM, 0.0);
 	for(unsigned i=0; i<DIM; i++) 
@@ -5980,6 +8281,33 @@ namespace oomph
 	  x[i] = this->interpolated_x(s, i);
 	}
 
+	// QUEHACERES experimental - add a weight to the velocity functional so
+	// that we're weighting more heavily as we get closer to the disk edge
+	// --------------------------------------------------------------------
+	double functional_weight = 0.0;
+
+	if(Is_augmented_element)
+	{
+	  if(Rho_weighted_functional)
+	  {
+	    LagrangianCoordinates lagr_coords = lagr_coordinate_at_knot(ipt);
+
+	    // compute approximate rho, i.e. distance to disk edge;
+	    // for simplicity we're assuming a1 direction is straight
+	    const double rho = sqrt(pow(lagr_coords.xi3, 2) +
+				    pow(1.0 - lagr_coords.xi1, 2));
+
+	    // regularising constant
+	    const double w0 = 0.01;
+
+	    // functional weighting, chosen to reflect the rho^-1/2 form of the
+	    // pressure singularity
+	    functional_weight = sqrt(w0 / (rho + w0));
+	  }
+	  else
+	    functional_weight = 1.0;
+	}
+	
 	// Get the body force 
 	Vector<double> body_force(3, 0.0);
 	get_body_force(x, body_force);
@@ -6135,7 +8463,7 @@ namespace oomph
 	    if(local_eqn >= 0)
 	    {
 	      //Add the functional minimisation term
-	      residuals[local_eqn] +=
+	      residuals[local_eqn] += functional_weight *
 		Velocity_regularisation_factor * dfunctional_du[i] * psif[k] * W;
 
 	      //Add the contribution from the momentum-enforcing LM
@@ -6161,7 +8489,7 @@ namespace oomph
 		    if(local_unknown >= 0)
 		    {
 		      // du_k/du_l2
-		      jacobian(local_eqn, local_unknown) +=
+		      jacobian(local_eqn, local_unknown) += functional_weight *
 			Velocity_regularisation_factor * psif[l2] * psif[k] * W;
 		    }
 		  }
@@ -6234,7 +8562,7 @@ namespace oomph
 	    if(Is_augmented_element)
 	    {
 	      // add the pressure penalty term from the functional to be minimised
-	      residuals[local_eqn] +=
+	      residuals[local_eqn] += functional_weight * 
 		Pressure_regularisation_factor * interpolated_p * psip[k] * W;
 	    }
 	    
@@ -6257,7 +8585,7 @@ namespace oomph
 		  if(local_unknown >= 0)
 		  {
 		    // dp/dp
-		    jacobian(local_eqn, local_unknown) +=
+		    jacobian(local_eqn, local_unknown) += functional_weight * 
 		      Pressure_regularisation_factor * psip[k2] * psip[k] * W;
 		  }
 		}
@@ -6386,7 +8714,7 @@ namespace oomph
 	  
 	    // if this singular amplitude isn't pinned
 	    if(external_eqn_c >= 0)	      
-	    {
+	    {	
 	      for(unsigned i=0; i<DIM; i++)
 	      {
 		residuals[external_eqn_c] += interpolated_lambda_p *
@@ -6410,7 +8738,7 @@ namespace oomph
 
 	      // Jacobian?
 	      if (flag == 1)
-	      {		
+	      {	      
 		for(unsigned k=0; k<n_node; k++)
 		{
 		  for(unsigned i=0; i<DIM; i++)
@@ -6696,6 +9024,13 @@ namespace oomph
 
     /// \short scaling factor for 
     double Velocity_regularisation_factor;
+
+    double Amplitude_regularisation_factor;
+
+    /// \short Boolean for whether we just minimise u/p uniformly in the
+    /// augmented region or whether we apply a weighting based on the
+    /// radial distance to the edge of the sheet
+    bool Rho_weighted_functional;
   };
 
 
@@ -6752,17 +9087,29 @@ namespace oomph
   //=======================================================================
   template <>
     class FaceGeometry<TNavierStokesWithSingularityPdeConstrainedMinElement<1> >: 
-    public virtual PointElement
-    {
+  public virtual PointElement
+  {
 
-    public:
+  public:
  
-      /// \short Constructor: Call the constructor for the
-      /// appropriate lower-dimensional TElement
-    FaceGeometry() : PointElement() {} 
+    /// \short Constructor: Call the constructor for the
+    /// appropriate lower-dimensional TElement
+  FaceGeometry() : PointElement() {} 
 
-    };
-  
+  };
+
+  template <>
+    class FaceGeometry<FaceGeometry<TNavierStokesWithSingularityPdeConstrainedMinElement<3>>> :
+  public virtual TElement<1,3>
+  {
+
+  public:
+ 
+    /// \short Constructor: Call the constructor for the
+    /// appropriate lower-dimensional TElement
+  FaceGeometry() : TElement<1,3>() {}
+  };
+    
 }
 
 #endif

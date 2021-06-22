@@ -4,12 +4,30 @@
 #include "external_src/oomph_superlu_4.3/slu_ddefs.h"
 
 template <class ELEMENT>
+void FlowAroundDiskProblem<ELEMENT>::debug_shizzle_before_solve()
+{
+  // QUEHACERES moved to doc_solution()
+  /* double p_jump_total = 0.0; */
+  
+  /* for(unsigned e=0; e<Face_mesh_for_pressure_jump_pt->nelement(); e++) */
+  /* { */
+  /*   auto elem_pt = dynamic_cast<NavierStokesPressureJumpFaceElement<ELEMENT>*> */
+  /*     (Face_mesh_for_pressure_jump_pt->element_pt(e)); */
+
+  /*   // get the integral over this element and add to the total */
+  /*   p_jump_total += elem_pt->contribution_to_pressure_jump_integral(); */
+  /* }   */
+
+  /* oomph_info << "integrated pressure jump: " << p_jump_total << std::endl; */
+}
+
+template <class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::read_and_recompute_singular_drag(
   const std::string& filename) const
 {
   oomph_info << "Reading singular amplitudes..." << std::endl;
   std::ifstream some_file;
-  some_file.open(filename);
+  some_file.open(filename); 
 
   std::string line;
   
@@ -390,6 +408,17 @@ void FlowAroundDiskProblem<ELEMENT>::set_values_to_exact_non_singular_solution()
 	  double p = u_total[3] - u_sing_total[3];
 	  node_pt->set_value(3, p);
 	}
+
+	/* // QUEHACERES debug for pressure jump */
+	/* { */
+	/*   if( abs(lagr_coords.xi3) < 1e-6 ) */
+	/*   { */
+	/*     if(lagr_coords.sign_of_xi3() > 0) */
+	/*       node_pt->set_value(3, 2.5 * lagr_coords.xi1); */
+	/*     else */
+	/*       node_pt->set_value(3, -0.5 * lagr_coords.xi1); */
+	/*   } */
+	/* } */
       }
     }
   }
@@ -594,7 +623,8 @@ void FlowAroundDiskProblem<ELEMENT>::validate_singular_stress() const
 
 
 //==start_of_impose_fake_singular_amplitude===============================
-/// Set the singular amplitude to a prescribed value and bypass the proper calculation
+/// \shortCompute the exact amplitudes for the singular functions based on
+/// the prescribed disk motion
 //========================================================================
 template <class ELEMENT>
 Vector<std::pair<unsigned, double>> FlowAroundDiskProblem<ELEMENT>::
@@ -609,6 +639,10 @@ Vector<std::pair<unsigned, double>> FlowAroundDiskProblem<ELEMENT>::
   double u_in_plane = sqrt( pow(u_disk_rigid_translation[0], 2) +
 			    pow(u_disk_rigid_translation[1], 2) );
 
+  // angle of in-plane translation from the x-axis
+  double phi_in_plane = atan2(u_disk_rigid_translation[1],
+			      u_disk_rigid_translation[0]);
+  
   // azimuthal angle of the in-plane translation vector
   double zeta_translation = atan2pi(u_disk_rigid_translation[1],
 				    u_disk_rigid_translation[0]);
@@ -618,15 +652,15 @@ Vector<std::pair<unsigned, double>> FlowAroundDiskProblem<ELEMENT>::
 				 omega_disk[0]);
 
   // magnitude of the out-of-plane rotation vector
-  double omega_out_of_plane = sqrt(pow(omega_disk[0], 2) +
-				   pow(omega_disk[1], 2));
+  double omega_out_of_plane = -omega_disk[1]; /* sqrt(pow(omega_disk[0], 2) + */
+				   /* pow(omega_disk[1], 2)); */
     
   // broadside amplitude is the broadside translation plus the
   // modulated contribution from out-of-plane rotations (with the factor of 2
   // which appears for the out-of-plane solution to be locally equivalent
   // to broadside motion)
-  double c_broadside = u_broadside + // 2 * omega_out_of_plane * sin(zeta - zeta_rotation);
-    2.0 * omega_out_of_plane * (cos(zeta) + sin(zeta));
+  double c_broadside = u_broadside; // + // 2 * omega_out_of_plane * sin(zeta - zeta_rotation);
+    /* 2.0 * omega_out_of_plane * (cos(zeta) + sin(zeta)); */
 
   double c_broadside_rotation = -omega_out_of_plane * sin(zeta) / sqrt(2);
 
@@ -642,27 +676,26 @@ Vector<std::pair<unsigned, double>> FlowAroundDiskProblem<ELEMENT>::
   // in-plane rotation amplitude is the in-plane speed modulated by
   // a function pi/2 out of phase with the angle of this point relative to the
   // translation vector
-  double c_in_plane_rotation = u_in_plane * (-sin(zeta) +
-					     cos(zeta)) * cos(zeta_translation) +
-    omega_disk[2];
+  double c_in_plane_rotation = omega_disk[2];
 
-  double c_in_plane_az    = sin(zeta) * u_in_plane;
-  double c_in_plane_no_az = cos(zeta) * u_in_plane;
+  double c_in_plane_az    = sin(zeta - phi_in_plane) * u_in_plane;
+  double c_in_plane_no_az = cos(zeta - phi_in_plane) * u_in_plane;
     
   // now package them up for return
-  Vector<std::pair<unsigned,double>> amplitudes(4);
+  Vector<std::pair<unsigned,double>> amplitudes(6);
 
   // QUEHACERES 
-  /* amplitudes[0] = std::make_pair(Sing_fct_id_broadside, c_broadside); */
-  amplitudes[0] = std::make_pair(Sing_fct_id_broadside_rotation_no_az,
+  amplitudes[0] = std::make_pair(Sing_fct_id_broadside, c_broadside);
+  amplitudes[1] = std::make_pair(Sing_fct_id_broadside_rotation_no_az,
 				 c_broadside_rotation_no_az);
-  amplitudes[1] = std::make_pair(Sing_fct_id_broadside_rotation_az_only,
+  amplitudes[2] = std::make_pair(Sing_fct_id_broadside_rotation_az_only,
 				 c_broadside_rotation_az);
-  amplitudes[2] = std::make_pair(Sing_fct_id_in_plane_no_az,
+  amplitudes[3] = std::make_pair(Sing_fct_id_in_plane_no_az,
 				 c_in_plane_no_az); // QUEHACERES c_in_plane;
-  amplitudes[3] = std::make_pair(Sing_fct_id_in_plane_az_only,
+  amplitudes[4] = std::make_pair(Sing_fct_id_in_plane_az_only,
 				 c_in_plane_az); // QUEHACERES c_in_plane_rotation;
-  
+  amplitudes[5] = std::make_pair(Sing_fct_id_in_plane_rotation,
+				 c_in_plane_rotation);
   return amplitudes;
 }
 
@@ -674,6 +707,12 @@ template <class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::
 impose_fake_singular_amplitude(const bool& impose_zero_amplitude) const
 {
+  if(impose_zero_amplitude)
+    oomph_info << "Pinning singular amplitudes to zero (pure FE)..." << std::endl;
+  else
+    oomph_info << "Imposing exact singular amplitudes..."
+	       << "(N.B. if the disk is not flat this will not be correct!)" << std::endl;
+      
   // tell all the elements in the singular element mesh about the fake
   // amplitude to impose
   for(unsigned e=0; e<Singular_fct_element_mesh_pt->nelement(); e++)
@@ -701,14 +740,14 @@ impose_fake_singular_amplitude(const bool& impose_zero_amplitude) const
       double zeta = sing_el_pt->zeta_nodal(j,0,0);
 
       // compute the amplitudes, initially set to zero
-      Vector<std::pair<unsigned, double>> ids_and_amplitudes;
-
-      ids_and_amplitudes = compute_singular_amplitudes_from_disk_velocity(zeta);
+      Vector<std::pair<unsigned, double>> ids_and_amplitudes
+	= compute_singular_amplitudes_from_disk_velocity(zeta);
       
       // add to the list
       for(std::pair<unsigned,double>& id_amplitude_pair : ids_and_amplitudes)
       {
-	sing_id_to_nodal_amplitudes_map[id_amplitude_pair.first].push_back(id_amplitude_pair.second);
+	sing_id_to_nodal_amplitudes_map[id_amplitude_pair.first].push_back(
+	  id_amplitude_pair.second);
       }
     }
 

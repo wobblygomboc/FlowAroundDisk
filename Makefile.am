@@ -11,8 +11,8 @@ flow_around_disk_SOURCES = flow_around_disk.cc
 # Required libraries: 
 flow_around_disk_LDADD = -L@libdir@ -lnavier_stokes -lpoisson -lgeneric $(EXTERNAL_LIBS) $(FLIBS)
 
-#flow_around_disk_LDFLAGS =  # -std=c++14
-#flow_around_disk_CPPFLAGS = -std=c++14 # -O0
+#flow_around_disk_LDFLAGS =  -O0 # -std=c++14
+#flow_around_disk_CPPFLAGS += -O0
 #-std=c++11
 
 #---------------------------------------------------------------------------
