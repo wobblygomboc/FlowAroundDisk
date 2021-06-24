@@ -1121,187 +1121,13 @@ namespace oomph
     typedef void (*OuterBinormalFctPt)(const LagrangianCoordinates&, Vector<double>&);
     
     /// \short Constructor
-  FunctionalMinimisingLineElement(FACE_ELEMENT* const& face_elem_pt,
-				  const int& face_index,
-				  // ### QUEHACERES delete if the face element stuff works
-    /* const Vector<Node*>& upper_edge_nodes_ordered, */
-				  const std::map<Node*,Node*>& upper_to_lower_node_map,
-				  BULK_ELEMENT* const& lower_bulk_elem_pt,				  
-				  const double& pressure_jump_regularisation_factor = 0.0,
-				  const double& pressure_gradient_regularisation_factor = 0.0,
-				  const double& velocity_gradient_regularisation_factor = 0.0) :
-    FaceGeometry<FACE_ELEMENT>(), FaceElement(), Dim_element(1), 
-      Pressure_jump_regularisation_factor(pressure_jump_regularisation_factor),
-      Pressure_gradient_regularisation_factor(pressure_gradient_regularisation_factor),
-      Velocity_gradient_regularisation_factor(velocity_gradient_regularisation_factor),
-      Lower_bulk_elem_pt(lower_bulk_elem_pt), Upper_to_lower_node_map(upper_to_lower_node_map)
-      {
-	// get the 2D disk element to build this line element on the disk edge
-	face_elem_pt->build_face_element(face_index, this);
-
-	
-	face_elem_pt->nodal_dimension();
-	
-	// get the problem dimensionality from the face element's nodal dimension
-	// and set the nodal dimension of this element
-	Dim = face_elem_pt->nodal_dimension();
-	this->set_nodal_dimension(Dim);
-
-	// get the (3D) bulk element from the face element
-	BULK_ELEMENT* bulk_elem_pt =
-	  dynamic_cast<BULK_ELEMENT*>(face_elem_pt->bulk_element_pt());
-	
-	// get the pressure index from the bulk element
-	P_index = bulk_elem_pt->p_index_nst();
-
-	// shorthand
-	const unsigned nnode = this->nnode();
-	
-	// compute the list of nodal indices in this element which
-	// contain pressure (seems the nodal indices in a 1D line element are not
-	// (necessarily) ordered starting with the end nodes
-	Pressure_nodes_index.resize(0);
-	for(unsigned n=0; n<nnode; n++)
-	{
-	  // node number in the face element we're attached to
-	  unsigned n_in_face = this->bulk_node_number(n);
-
-	  // node number in the bulk element the face element is attached to
-	  unsigned n_in_bulk =
-	    dynamic_cast<FACE_ELEMENT*>(this->bulk_element_pt())->bulk_node_number(n_in_face);
-
-	  if(bulk_elem_pt->p_stored_at_node(n_in_bulk))
-	  {
-	    Pressure_nodes_index.push_back(n);
-	  }
-
-	  // ### QUEHACERES delete
-	  /* // get the node number in the bulk element associated with */
-	  /* // the first knot point (doesn't matter which knot we choose here) */
-	  /* unsigned n_in_bulk = Node_number_in_normal_bulk_elem_at_knot_map[0].at(n); */
-
-	  /* // is this a pressure-storing node in the bulk element? */
-	  /* if(Normal_bulk_elem_at_knot[0]->p_stored_at_node(n_in_bulk)) */
-	  /* { */
-	  /*   // add it to the list and increment the counter */
-	  /*   Pressure_nodes_index.push_back(n); */
-	  /* } */
-	}
-	
-#ifdef PARANOID
-	if(Upper_to_lower_node_map.size() != nnode)
-	{
-	  std::stringstream ss;
-
-	  ss << "FunctionalMinimisingLineElement constructor called with the wrong "
-	     << "number of nodes; expecting: " << nnode << ", got: "
-	     << Upper_to_lower_node_map.size() << std::endl;
-	  
-	  throw OomphLibError(ss.str().c_str(),
-			      OOMPH_CURRENT_FUNCTION,
-			      OOMPH_EXCEPTION_LOCATION);
-	}
-#endif
-
-	// ### QUEHACERES delete, changed it to a map
-	/* // make space for nnode equations */
-	/* External_eqn_index_lower.resize(nnode, 0); */
-	
-	// add the lower *pressure* nodes as external data
-	/* for(unsigned j=0; j<nnode; j++) */
-	for(unsigned j : Pressure_nodes_index)
-	{
-	  // get a pointer to the lower node
-	  Node* lower_node_pt = upper_to_lower_node_map.at(this->node_pt(j));
-
-	  // and add it as external data
-	  External_eqn_index_lower[j] = this->add_external_data(lower_node_pt);
-	}
-	
-	const unsigned nknot = this->integral_pt()->nweight();
-	
-	Lower_bulk_coords_at_knot.resize(nknot);
-
-	// loop over the integral points and look for these locations in the
-	// bulk lower element
-	for(unsigned ipt=0; ipt<nknot; ipt++)
-	{
-	  // local coordinates of this knot
-	  Vector<double> s(1, 0.0);
-	  s[0] = this->integral_pt()->knot(ipt,0);
-
-	  // Eulerian coordinates of this knot
-	  Vector<double> x(Dim, 0.0);	  
-	  for(unsigned i=0; i<Dim; i++)
-	    x[i] = this->interpolated_x(s,i);
-
-	  // now look for this point in the lower bulk element
-	  GeomObject* dummy_geom_obj_pt = nullptr;
-	  Vector<double> s_bulk(Dim, 0.0);
-	  Lower_bulk_elem_pt->locate_zeta(x, dummy_geom_obj_pt, s_bulk);
-
-	  if(dummy_geom_obj_pt == nullptr)
-	  {
-	    throw OomphLibError("Couldn't find this line element's knot in the lower bulk element",
-				OOMPH_CURRENT_FUNCTION,
-				OOMPH_EXCEPTION_LOCATION);
-	  }
-	  else
-	  {
-	    Lower_bulk_coords_at_knot[ipt].resize(Dim, 0.0);
-	    Lower_bulk_coords_at_knot[ipt] = s_bulk;
-	  }	  
-	}
-
-	Node_number_in_lower_bulk.resize(nnode, 0);
-	for(unsigned j=0; j<nnode; j++)
-	{
-	  Node* lower_node_pt = Upper_to_lower_node_map[this->node_pt(j)];
-	  
-	  const unsigned nnode_bulk = Lower_bulk_elem_pt->nnode();
-
-	  bool found_node = false;
-	  for(unsigned n=0; n<nnode_bulk; n++)
-	  {
-	    if(lower_node_pt == Lower_bulk_elem_pt->node_pt(n))
-	    {
-	      Node_number_in_lower_bulk[j] = n;
-	      found_node = true;
-	    }	    
-	  }
-
-	  // sanity check
-	  if(!found_node)
-	  {
-	    throw OomphLibError("Couldn't find all the lower nodes in the "
-				"corresponding lower bulk element.",
-				OOMPH_CURRENT_FUNCTION,
-				OOMPH_EXCEPTION_LOCATION);
-	  }
-	}
-
-	// @@@ QUEHACERES fuck it, add all the bloody nodes as external data
-	for(unsigned j=0; j<Lower_bulk_elem_pt->nnode(); j++)
-	{
-	  this->add_external_data(Lower_bulk_elem_pt->node_pt(j));
-	  this->add_external_data(bulk_elem_pt->node_pt(j));
-	}
-	
-	// ### QUEHACERES delete
-	/* unsigned j=0; */
-	/* for(std::pair<Node*,Node*> upper_to_lower_node : Upper_to_lower_node_map) */
-	/* { */
-	/*   // ### QUEHACERES delete if the face element stuff works */
-	/*   /\* this->node_pt(j) = upper_edge_nodes_ordered[j]; *\/ */
-
-	/*   // add the lower node as external data and store the equation number */
-	/*   External_eqn_index_lower[j] = */
-	/*     this->add_external_data(upper_to_lower_node.second); */
-
-	/*   // increment the counter */
-	/*   j++; */
-	/* } */
-      }
+    FunctionalMinimisingLineElement(FACE_ELEMENT* const& face_elem_pt,
+				    const int& face_index,
+				    const std::map<Node*,Node*>& upper_to_lower_node_map,
+				    BULK_ELEMENT* const& lower_bulk_elem_pt,				  
+				    const double& pressure_jump_regularisation_factor = 0.0,
+				    const double& pressure_gradient_regularisation_factor = 0.0,
+				    const double& velocity_gradient_regularisation_factor = 0.0);
 	    
     /// Broken copy constructor
     FunctionalMinimisingLineElement(
@@ -1309,7 +1135,7 @@ namespace oomph
     {
       BrokenCopy::broken_copy("FunctionalMinimisingLineElement");
     }
-
+  
     /// Broken assignment operator
     void operator=(const FunctionalMinimisingLineElement&)
       {
@@ -1322,177 +1148,7 @@ namespace oomph
       const Vector<Vector<double>>& normal_bulk_coords_at_knot,
       const Vector<Vector<double>>& binormal_bulk_coords_at_knot,
       const Vector<Vector<double>>& normal_vector_at_knot,
-      const Vector<Vector<double>>& binormal_vector_at_knot)
-    {
-      // shorthands
-      const unsigned nnode = this->nnode();
-      const unsigned nknot = this->integral_pt()->nweight();
-      
-#ifdef PARANOID
-     
-      if((normal_bulk_coords_at_knot.size()   != nknot) ||
-	 (binormal_bulk_coords_at_knot.size() != nknot) ||
-	 (normal_vector_at_knot.size()        != nknot) ||
-	 (binormal_vector_at_knot.size()      != nknot) )
-      {
-	std::stringstream ss;
-
-	ss << "FunctionalMinimisingLineElement constructor called with a "
-	   << "mismatch in the number of knots and the number of supplied "
-	   << "coordinates / vectors." << std::endl;
-	  
-	throw OomphLibError(ss.str().c_str(),
-			    OOMPH_CURRENT_FUNCTION,
-			    OOMPH_EXCEPTION_LOCATION);
-      }
-      
-#endif
-
-      // make space
-      Normal_bulk_elem_at_knot.resize(nknot, nullptr);
-      Binormal_bulk_elem_at_knot.resize(nknot, nullptr);
-            
-      Normal_bulk_coords_at_knot.resize(nknot);
-      Binormal_bulk_coords_at_knot.resize(nknot);
-
-      Normal_vector_at_knot.resize(nknot);
-      Binormal_vector_at_knot.resize(nknot);
-
-      Node_number_in_normal_bulk_elem_at_knot_map.resize(nknot);
-      Node_number_in_binormal_bulk_elem_at_knot_map.resize(nknot);
-
-      External_eqn_index_at_knot_bulk_normal.resize(nknot);
-      External_eqn_index_at_knot_bulk_binormal.resize(nknot);
-      
-      // assign the coordinates
-      for(unsigned ipt=0; ipt<nknot; ipt++)
-      {	  
-	Normal_bulk_elem_at_knot[ipt]    =   normal_bulk_elem_at_knot[ipt];
-	Binormal_bulk_elem_at_knot[ipt]  = binormal_bulk_elem_at_knot[ipt];
-	
-	Normal_bulk_coords_at_knot[ipt]   =   normal_bulk_coords_at_knot[ipt];
-	Binormal_bulk_coords_at_knot[ipt] = binormal_bulk_coords_at_knot[ipt];
-
-	Normal_vector_at_knot[ipt]   =   normal_vector_at_knot[ipt];
-	Binormal_vector_at_knot[ipt] = binormal_vector_at_knot[ipt];
-
-	// and add these bulk nodes as external data to this element
-	// (repeated nodes are ignored so easiest to just do this in this loop
-	// even in the likely case that the same bulk element is used for
-	// multiple knots)
-	const unsigned nnode_bulk = Normal_bulk_elem_at_knot[ipt]->nnode();
-	const unsigned npres_bulk = Normal_bulk_elem_at_knot[ipt]->npres_nst();
-	
-	// make space
-	External_eqn_index_at_knot_bulk_normal[ipt].resize(npres_bulk);
-	External_eqn_index_at_knot_bulk_binormal[ipt].resize(nnode_bulk);
-	
-	for(unsigned n=0; n<nnode_bulk; n++)
-	{
-	  Node* normal_bulk_node_pt   =   Normal_bulk_elem_at_knot[ipt]->node_pt(n);
-	  Node* binormal_bulk_node_pt = Binormal_bulk_elem_at_knot[ipt]->node_pt(n);
-	  
-	  External_eqn_index_at_knot_bulk_binormal[ipt][n] =
-	    this->add_external_data(binormal_bulk_node_pt);
-
-	  // only adding the pressure nodes in the normal-containing
-	  // element as external data 
-	  if(Normal_bulk_elem_at_knot[ipt]->p_stored_at_node(n))
-	  {
-	    External_eqn_index_at_knot_bulk_normal[ipt][n] =
-	      this->add_external_data(normal_bulk_node_pt);
-	  }
-	}
-
-	// now compute the map from this line elements node numbers to the bulk
-	// node numbers
-	for(unsigned k=0; k<nnode; k++)
-	{
-	  for(unsigned n=0; n<nnode_bulk; n++)
-	  {
-	    Node* line_node_pt = this->node_pt(k);
-	    
-	    Node* normal_bulk_node_pt   =   Normal_bulk_elem_at_knot[ipt]->node_pt(n);
-	    Node* binormal_bulk_node_pt = Binormal_bulk_elem_at_knot[ipt]->node_pt(n);
-
-	    if(line_node_pt == normal_bulk_node_pt)
-	      Node_number_in_normal_bulk_elem_at_knot_map[ipt][k] = n;
-
-	    if(line_node_pt == binormal_bulk_node_pt)
-	      Node_number_in_binormal_bulk_elem_at_knot_map[ipt][k] = n;
-	  }
-	}
-
-	// double check we found them all
-	if(Node_number_in_normal_bulk_elem_at_knot_map[ipt].size() != nnode)
-	{
-	  throw OomphLibError(
-	  "Didn't find all the nodes in this element in the normal bulk element",
-	  OOMPH_CURRENT_FUNCTION,
-	  OOMPH_EXCEPTION_LOCATION);
-	}
-
-	if(Node_number_in_binormal_bulk_elem_at_knot_map[ipt].size() != nnode)
-	{
-	  throw OomphLibError(
-	  "Didn't find all the nodes in this element in the binormal bulk element",
-	  OOMPH_CURRENT_FUNCTION,
-	  OOMPH_EXCEPTION_LOCATION);
-	}
-	
-#ifdef PARANOID
-
-	Vector<double> s(1, 0.0);
-	s[0] = this->integral_pt()->knot(ipt,0);
-	
-	// check the bulk coordinates agree with the local coordinates at each knot
-	double x_local         = 0.0;
-	double x_bulk_normal   = 0.0;
-	double x_bulk_binormal = 0.0;
-
-	const double tol = 1e-6;
-	
-	for(unsigned i=0; i<Dim; i++)
-	{
-	  x_local = this->interpolated_x(s,i);
-	  
-	  x_bulk_normal = Normal_bulk_elem_at_knot[ipt]->interpolated_x(
-	    Normal_bulk_coords_at_knot[ipt],i);
-
-	  x_bulk_binormal = Binormal_bulk_elem_at_knot[ipt]->interpolated_x(
-	    Binormal_bulk_coords_at_knot[ipt],i);
-
-	  if((abs(x_local - x_bulk_normal)   > tol) ||
-	     (abs(x_local - x_bulk_binormal) > tol))
-	  {
-	    throw OomphLibError(
-	      "Bulk coordinates and local coordinates are not sufficiently in agreement",
-	      OOMPH_CURRENT_FUNCTION,
-	      OOMPH_EXCEPTION_LOCATION);
-	  }
-	}
-#endif
-      } // end loop over knots
-
-      
-      // ### QUEHACERES delete, moved to constructor
-      /* // and finally, compute the list of nodal indices in this element which */
-      /* // contain pressure */
-      /* Pressure_nodes_index.resize(0); */
-      /* for(unsigned n=0; n<nnode; n++) */
-      /* { */
-      /* 	// get the node number in the bulk element associated with */
-      /* 	// the first knot point (doesn't matter which knot we choose here) */
-      /* 	unsigned n_in_bulk = Node_number_in_normal_bulk_elem_at_knot_map[0].at(n); */
-
-      /* 	// is this a pressure-storing node in the bulk element? */
-      /* 	if(Normal_bulk_elem_at_knot[0]->p_stored_at_node(n_in_bulk)) */
-      /* 	{ */
-      /* 	  // add it to the list and increment the counter */
-      /* 	  Pressure_nodes_index.push_back(n); */
-      /* 	} */
-      /* } */
-    }
+      const Vector<Vector<double>>& binormal_vector_at_knot);
 
     // QUEHACERES for debug
     void get_normal_vectors_at_knot(Vector<Vector<double>>& normal_vector_at_knot,
@@ -1508,17 +1164,12 @@ namespace oomph
 	residuals, GeneralisedElement::Dummy_matrix, false);
     }
 
-#define USE_FD_JACOBIAN_DEBUG
-#ifndef USE_FD_JACOBIAN_DEBUG    
+#ifndef USE_FD_JACOBIAN
     /// \short Add the element's contribution to its residual vector and its
     /// Jacobian matrix
     inline void fill_in_contribution_to_jacobian(Vector<double>& residuals,
 						 DenseMatrix<double>& jacobian)
     {
-
-      // ### QUEHACERES delete
-      /* FiniteElement::fill_in_contribution_to_jacobian(residuals, jacobian); */
-      /* #else */
       fill_in_generic_residual_contribution_functional(
 	residuals, jacobian, true);
     }
@@ -1639,6 +1290,10 @@ namespace oomph
       Binormal_bulk_elem_at_knot[0]->output(some_file, 2);
       some_file.close();
     }
+
+    // compute this element's contribution to the integral of the functional
+    // around the edge of the disk
+    double contribution_to_functional_integral() const;
     
   private:
 
@@ -1690,6 +1345,7 @@ namespace oomph
     // corresponding to the lower disk nodes
     std::map<unsigned, unsigned> External_eqn_index_lower;
 
+    // QUEHACERES Vector<std::map<unsigned,unsigned>>
     Vector<Vector<unsigned>> External_eqn_index_at_knot_bulk_normal;
     Vector<Vector<unsigned>> External_eqn_index_at_knot_bulk_binormal;
     
@@ -1710,6 +1366,571 @@ namespace oomph
   /////////////////////////////////////////////////////////////////////////////
   /////////////////////////////////////////////////////////////////////////////
 
+  //===========================================================================
+  /// \short Constructor - build this line element by attaching a face element
+  /// to the supplied 2D disk element, set up the map of external data for the
+  /// lower nodes, and setup the coordinates in the lower bulk element.
+  //===========================================================================
+  /* template <class ELEMENT> */
+  template <class FACE_ELEMENT>
+    FunctionalMinimisingLineElement<FACE_ELEMENT>::
+    FunctionalMinimisingLineElement(FACE_ELEMENT* const& face_elem_pt,
+				    const int& face_index,
+				    const std::map<Node*,Node*>& upper_to_lower_node_map,
+				    BULK_ELEMENT* const& lower_bulk_elem_pt,				  
+				    const double& pressure_jump_regularisation_factor,
+				    const double& pressure_gradient_regularisation_factor,
+				    const double& velocity_gradient_regularisation_factor) :
+  FaceGeometry<FACE_ELEMENT>(), FaceElement(), Dim_element(1), 
+    Pressure_jump_regularisation_factor(pressure_jump_regularisation_factor),
+    Pressure_gradient_regularisation_factor(pressure_gradient_regularisation_factor),
+    Velocity_gradient_regularisation_factor(velocity_gradient_regularisation_factor),
+    Lower_bulk_elem_pt(lower_bulk_elem_pt), Upper_to_lower_node_map(upper_to_lower_node_map)
+  {
+    // get the 2D disk element to build this line element on the disk edge
+    face_elem_pt->build_face_element(face_index, this);
+
+	
+    face_elem_pt->nodal_dimension();
+	
+    // get the problem dimensionality from the face element's nodal dimension
+    // and set the nodal dimension of this element
+    Dim = face_elem_pt->nodal_dimension();
+    this->set_nodal_dimension(Dim);
+
+    // get the (3D) bulk element from the face element
+    BULK_ELEMENT* bulk_elem_pt =
+      dynamic_cast<BULK_ELEMENT*>(face_elem_pt->bulk_element_pt());
+	
+    // get the pressure index from the bulk element
+    P_index = bulk_elem_pt->p_index_nst();
+
+    // shorthand
+    const unsigned nnode = this->nnode();
+	
+    // compute the list of nodal indices in this element which
+    // contain pressure (seems the nodal indices in a 1D line element are not
+    // (necessarily) ordered starting with the end nodes
+    Pressure_nodes_index.resize(0);
+    for(unsigned n=0; n<nnode; n++)
+    {
+      // node number in the face element we're attached to
+      unsigned n_in_face = this->bulk_node_number(n);
+
+      // node number in the bulk element the face element is attached to
+      unsigned n_in_bulk =
+	dynamic_cast<FACE_ELEMENT*>(this->bulk_element_pt())->bulk_node_number(n_in_face);
+
+      if(bulk_elem_pt->p_stored_at_node(n_in_bulk))
+      {
+	Pressure_nodes_index.push_back(n);
+      }
+
+      // ### QUEHACERES delete
+      /* // get the node number in the bulk element associated with */
+      /* // the first knot point (doesn't matter which knot we choose here) */
+      /* unsigned n_in_bulk = Node_number_in_normal_bulk_elem_at_knot_map[0].at(n); */
+
+      /* // is this a pressure-storing node in the bulk element? */
+      /* if(Normal_bulk_elem_at_knot[0]->p_stored_at_node(n_in_bulk)) */
+      /* { */
+      /*   // add it to the list and increment the counter */
+      /*   Pressure_nodes_index.push_back(n); */
+      /* } */
+    }
+	
+#ifdef PARANOID
+    if(Upper_to_lower_node_map.size() != nnode)
+    {
+      std::stringstream ss;
+
+      ss << "FunctionalMinimisingLineElement constructor called with the wrong "
+	 << "number of nodes; expecting: " << nnode << ", got: "
+	 << Upper_to_lower_node_map.size() << std::endl;
+	  
+      throw OomphLibError(ss.str().c_str(),
+			  OOMPH_CURRENT_FUNCTION,
+			  OOMPH_EXCEPTION_LOCATION);
+    }
+#endif
+
+    // ### QUEHACERES delete, changed it to a map
+    /* // make space for nnode equations */
+    /* External_eqn_index_lower.resize(nnode, 0); */
+	
+    // add the lower *pressure* nodes as external data
+    /* for(unsigned j=0; j<nnode; j++) */
+    for(unsigned j : Pressure_nodes_index)
+    {
+      // get a pointer to the lower node
+      Node* lower_node_pt = upper_to_lower_node_map.at(this->node_pt(j));
+
+      // and add it as external data
+      External_eqn_index_lower[j] = this->add_external_data(lower_node_pt);
+    }
+	
+    const unsigned nknot = this->integral_pt()->nweight();
+	
+    Lower_bulk_coords_at_knot.resize(nknot);
+
+    // loop over the integral points and look for these locations in the
+    // bulk lower element
+    for(unsigned ipt=0; ipt<nknot; ipt++)
+    {
+      // local coordinates of this knot
+      Vector<double> s(1, 0.0);
+      s[0] = this->integral_pt()->knot(ipt,0);
+
+      // Eulerian coordinates of this knot
+      Vector<double> x(Dim, 0.0);	  
+      for(unsigned i=0; i<Dim; i++)
+	x[i] = this->interpolated_x(s,i);
+
+      // now look for this point in the lower bulk element
+      GeomObject* dummy_geom_obj_pt = nullptr;
+      Vector<double> s_bulk(Dim, 0.0);
+      Lower_bulk_elem_pt->locate_zeta(x, dummy_geom_obj_pt, s_bulk);
+
+      if(dummy_geom_obj_pt == nullptr)
+      {
+	throw OomphLibError("Couldn't find this line element's knot in the lower bulk element",
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
+      }
+      else
+      {
+	Lower_bulk_coords_at_knot[ipt].resize(Dim, 0.0);
+	Lower_bulk_coords_at_knot[ipt] = s_bulk;
+      }	  
+    }
+
+    Node_number_in_lower_bulk.resize(nnode, 0);
+    for(unsigned j=0; j<nnode; j++)
+    {
+      Node* lower_node_pt = Upper_to_lower_node_map[this->node_pt(j)];
+	  
+      const unsigned nnode_bulk = Lower_bulk_elem_pt->nnode();
+
+      bool found_node = false;
+      for(unsigned n=0; n<nnode_bulk; n++)
+      {
+	if(lower_node_pt == Lower_bulk_elem_pt->node_pt(n))
+	{
+	  Node_number_in_lower_bulk[j] = n;
+	  found_node = true;
+	}	    
+      }
+
+      // sanity check
+      if(!found_node)
+      {
+	throw OomphLibError("Couldn't find all the lower nodes in the "
+			    "corresponding lower bulk element.",
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
+      }
+    }
+
+    /* // @@@ QUEHACERES fuck it, add all the bloody nodes as external data */
+    /* for(unsigned j=0; j<Lower_bulk_elem_pt->nnode(); j++) */
+    /* { */
+    /*   Node* upper_node_pt = bulk_elem_pt->node_pt(j); */
+    /*   Node* lower_node_pt = Lower_bulk_elem_pt->node_pt(j); */
+
+    /*   bool upper_node_in_this = false; */
+
+    /*   // make sure we don't double count */
+    /*   for(unsigned n=0; n<nnode; n++) */
+    /*   { */
+    /*     if(this->node_pt(n) == upper_node_pt) */
+    /*       upper_node_in_this = true; */
+    /*   } */
+	  
+    /*   if(!upper_node_in_this) */
+    /*     this->add_external_data(upper_node_pt); */
+	  
+    /*   this->add_external_data(lower_node_pt); */
+    /* } */
+	
+    // ### QUEHACERES delete
+    /* unsigned j=0; */
+    /* for(std::pair<Node*,Node*> upper_to_lower_node : Upper_to_lower_node_map) */
+    /* { */
+    /*   // ### QUEHACERES delete if the face element stuff works */
+    /*   /\* this->node_pt(j) = upper_edge_nodes_ordered[j]; *\/ */
+
+    /*   // add the lower node as external data and store the equation number */
+    /*   External_eqn_index_lower[j] = */
+    /*     this->add_external_data(upper_to_lower_node.second); */
+
+    /*   // increment the counter */
+    /*   j++; */
+    /* } */
+  }
+
+  //===========================================================================
+  /// \short helper to set up the pointers, bulk coordinates and external data
+  /// for the normal and binormal vector-containing bulk elements.
+  //===========================================================================
+  /* template <class ELEMENT> */
+  template <class FACE_ELEMENT>
+    void FunctionalMinimisingLineElement<FACE_ELEMENT>::
+    set_bulk_elements_coordinates_and_vectors_at_knot(
+      const Vector<BULK_ELEMENT*>& normal_bulk_elem_at_knot,
+      const Vector<BULK_ELEMENT*>& binormal_bulk_elem_at_knot,
+      const Vector<Vector<double>>& normal_bulk_coords_at_knot,
+      const Vector<Vector<double>>& binormal_bulk_coords_at_knot,
+      const Vector<Vector<double>>& normal_vector_at_knot,
+      const Vector<Vector<double>>& binormal_vector_at_knot)
+  {
+    // shorthands
+    const unsigned nnode = this->nnode();
+    const unsigned nknot = this->integral_pt()->nweight();
+      
+#ifdef PARANOID
+     
+    if((normal_bulk_coords_at_knot.size()   != nknot) ||
+       (binormal_bulk_coords_at_knot.size() != nknot) ||
+       (normal_vector_at_knot.size()        != nknot) ||
+       (binormal_vector_at_knot.size()      != nknot) )
+    {
+      std::stringstream ss;
+
+      ss << "FunctionalMinimisingLineElement constructor called with a "
+	 << "mismatch in the number of knots and the number of supplied "
+	 << "coordinates / vectors." << std::endl;
+	  
+      throw OomphLibError(ss.str().c_str(),
+			  OOMPH_CURRENT_FUNCTION,
+			  OOMPH_EXCEPTION_LOCATION);
+    }
+      
+#endif
+
+    // make space
+    Normal_bulk_elem_at_knot.resize(nknot, nullptr);
+    Binormal_bulk_elem_at_knot.resize(nknot, nullptr);
+            
+    Normal_bulk_coords_at_knot.resize(nknot);
+    Binormal_bulk_coords_at_knot.resize(nknot);
+
+    Normal_vector_at_knot.resize(nknot);
+    Binormal_vector_at_knot.resize(nknot);
+
+    Node_number_in_normal_bulk_elem_at_knot_map.resize(nknot);
+    Node_number_in_binormal_bulk_elem_at_knot_map.resize(nknot);
+
+    External_eqn_index_at_knot_bulk_normal.resize(nknot);
+    External_eqn_index_at_knot_bulk_binormal.resize(nknot);
+      
+    // assign the coordinates
+    for(unsigned ipt=0; ipt<nknot; ipt++)
+    {	  
+      Normal_bulk_elem_at_knot[ipt]    =   normal_bulk_elem_at_knot[ipt];
+      Binormal_bulk_elem_at_knot[ipt]  = binormal_bulk_elem_at_knot[ipt];
+	
+      Normal_bulk_coords_at_knot[ipt]   =   normal_bulk_coords_at_knot[ipt];
+      Binormal_bulk_coords_at_knot[ipt] = binormal_bulk_coords_at_knot[ipt];
+
+      Normal_vector_at_knot[ipt]   =   normal_vector_at_knot[ipt];
+      Binormal_vector_at_knot[ipt] = binormal_vector_at_knot[ipt];
+
+      // and add these bulk nodes as external data to this element
+      // (repeated nodes are ignored so easiest to just do this in this loop
+      // even in the likely case that the same bulk element is used for
+      // multiple knots)
+      const unsigned nnode_bulk = Normal_bulk_elem_at_knot[ipt]->nnode();
+      const unsigned npres_bulk = Normal_bulk_elem_at_knot[ipt]->npres_nst();
+
+      // changed back to vec
+      /* // QUEHACERES changed to map */
+      // make space
+      External_eqn_index_at_knot_bulk_normal[ipt].resize(npres_bulk);
+      External_eqn_index_at_knot_bulk_binormal[ipt].resize(nnode_bulk);
+	
+      for(unsigned n=0; n<nnode_bulk; n++)
+      {
+	Node* normal_bulk_node_pt   =   Normal_bulk_elem_at_knot[ipt]->node_pt(n);
+	Node* binormal_bulk_node_pt = Binormal_bulk_elem_at_knot[ipt]->node_pt(n);
+
+	bool normal_bulk_node_in_this   = false;
+	bool binormal_bulk_node_in_this = false;
+
+	// make sure we don't double count
+	for(unsigned k=0; k<nnode; k++)
+	{
+	  if(this->node_pt(k) == normal_bulk_node_pt)
+	    normal_bulk_node_in_this = true;
+
+	  if(this->node_pt(k) == binormal_bulk_node_pt)
+	    binormal_bulk_node_in_this = true;
+	}
+
+	// QUEHACERES
+	/* if(!binormal_bulk_node_in_this) */
+	{
+	  External_eqn_index_at_knot_bulk_binormal[ipt][n] =
+	    this->add_external_data(binormal_bulk_node_pt);
+	}
+	  
+	// only adding the pressure nodes in the normal-containing
+	// element as external data 
+	if(Normal_bulk_elem_at_knot[ipt]->p_stored_at_node(n))// QUEHACERES && !normal_bulk_node_in_this)
+	{
+	  External_eqn_index_at_knot_bulk_normal[ipt][n] =
+	    this->add_external_data(normal_bulk_node_pt);
+	}
+      }
+
+      // now compute the map from this line elements node numbers to the bulk
+      // node numbers
+      for(unsigned k=0; k<nnode; k++)
+      {
+	for(unsigned n=0; n<nnode_bulk; n++)
+	{
+	  Node* line_node_pt = this->node_pt(k);
+	    
+	  Node* normal_bulk_node_pt   =   Normal_bulk_elem_at_knot[ipt]->node_pt(n);
+	  Node* binormal_bulk_node_pt = Binormal_bulk_elem_at_knot[ipt]->node_pt(n);
+
+	  if(line_node_pt == normal_bulk_node_pt)
+	    Node_number_in_normal_bulk_elem_at_knot_map[ipt][k] = n;
+
+	  if(line_node_pt == binormal_bulk_node_pt)
+	    Node_number_in_binormal_bulk_elem_at_knot_map[ipt][k] = n;
+	}
+      }
+
+      // double check we found them all
+      if(Node_number_in_normal_bulk_elem_at_knot_map[ipt].size() != nnode)
+      {
+	throw OomphLibError(
+	  "Didn't find all the nodes in this element in the normal bulk element",
+	  OOMPH_CURRENT_FUNCTION,
+	  OOMPH_EXCEPTION_LOCATION);
+      }
+
+      if(Node_number_in_binormal_bulk_elem_at_knot_map[ipt].size() != nnode)
+      {
+	throw OomphLibError(
+	  "Didn't find all the nodes in this element in the binormal bulk element",
+	  OOMPH_CURRENT_FUNCTION,
+	  OOMPH_EXCEPTION_LOCATION);
+      }
+	
+#ifdef PARANOID
+
+      Vector<double> s(1, 0.0);
+      s[0] = this->integral_pt()->knot(ipt,0);
+	
+      // check the bulk coordinates agree with the local coordinates at each knot
+      double x_local         = 0.0;
+      double x_bulk_normal   = 0.0;
+      double x_bulk_binormal = 0.0;
+
+      const double tol = 1e-6;
+	
+      for(unsigned i=0; i<Dim; i++)
+      {
+	x_local = this->interpolated_x(s,i);
+	  
+	x_bulk_normal = Normal_bulk_elem_at_knot[ipt]->interpolated_x(
+	  Normal_bulk_coords_at_knot[ipt],i);
+
+	x_bulk_binormal = Binormal_bulk_elem_at_knot[ipt]->interpolated_x(
+	  Binormal_bulk_coords_at_knot[ipt],i);
+
+	if((abs(x_local - x_bulk_normal)   > tol) ||
+	   (abs(x_local - x_bulk_binormal) > tol))
+	{
+	  throw OomphLibError(
+	    "Bulk coordinates and local coordinates are not sufficiently in agreement",
+	    OOMPH_CURRENT_FUNCTION,
+	    OOMPH_EXCEPTION_LOCATION);
+	}
+      }
+#endif
+    } // end loop over knots
+
+      
+    // ### QUEHACERES delete, moved to constructor
+    /* // and finally, compute the list of nodal indices in this element which */
+    /* // contain pressure */
+    /* Pressure_nodes_index.resize(0); */
+    /* for(unsigned n=0; n<nnode; n++) */
+    /* { */
+    /* 	// get the node number in the bulk element associated with */
+    /* 	// the first knot point (doesn't matter which knot we choose here) */
+    /* 	unsigned n_in_bulk = Node_number_in_normal_bulk_elem_at_knot_map[0].at(n); */
+
+    /* 	// is this a pressure-storing node in the bulk element? */
+    /* 	if(Normal_bulk_elem_at_knot[0]->p_stored_at_node(n_in_bulk)) */
+    /* 	{ */
+    /* 	  // add it to the list and increment the counter */
+    /* 	  Pressure_nodes_index.push_back(n); */
+    /* 	} */
+    /* } */
+  }
+
+  template <class FACE_ELEMENT>
+    double FunctionalMinimisingLineElement<FACE_ELEMENT>::
+    contribution_to_functional_integral() const
+  {
+    // Number of knots in this element
+    const unsigned nknot       = this->integral_pt()->nweight();
+    const unsigned npres_bulk  = Normal_bulk_elem_at_knot[0]->npres_nst();
+    const unsigned nnode_bulk  = Normal_bulk_elem_at_knot[0]->nnode();
+    
+    Shape psip_upper(npres_bulk);
+    Shape psip_lower(npres_bulk);
+
+    Shape psip_bulk_norm(npres_bulk);
+    Shape psi_bulk_norm(nnode_bulk);
+    Shape psi_bulk_binorm(nnode_bulk);
+
+    // shape function derivatives from the bulk elements
+    DShape dpsidx_norm(nnode_bulk, Dim);    
+    DShape dpsidx_binorm(nnode_bulk, Dim);
+    DShape dpsipdx_norm(npres_bulk, Dim);
+    
+    FACE_ELEMENT* upper_face_elem_pt =
+      dynamic_cast<FACE_ELEMENT*>(this->bulk_element_pt());
+    
+    double functional_integral = 0.0;
+    
+    // loop over the integration points
+    for(unsigned ipt=0; ipt<nknot; ipt++)
+    {
+      // get the local coordinates of this knot
+      Vector<double> s(Dim_element, 0.0);
+
+      // local coordinates in the upper face element we're attached to
+      Vector<double> s_face(Dim_element+1, 0.0);
+      
+      for(unsigned i=0; i<Dim_element; i++) 
+	s[i] = this->integral_pt()->knot(ipt, i);
+
+      this->get_local_coordinate_in_bulk(s, s_face);
+      
+      // get the integral weight
+      double w = this->integral_pt()->weight(ipt);
+
+      // get the Jacobian of the mapping from Eulerian -> local coords
+      double J = this->J_eulerian(s);
+
+      // premultiply the weights and the Jacobian
+      double W = w * J;
+
+      // get the shape functions and derivatives from the bulk elements
+      Normal_bulk_elem_at_knot[ipt]->dshape_eulerian(Normal_bulk_coords_at_knot[ipt],
+						     psi_bulk_norm, dpsidx_norm);
+      
+      Binormal_bulk_elem_at_knot[ipt]->dshape_eulerian(Binormal_bulk_coords_at_knot[ipt],
+						       psi_bulk_binorm, dpsidx_binorm);
+
+      // pressure shape function derivatives (only need normal not binormal)
+      Normal_bulk_elem_at_knot[ipt]->dpshape_eulerian_nst(Normal_bulk_coords_at_knot[ipt],
+							  psip_bulk_norm, dpsipdx_norm);
+      
+      // get the upper and lower shape functions from the respective
+      // bulk elements
+      upper_face_elem_pt->pshape_nst(s_face, psip_upper);	
+      Lower_bulk_elem_pt->pshape_nst(Lower_bulk_coords_at_knot[ipt], psip_lower);
+
+      // shorthands for the normal vectors
+      Vector<double> a1 = Normal_vector_at_knot[ipt];
+      Vector<double> a3 = Binormal_vector_at_knot[ipt];
+      
+      // pressure jump
+      // ----------------------------------------------
+      
+      // interpolated pressures on the upper and lower sides of the disk at
+      // this integration point
+      double interpolated_p_upper = 0.0;
+      double interpolated_p_lower = 0.0;
+
+      // compute the interpolated pressure. Need to be careful here;
+      // we're getting the upper nodal pressure values from this elements nodes,
+      // and the lower nodal pressure values from the upper->lower node map;
+      // but we also need to convert the node number in this element to the
+      // node number in the bulk element so that we index the shape functions correctly.
+      for(unsigned n : Pressure_nodes_index)
+      {
+	// indices of this node in the upper and lower bulk elements
+	const unsigned n_bulk_upper =
+	  upper_face_elem_pt->bulk_node_number(this->bulk_node_number(n));
+	
+	const unsigned n_bulk_lower = Node_number_in_lower_bulk[n];
+	
+	// upper pressure is straight forward since this line element
+	// shares its nodes with the upper face element
+	interpolated_p_upper +=
+	  this->nodal_value(n, P_index) * psip_upper[n_bulk_upper];
+
+	// for the lower pressure we need to get the corresponding node from the
+	// map, but the shape functions are the same.
+	interpolated_p_lower +=
+	  Upper_to_lower_node_map.at(this->node_pt(n))->value(P_index) *
+	  psip_lower[n_bulk_lower];
+      }
+
+      // now compute the pressure jump 
+      double p_jump = interpolated_p_upper - interpolated_p_lower;
+
+      // (1/2)|\Delta p.a1|^2
+      functional_integral +=
+	0.5 * Pressure_jump_regularisation_factor * pow(p_jump, 2) * W;
+
+      // pressure gradient
+      // ----------------------------------------------
+      double grad_p_dot_a1 = 0.0;
+	
+      // loop over the normal bulk elements pressure nodes
+      for(unsigned n=0; n<npres_bulk; n++)
+      {
+	for(unsigned i=0; i<Dim; i++)
+	{
+	  grad_p_dot_a1  += a1[i] * 
+	    Normal_bulk_elem_at_knot[ipt]->nodal_value(n,P_index) * dpsipdx_norm(n,i);
+	}
+      }
+
+      // (1/2)|(grad p).n|^2
+      functional_integral +=
+	0.5 * Pressure_gradient_regularisation_factor * pow(grad_p_dot_a1,2) * W;
+      
+      // Velocity gradient
+      // --------------------------------------
+
+      Vector<double> grad_u_dot_a3(Dim, 0.0);
+      Vector<double> grad_u_T_dot_a3(Dim, 0.0);
+      
+      // loop over the binormal bulk elements velocity nodes
+      for(unsigned n=0; n<nnode_bulk; n++)
+      {
+	for(unsigned i=0; i<Dim; i++)
+	{
+	  for(unsigned j=0; j<Dim; j++)
+	  {
+	    grad_u_dot_a3[i] += Binormal_bulk_elem_at_knot[ipt]->nodal_value(n,i) *
+	      dpsidx_binorm(n,j) * a3[j];
+	    
+	    grad_u_T_dot_a3[i] += Binormal_bulk_elem_at_knot[ipt]->nodal_value(n,j) *
+	      dpsidx_binorm(n,i) * a3[j];
+	  }
+	}
+      }
+
+      // (1/2)|(grad u).n|^2 + (1/2)|grad u)^T.n|^2
+      for(unsigned i=0; i<Dim; i++)
+      {
+	functional_integral += 0.5 * Velocity_gradient_regularisation_factor *
+	  (pow(grad_u_dot_a3[i],2) + pow(grad_u_T_dot_a3[i],2) ) * W;
+      }
+    } // end loop over knots
+
+    return functional_integral;
+  }
 
   //===========================================================================
   /// \short Compute the element's residual vector and the Jacobian matrix.
@@ -1726,12 +1947,12 @@ namespace oomph
 						     const bool& flag)
   {
     // number of nodes in this and the bulk elements
-    const unsigned n_node      = this->nnode();
-    const unsigned n_node_bulk = Normal_bulk_elem_at_knot[0]->nnode();
+    const unsigned nnode      = this->nnode();
+    const unsigned nnode_bulk = Normal_bulk_elem_at_knot[0]->nnode();
 
     // number of pressure dofs in this, the face and the bulk elements
-    const unsigned n_pres      = Dim_element + 1;
-    const unsigned n_pres_bulk = Normal_bulk_elem_at_knot[0]->npres_nst();
+    const unsigned npres      = Dim_element + 1;
+    const unsigned npres_bulk = Normal_bulk_elem_at_knot[0]->npres_nst();
 
     // Number of knots in this element
     const unsigned nknot = this->integral_pt()->nweight();
@@ -1740,18 +1961,18 @@ namespace oomph
       dynamic_cast<FACE_ELEMENT*>(this->bulk_element_pt());
     
     // shape functions for the velocity and pressure
-    Shape psi(n_node);
-    Shape psip_bulk_norm(n_pres_bulk);
-    Shape psip_upper(n_pres_bulk);
-    Shape psip_lower(n_pres_bulk);
+    Shape psi(nnode);
+    Shape psip_bulk_norm(npres_bulk);
+    Shape psip_upper(npres_bulk);
+    Shape psip_lower(npres_bulk);
     
-    Shape psi_bulk_norm(n_node_bulk);
-    Shape psi_bulk_binorm(n_node_bulk);
+    Shape psi_bulk_norm(nnode_bulk);
+    Shape psi_bulk_binorm(nnode_bulk);
 
     // shape function derivatives from the bulk elements
-    DShape dpsidx_norm(n_node_bulk, Dim);    
-    DShape dpsidx_binorm(n_node_bulk, Dim);
-    DShape dpsipdx_norm(n_pres_bulk, Dim);
+    DShape dpsidx_norm(nnode_bulk, Dim);    
+    DShape dpsidx_binorm(nnode_bulk, Dim);
+    DShape dpsipdx_norm(npres_bulk, Dim);
     
     // loop over the integration points
     for(unsigned ipt=0; ipt<nknot; ipt++)
@@ -1794,7 +2015,12 @@ namespace oomph
       // bulk elements
       upper_face_elem_pt->pshape_nst(s_face, psip_upper);	
       Lower_bulk_elem_pt->pshape_nst(Lower_bulk_coords_at_knot[ipt], psip_lower);
-	
+
+      // shorthands for the normal vectors
+      Vector<double> a1 = Normal_vector_at_knot[ipt];
+      Vector<double> a3 = Binormal_vector_at_knot[ipt];
+      
+      
       // ===========================================================
       // Compute stuff:
       //   - pressure jump across plate
@@ -1847,11 +2073,11 @@ namespace oomph
       double grad_p_dot_a1 = 0.0;
 
       // loop over the normal bulk elements pressure nodes
-      for(unsigned n=0; n<n_pres_bulk; n++)
+      for(unsigned n=0; n<npres_bulk; n++)
       {
 	for(unsigned i=0; i<Dim; i++)
 	{
-	  grad_p_dot_a1 += Normal_vector_at_knot[ipt][i] * 
+	  grad_p_dot_a1 += a1[i] * 
 	    Normal_bulk_elem_at_knot[ipt]->nodal_value(n,P_index) * dpsipdx_norm(n,i);
 	}
       }
@@ -1860,16 +2086,25 @@ namespace oomph
       // ----------------------------------------------
       double grad_u_dot_a3_dot_a3 = 0.0;
 
+      Vector<double> grad_u_dot_a3(Dim, 0.0);
+      Vector<double> grad_u_T_dot_a3(Dim, 0.0);
+
       // loop over the binormal bulk elements velocity nodes
-      for(unsigned n=0; n<n_node_bulk; n++)
+      for(unsigned n=0; n<nnode_bulk; n++)
       {
 	for(unsigned i=0; i<Dim; i++)
 	{
 	  for(unsigned j=0; j<Dim; j++)
 	  {
-	    grad_u_dot_a3_dot_a3 +=
-	      Binormal_vector_at_knot[ipt][i] * Binormal_vector_at_knot[ipt][j] *
-	      Binormal_bulk_elem_at_knot[ipt]->nodal_value(n,i) * dpsidx_binorm(n,j);
+	    // ### QUEHACERES delete if we're keeping the one below
+	    /* grad_u_dot_a3_dot_a3 += Binormal_bulk_elem_at_knot[ipt]->nodal_value(n,i) * */
+	    /*   a3[i] * a3[j] * dpsidx_binorm(n,j); */
+
+	    grad_u_dot_a3[i] += Binormal_bulk_elem_at_knot[ipt]->nodal_value(n,i) *
+	      dpsidx_binorm(n,j) * a3[j];
+	    
+	    grad_u_T_dot_a3[i] += Binormal_bulk_elem_at_knot[ipt]->nodal_value(n,j) *
+	      dpsidx_binorm(n,i) * a3[j];
 	  }
 	}
       }
@@ -2013,11 +2248,11 @@ namespace oomph
 
       // Now pressure gradient equation
       // ----------------------------------------
-      for(unsigned l=0; l<n_pres_bulk; l++)
+      for(unsigned l=0; l<npres_bulk; l++)
       {
 	// get the local equation number for the pressure at this vertex node
 	int ext_eqn_p =
-	  this->external_local_eqn(External_eqn_index_at_knot_bulk_normal[ipt][l],
+	  this->external_local_eqn(External_eqn_index_at_knot_bulk_normal[ipt].at(l),
 				   P_index);
 
 	// is this normal bulk pressure dof pinned?
@@ -2026,15 +2261,15 @@ namespace oomph
 	  for(unsigned j=0; j<Dim; j++)
 	  {
 	    residuals[ext_eqn_p] += Pressure_gradient_regularisation_factor *
-	      dpsipdx_norm(l,j) * Normal_vector_at_knot[ipt][j] * grad_p_dot_a1 * W;
+	      dpsipdx_norm(l,j) * a1[j] * grad_p_dot_a1 * W;
 
 	    // Jacobian?
 	    if(flag)
 	    {
 	      // loop over the bulk pressure dofs again
-	      for(unsigned l2=0; l2<n_pres_bulk; l2++)
+	      for(unsigned l2=0; l2<npres_bulk; l2++)
 	      {
-		unsigned ext_index = External_eqn_index_at_knot_bulk_normal[ipt][l2];
+		unsigned ext_index = External_eqn_index_at_knot_bulk_normal[ipt].at(l2);
 		int ext_unknown_p = this->external_local_eqn(ext_index, P_index);
 
 		// is the pressure unknown pinned?
@@ -2044,8 +2279,7 @@ namespace oomph
 		  {
 		    jacobian(ext_eqn_p, ext_unknown_p) +=
 		      Pressure_gradient_regularisation_factor *
-		      dpsipdx_norm(l,j) * dpsipdx_norm(l2, j2) *
-		      Normal_vector_at_knot[ipt][j] * Normal_vector_at_knot[ipt][j2] * W;
+		      dpsipdx_norm(l,j) * dpsipdx_norm(l2, j2) * a1[j] * a1[j2] * W;
 		  }
 		}
 	      }
@@ -2058,11 +2292,11 @@ namespace oomph
       // ----------------------------------------
 
       // loop over all the nodes in the (binormal) bulk element 
-      for(unsigned l=0; l<n_node_bulk; l++)
+      for(unsigned l=0; l<nnode_bulk; l++)
       {
 	for(unsigned i=0; i<Dim; i++)
 	{
-	  unsigned ext_index = External_eqn_index_at_knot_bulk_binormal[ipt][l];
+	  unsigned ext_index = External_eqn_index_at_knot_bulk_binormal[ipt].at(l);
 	  
 	  // get the local velocity equation number for the external bulk element
 	  int ext_eqn_u = this->external_local_eqn(ext_index, i);
@@ -2072,17 +2306,21 @@ namespace oomph
 	  {
 	    for(unsigned j=0; j<Dim; j++)
 	    {
+	      // QUEHACERES changing to |(grad u.n + (grad u)^T.n)|^2
+	      /* residuals[ext_eqn_u] += Velocity_gradient_regularisation_factor * */
+	      /* 	dpsidx_binorm(l, j) * Binormal_vector_at_knot[ipt][i] * */
+	      /* 	Binormal_vector_at_knot[ipt][j] * grad_u_dot_a3_dot_a3 * W; */
+      
 	      residuals[ext_eqn_u] += Velocity_gradient_regularisation_factor *
-		dpsidx_binorm(l, j) * Binormal_vector_at_knot[ipt][i] *
-		Binormal_vector_at_knot[ipt][j] * grad_u_dot_a3_dot_a3 * W;
+	      	dpsidx_binorm(l, j) * a3[j] * (grad_u_dot_a3[i] + grad_u_T_dot_a3[i]) * W;
 	    }
 
 	    if(flag)
 	    {
 	      // loop over the bulk velocity unknowns again
-	      for(unsigned l2=0; l2<n_node_bulk; l2++)
+	      for(unsigned l2=0; l2<nnode_bulk; l2++)
 	      {		
-		unsigned ext_index2 = External_eqn_index_at_knot_bulk_binormal[ipt][l2];
+		unsigned ext_index2 = External_eqn_index_at_knot_bulk_binormal[ipt].at(l2);
 
 		for(unsigned i2=0; i2<Dim; i2++)
 		{
@@ -2093,14 +2331,31 @@ namespace oomph
 		  {		    
 		    for(unsigned j=0; j<Dim; j++)
 		    {
-		      for(unsigned j2=0; j2<Dim; j2++)
+		      jacobian(ext_eqn_u, ext_unknown_u) +=
+		      	Velocity_gradient_regularisation_factor *
+		      	dpsidx_binorm(l,j) * dpsidx_binorm(l2, i) *
+		      	a3[j] * a3[i2] * W;
+
+		      if(i == i2)
 		      {
-			jacobian(ext_eqn_u, ext_unknown_u) +=
-			  Velocity_gradient_regularisation_factor *
-			  dpsidx_binorm(l,j) * Binormal_vector_at_knot[ipt][i] *
-			  Binormal_vector_at_knot[ipt][j] * dpsidx_binorm(l2,j2) *
-			  Binormal_vector_at_knot[ipt][i2] * Binormal_vector_at_knot[ipt][j2] * W;
+		      	for(unsigned j2=0; j2<Dim; j2++)
+		      	{
+		      	  jacobian(ext_eqn_u, ext_unknown_u) +=
+		      	    Velocity_gradient_regularisation_factor *
+		      	    dpsidx_binorm(l,j) * dpsidx_binorm(l2, j2) *
+		      	    a3[j] * a3[j2] * W;
+		      	}
 		      }
+
+		      // QUEHACERES changing to |(grad u.n|^2 + |(grad u)^T.n)|^2
+		      /* for(unsigned j2=0; j2<Dim; j2++) */
+		      /* { */
+		      /* 	jacobian(ext_eqn_u, ext_unknown_u) += */
+		      /* 	  Velocity_gradient_regularisation_factor * */
+		      /* 	  dpsidx_binorm(l,j) * Binormal_vector_at_knot[ipt][i] * */
+		      /* 	  Binormal_vector_at_knot[ipt][j] * dpsidx_binorm(l2,j2) * */
+		      /* 	  Binormal_vector_at_knot[ipt][i2] * Binormal_vector_at_knot[ipt][j2] * W; */
+		      /* } */
 		    }
 		  }
 		}

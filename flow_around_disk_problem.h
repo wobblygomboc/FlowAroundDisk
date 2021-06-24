@@ -389,6 +389,9 @@ public:
   // shorthand for the singular line elements which handle the
   // singular functions and their amplitudes
   typedef ScalableSingularityForNavierStokesLineElement<SINGULAR_ELEMENT_NNODE_1D> SingularLineElement;
+
+  // the face element we're going to attach the functional line element to
+  typedef NavierStokesWithSingularityFaceElement<ELEMENT> FACE_ELEMENT;
   
   /// Constructor
   FlowAroundDiskProblem();

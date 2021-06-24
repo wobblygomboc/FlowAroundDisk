@@ -1961,42 +1961,76 @@ void FlowAroundDiskProblem<ELEMENT>::get_bulk_elements_and_normal_vectors_at_dis
     // did we find it?
     if(normal_elem_at_knot[ipt] == nullptr)
     {
-      std::ofstream outfile("functional_elem.dat");
-      functional_elem_pt->output(outfile);
-      outfile.close();
-      
-      std::ostringstream error_message;
-      error_message << "Couldn't find bulk element containing normal vector (a1) = ";
+      // backup the current tolerance
+      double locate_zeta_tol_backup = Locate_zeta_helpers::Newton_tolerance;
 
-      for(unsigned i=0; i<Dim; i++)
-	error_message << x[i] << " ";
-      
-      error_message << " at ";
-      for(unsigned i=0; i<Dim; i++)
-	error_message << x0[i] << " ";      
-      error_message << ", Lagrangian coordinates ("
-		    << lagr_coords.xi1 << ", "
-		    << lagr_coords.xi2 << ", "
-		    << lagr_coords.xi3 << ").\n\n"
-		    << "Potential elements' nodes:\n";
+      // try again with a slightly looser tolerance
+      Locate_zeta_helpers::Newton_tolerance = 1e-6;
 
       for(ELEMENT* potential_elem_pt : elem_set_intersection)
       {
-	for(unsigned j=0; j<potential_elem_pt->nnode(); j++)
+	potential_elem_pt->locate_zeta(x, normal_geom_obj_pt, s_dummy);
+      
+	// did we find it?
+	if(normal_geom_obj_pt != nullptr)
 	{
-	  for(unsigned i=0; i<Dim; i++)
-	  {
-	    error_message << potential_elem_pt->node_pt(j)->x(i) << " ";
-	  }
-	  error_message << "\n";
-	}
-	error_message << "\n";
-      }
-      error_message << std::endl;
+	  normal_elem_at_knot[ipt] = dynamic_cast<ELEMENT*>(normal_geom_obj_pt);
 
-      throw OomphLibError(error_message.str(),
-			  OOMPH_CURRENT_FUNCTION,
-			  OOMPH_EXCEPTION_LOCATION);
+	  // done, don't need to check the rest
+	  break;
+	}
+      }
+
+      // restore the original value
+      Locate_zeta_helpers::Newton_tolerance = locate_zeta_tol_backup;
+	 
+      if(normal_elem_at_knot[ipt] == nullptr)
+      {
+	std::ostringstream error_message;
+	error_message << "Couldn't find bulk element containing normal vector (a1) at "
+		      << "Lagrangian coordinates ("
+		      << lagr_coords.xi1 << ", "
+		      << lagr_coords.xi2 << ", "
+		      << lagr_coords.xi3 << ")." << std::endl;
+	
+	// ### QUEHACERES delete
+	// std::ofstream outfile("functional_elem.dat");
+	// functional_elem_pt->output(outfile);
+	// outfile.close();
+      
+	// std::ostringstream error_message;
+	// error_message << "Couldn't find bulk element containing normal vector (a1) = ";
+
+	// for(unsigned i=0; i<Dim; i++)
+	// 	error_message << x[i] << " ";
+      
+	// error_message << " at ";
+	// for(unsigned i=0; i<Dim; i++)
+	// 	error_message << x0[i] << " ";      
+	// error_message << ", Lagrangian coordinates ("
+	// 		    << lagr_coords.xi1 << ", "
+	// 		    << lagr_coords.xi2 << ", "
+	// 		    << lagr_coords.xi3 << ").\n\n"
+	// 		    << "Potential elements' nodes:\n";
+
+	// for(ELEMENT* potential_elem_pt : elem_set_intersection)
+	// {
+	// 	for(unsigned j=0; j<potential_elem_pt->nnode(); j++)
+	// 	{
+	// 	  for(unsigned i=0; i<Dim; i++)
+	// 	  {
+	// 	    error_message << potential_elem_pt->node_pt(j)->x(i) << " ";
+	// 	  }
+	// 	  error_message << "\n";
+	// 	}
+	// 	error_message << "\n";
+	// }
+	// error_message << std::endl;
+
+	throw OomphLibError(error_message.str(),
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
+      }
     }
     
     // Now do the binormal (a3 direction)
@@ -2029,16 +2063,46 @@ void FlowAroundDiskProblem<ELEMENT>::get_bulk_elements_and_normal_vectors_at_dis
 
     if(binormal_elem_at_knot[ipt] == nullptr)
     {
-      std::ostringstream error_message;
-      error_message << "Couldn't find bulk element containing binormal vector (a3) at "
-		    << "Lagrangian coordinates ("
-		    << lagr_coords.xi1 << ", "
-		    << lagr_coords.xi2 << ", "
-		    << lagr_coords.xi3 << ")." << std::endl;
+      // backup the current tolerance
+      double locate_zeta_tol_backup = Locate_zeta_helpers::Newton_tolerance;
+
+      // try again with a slightly looser tolerance
+      Locate_zeta_helpers::Newton_tolerance = 1e-6;
+
+      for(unsigned i=0; i<Dim; i++)
+	x[i] = x0[i] + binormal_vector_at_knot[ipt][i] * dx;
+
+      // find the element and corresponding local coordinates
+      for(ELEMENT* potential_elem_pt : elem_set_intersection)
+      {
+	potential_elem_pt->locate_zeta(x, binormal_geom_obj_pt, s_dummy);
       
-      throw OomphLibError(error_message.str(),
-			  OOMPH_CURRENT_FUNCTION,
-			  OOMPH_EXCEPTION_LOCATION);
+	// did we find it?
+	if(binormal_geom_obj_pt != nullptr)
+	{
+	  binormal_elem_at_knot[ipt] = dynamic_cast<ELEMENT*>(binormal_geom_obj_pt);
+
+	  // done, don't need to check the rest
+	  break;
+	}
+      }
+
+      // restore the original value
+      Locate_zeta_helpers::Newton_tolerance = locate_zeta_tol_backup;
+      
+      if(binormal_elem_at_knot[ipt] == nullptr)
+      {
+	std::ostringstream error_message;
+	error_message << "Couldn't find bulk element containing binormal vector (a3) at "
+		      << "Lagrangian coordinates ("
+		      << lagr_coords.xi1 << ", "
+		      << lagr_coords.xi2 << ", "
+		      << lagr_coords.xi3 << ")." << std::endl;
+      
+	throw OomphLibError(error_message.str(),
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
+      }
     }
 
     // and finally, get the coordinates of the integration points themselves
@@ -2294,9 +2358,6 @@ create_one_d_singular_element_mesh(const unsigned& nsingular_el)
 template <class ELEMENT>
 void FlowAroundDiskProblem<ELEMENT>::create_one_d_functional_element_mesh()
 {
-  // the face element we're going to attach the functional line element to
-  typedef NavierStokesWithSingularityFaceElement<ELEMENT> FACE_ELEMENT;
-  
   // Now create the mesh of edge elements which will compute the functional
   // -----------------------------------------------------------------------
   const double tol = 1e-6;
@@ -2315,13 +2376,15 @@ void FlowAroundDiskProblem<ELEMENT>::create_one_d_functional_element_mesh()
     if(!upper_disk_face_el_pt->is_on_upper_disk_surface())
       continue;
 
-    // @@@@ QUEHACERES debug
-    for(unsigned n=0; n<upper_disk_face_el_pt->nnode(); n++)
-    {
-      upper_disk_face_el_pt->node_pt(n)->set_value(3, 1);
-      lower_disk_face_el_pt->node_pt(n)->set_value(3, -1);
-    }
-    // @@@@ QUEHACERES debug
+    // // @@@@ QUEHACERES debug
+    // {
+    //   for(unsigned n=0; n<upper_disk_face_el_pt->nnode(); n++)
+    //   {
+    // 	upper_disk_face_el_pt->node_pt(n)->set_value(3, 1);
+    // 	lower_disk_face_el_pt->node_pt(n)->set_value(3, -1);
+    //   }
+    // }
+    // // @@@@ QUEHACERES debug
     
     // double check and compute the nodal map
     std::map<unsigned, unsigned> upper_to_lower_face_node_index_map;
@@ -2514,7 +2577,7 @@ void FlowAroundDiskProblem<ELEMENT>::create_one_d_functional_element_mesh()
   // @@@@@ debug
   {
     ofstream some_file("functional_line_mesh_for_debug.dat");
-    
+
     for(unsigned e=0; e<Line_mesh_for_functional_minimisation_pt->nelement(); e++)
     {
       auto functional_el_pt = dynamic_cast<FunctionalMinimisingLineElement<FACE_ELEMENT>*>(
@@ -2531,7 +2594,7 @@ void FlowAroundDiskProblem<ELEMENT>::create_one_d_functional_element_mesh()
 	some_file << std::endl;
       }
     }
-
+    
     some_file.close();
 
     some_file.open("functional_line_mesh_for_debug_knots.dat");
@@ -2582,6 +2645,9 @@ void FlowAroundDiskProblem<ELEMENT>::create_one_d_functional_element_mesh()
     some_file.open("functional_line_mesh.dat");
     Line_mesh_for_functional_minimisation_pt->output(some_file, 2);
     some_file.close();
+
+
+    
   }
   // @@@@@@@@@@@@@@@
 }
@@ -3929,6 +3995,64 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   {
     do_bulk_output = false;
   }
+
+  // Output solution showing element outlines
+  //-----------------------------------------
+  oomph_info << "Outputting coarse solution..." << std::endl;
+
+  filename.str("");
+  filename << Doc_info.directory() << "/coarse_soln"
+	   << Doc_info.number() << ".vtu";
+  some_file.open(filename.str().c_str());
+  if (do_bulk_output) Bulk_mesh_pt->output_paraview(some_file,2);
+  some_file.close();
+
+  oomph_info << "Outputting extended solution..." << std::endl;
+  
+  // Plot "extended solution" showing contributions
+  filename.str("");
+  filename << Doc_info.directory() << "/extended_soln"
+	   << Doc_info.number() << ".dat";
+  some_file.open(filename.str().c_str());
+  
+  unsigned nel = Bulk_mesh_pt->nelement();
+  for (unsigned e=0; e<nel; e++)
+  {
+    // shouldn't change this, since the maps have been setup for a specific number
+    // unsigned npts = Global_Parameters::Nplot_for_bulk;
+    ELEMENT* el_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->element_pt(e));
+
+    el_pt->output_with_various_contributions(some_file, nplot,
+					     Analytic_Functions::exact_solution_flat_disk);
+  }
+
+  some_file.close();    
+
+  // Exact solution (only need to output it once)
+  if (!Have_output_exact_soln &&
+    !CommandLineArgs::command_line_flag_has_been_set("--dont_output_exact_solution"))
+  {
+    oomph_info << "Outputting exact solution..." << std::endl;
+
+    filename.str("");
+    filename << Doc_info.directory() << "/exact_soln.vtu";
+    some_file.open(filename.str().c_str());
+
+    Bulk_mesh_pt->output_fct_paraview(some_file, nplot,
+				      Analytic_Functions::exact_solution_flat_disk);
+    
+    some_file.close();
+
+    // set the flag so we don't do it again
+    Have_output_exact_soln = true;
+  }
+  
+  filename.str("");
+  filename << Doc_info.directory() << "/singular_line_mesh"
+	   << Doc_info.number() << ".dat";
+  some_file.open(filename.str().c_str());
+  Singular_fct_element_mesh_pt->output(some_file, nplot);
+  some_file.close();
   
   if (CommandLineArgs::command_line_flag_has_been_set("--output_mesh_quality"))
   {
@@ -3991,30 +4115,42 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   oomph_info << "Average augmented element volume: "
 	     << volume_in_torus_region / n_el << std::endl;
 
-  oomph_info << "Integral of L2 velocity norm in torus region: "
-	     << functional_integral << std::endl;
+  // QUEHACERES delete
+  // oomph_info << "Integral of L2 velocity norm in torus region: "
+  // 	     << functional_integral << std::endl;
   
   // set the small but finite edge radius to use for outputting "infinite" pressures
   // at the edge of the disk
   if(Doc_info.number() == 0)
     SingularFunctions::dr = pow(volume_in_torus_region / n_el, 1./3.)/50.;
 
-  // --------------------------------------------------------------------------
-  // Compute the integrated pressure jump across the disk
-  // --------------------------------------------------------------------------
-  double p_jump_total = 0.0;
-  
-  for(unsigned e=0; e<Face_mesh_for_pressure_jump_pt->nelement(); e++)
+  for(unsigned e=0; e<Line_mesh_for_functional_minimisation_pt->nelement(); e++)
   {
-    auto elem_pt = dynamic_cast<NavierStokesPressureJumpFaceElement<ELEMENT>*>
-      (Face_mesh_for_pressure_jump_pt->element_pt(e));
+    auto functional_el_pt = dynamic_cast<FunctionalMinimisingLineElement<FACE_ELEMENT>*>(
+      Line_mesh_for_functional_minimisation_pt->element_pt(e));
 
-    // get the integral over this element and add to the total
-    p_jump_total += elem_pt->contribution_to_pressure_jump_integral();
-  }  
+    functional_integral += functional_el_pt->contribution_to_functional_integral();
+  }
 
-  oomph_info << "integrated FE pressure jump across disk in augmented region: "
-	     << p_jump_total << std::endl;
+  oomph_info << "Functional integral: " << functional_integral << std::endl;
+  
+  // QUEHACERES delete
+  // // --------------------------------------------------------------------------
+  // // Compute the integrated pressure jump across the disk
+  // // --------------------------------------------------------------------------
+  // double p_jump_total = 0.0;
+  
+  // for(unsigned e=0; e<Face_mesh_for_pressure_jump_pt->nelement(); e++)
+  // {
+  //   auto elem_pt = dynamic_cast<NavierStokesPressureJumpFaceElement<ELEMENT>*>
+  //     (Face_mesh_for_pressure_jump_pt->element_pt(e));
+
+  //   // get the integral over this element and add to the total
+  //   p_jump_total += elem_pt->contribution_to_pressure_jump_integral();
+  // }  
+
+  // oomph_info << "integrated FE pressure jump across disk in augmented region: "
+  // 	     << p_jump_total << std::endl;
 
   // ---------------------------------------------------------------
   // compute the L2 of the FE traction on the augmented section of the disk
@@ -4154,7 +4290,7 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 
   for (unsigned b = First_torus_boundary_id; b<=Last_torus_boundary_id; b++)
   {
-    unsigned nel = Bulk_mesh_pt->nboundary_element_in_region(b,region_id);
+    nel = Bulk_mesh_pt->nboundary_element_in_region(b,region_id);
     for (unsigned e=0; e<nel; e++)
     {
       FiniteElement* el_pt = 
@@ -4287,7 +4423,7 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   for (unsigned i=0; i<nb; i++)
   {
     unsigned b = One_based_boundary_id_for_disk_outside_torus[i]-1;
-    unsigned nel = Bulk_mesh_pt->nboundary_element_in_region(b,region_id);
+    nel = Bulk_mesh_pt->nboundary_element_in_region(b,region_id);
     for (unsigned e=0; e<nel; e++)
     {
       FiniteElement* el_pt = 
@@ -4327,7 +4463,7 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
  
   for (unsigned b=First_lower_disk_boundary_id; b<=Last_lower_disk_boundary_id; b++)
   {
-    unsigned nel = Bulk_mesh_pt->nboundary_element(b);
+    nel = Bulk_mesh_pt->nboundary_element(b);
     for (unsigned e=0; e<nel; e++)
     {
       FiniteElement* el_pt = 
@@ -4367,7 +4503,7 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 
   for (unsigned b=First_upper_disk_boundary_id; b<=Last_upper_disk_boundary_id; b++)
   {
-    unsigned nel = Bulk_mesh_pt->nboundary_element(b);
+    nel = Bulk_mesh_pt->nboundary_element(b);
     for (unsigned e=0; e<nel; e++)
     {
       FiniteElement* el_pt = 
@@ -4410,7 +4546,7 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
 
   some_file.open(filename.str().c_str());
 
-  unsigned nel = Face_mesh_for_stress_jump_pt->nelement();
+  nel = Face_mesh_for_stress_jump_pt->nelement();
   for (unsigned e=0; e<nel; e++)
   {
     auto stress_jump_element_pt =
@@ -4422,36 +4558,7 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
     
   some_file.close();
 
-  // Output solution showing element outlines
-  //-----------------------------------------
-  oomph_info << "Outputting coarse solution..." << std::endl;
-
-  filename.str("");
-  filename << Doc_info.directory() << "/coarse_soln"
-	   << Doc_info.number() << ".vtu";
-  some_file.open(filename.str().c_str());
-  if (do_bulk_output) Bulk_mesh_pt->output_paraview(some_file,2);
-  some_file.close();
-
-  // Exact solution (only need to output it once)
-  if (!Have_output_exact_soln &&
-    !CommandLineArgs::command_line_flag_has_been_set("--dont_output_exact_solution"))
-  {
-    oomph_info << "Outputting exact solution..." << std::endl;
-
-    filename.str("");
-    filename << Doc_info.directory() << "/exact_soln.vtu";
-    some_file.open(filename.str().c_str());
-
-    Bulk_mesh_pt->output_fct_paraview(some_file, nplot,
-				      Analytic_Functions::exact_solution_flat_disk);
-    
-    some_file.close();
-
-    // set the flag so we don't do it again
-    Have_output_exact_soln = true;
-  }
-
+  
   // Get error from exact solution
   // -----------------------------
   
@@ -4606,35 +4713,7 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
     some_file.close();
     oomph_info << "Output description of nodes to " << filename.str() << std::endl;
   }
-
-  oomph_info << "Outputting extended solution..." << std::endl;
   
-  // Plot "extended solution" showing contributions
-  filename.str("");
-  filename << Doc_info.directory() << "/extended_soln"
-	   << Doc_info.number() << ".dat";
-  some_file.open(filename.str().c_str());
-  
-  nel = Bulk_mesh_pt->nelement();
-  for (unsigned e=0; e<nel; e++)
-  {
-    // shouldn't change this, since the maps have been setup for a specific number
-    // unsigned npts = Global_Parameters::Nplot_for_bulk;
-    ELEMENT* el_pt = dynamic_cast<ELEMENT*>(Bulk_mesh_pt->element_pt(e));
-
-    el_pt->output_with_various_contributions(some_file, nplot,
-					     Analytic_Functions::exact_solution_flat_disk);
-  }
-
-  some_file.close();    
-
-  filename.str("");
-  filename << Doc_info.directory() << "/singular_line_mesh"
-	   << Doc_info.number() << ".dat";
-  some_file.open(filename.str().c_str());
-  Singular_fct_element_mesh_pt->output(some_file, nplot);
-  some_file.close();
-
   //Increment counter for solutions 
   Doc_info.number()++;
   
