@@ -1163,17 +1163,35 @@ namespace oomph
       fill_in_generic_residual_contribution_functional(
 	residuals, GeneralisedElement::Dummy_matrix, false);
     }
-
-#ifndef USE_FD_JACOBIAN
+  
     /// \short Add the element's contribution to its residual vector and its
     /// Jacobian matrix
     inline void fill_in_contribution_to_jacobian(Vector<double>& residuals,
 						 DenseMatrix<double>& jacobian)
     {
+#ifdef USE_FD_JACOBIAN
+#ifdef PARANOID
+      std::stringstream ss;
+
+      ss << "Can't finite-diff this FunctionalLineElement's Jacobian currently, "
+	 << "as this element's own nodes' dofs appear again as external data. "
+	 << "This was done for convenience in setting up the external data indices, "
+	 << "and in the analytic Jacobian there are only external contributions to the "
+	 << "velocities. \n"
+	 << "If you want to finite-diff this Jacobian the duplicate global equation "
+	 << "numbers need to be removed." << std::endl;
+	  
+      throw OomphLibError(ss.str(), 
+			  OOMPH_CURRENT_FUNCTION,
+			  OOMPH_EXCEPTION_LOCATION);
+#endif
+      FiniteElement::fill_in_contribution_to_jacobian(residuals, jacobian);
+#else
       fill_in_generic_residual_contribution_functional(
 	residuals, jacobian, true);
-    }
 #endif
+    }
+
 
     void output(std::ostream& outfile, const unsigned& nplot = 2)
     {
@@ -1425,18 +1443,6 @@ namespace oomph
       {
 	Pressure_nodes_index.push_back(n);
       }
-
-      // ### QUEHACERES delete
-      /* // get the node number in the bulk element associated with */
-      /* // the first knot point (doesn't matter which knot we choose here) */
-      /* unsigned n_in_bulk = Node_number_in_normal_bulk_elem_at_knot_map[0].at(n); */
-
-      /* // is this a pressure-storing node in the bulk element? */
-      /* if(Normal_bulk_elem_at_knot[0]->p_stored_at_node(n_in_bulk)) */
-      /* { */
-      /*   // add it to the list and increment the counter */
-      /*   Pressure_nodes_index.push_back(n); */
-      /* } */
     }
 	
 #ifdef PARANOID
@@ -1454,10 +1460,6 @@ namespace oomph
     }
 #endif
 
-    // ### QUEHACERES delete, changed it to a map
-    /* // make space for nnode equations */
-    /* External_eqn_index_lower.resize(nnode, 0); */
-	
     // add the lower *pressure* nodes as external data
     /* for(unsigned j=0; j<nnode; j++) */
     for(unsigned j : Pressure_nodes_index)
@@ -1491,17 +1493,34 @@ namespace oomph
       Vector<double> s_bulk(Dim, 0.0);
       Lower_bulk_elem_pt->locate_zeta(x, dummy_geom_obj_pt, s_bulk);
 
+      // did we find it? if not, lower the tolerance a bit and try again
       if(dummy_geom_obj_pt == nullptr)
       {
-	throw OomphLibError("Couldn't find this line element's knot in the lower bulk element",
-			    OOMPH_CURRENT_FUNCTION,
-			    OOMPH_EXCEPTION_LOCATION);
+	// backup the current tolerance
+	double locate_zeta_tol_backup = Locate_zeta_helpers::Newton_tolerance;
+
+	// try again with a slightly looser tolerance
+	Locate_zeta_helpers::Newton_tolerance = 1e-6;
+
+	Lower_bulk_elem_pt->locate_zeta(x, dummy_geom_obj_pt, s_bulk);
+	
+	// restore the original tolerance
+	Locate_zeta_helpers::Newton_tolerance = locate_zeta_tol_backup;
+
+	// if we still didn't find it, throw
+	if(dummy_geom_obj_pt == nullptr)
+	{	  
+	  throw OomphLibError("Couldn't find this line element's knot in "
+			      "the lower bulk element",
+			      OOMPH_CURRENT_FUNCTION,
+			      OOMPH_EXCEPTION_LOCATION);
+	}
       }
-      else
-      {
-	Lower_bulk_coords_at_knot[ipt].resize(Dim, 0.0);
-	Lower_bulk_coords_at_knot[ipt] = s_bulk;
-      }	  
+
+      // if we made it here then we've found an element and corresponding
+      // coordinates, so lets save them
+      Lower_bulk_coords_at_knot[ipt].resize(Dim, 0.0);
+      Lower_bulk_coords_at_knot[ipt] = s_bulk;	  
     }
 
     Node_number_in_lower_bulk.resize(nnode, 0);
@@ -1530,42 +1549,6 @@ namespace oomph
 			    OOMPH_EXCEPTION_LOCATION);
       }
     }
-
-    /* // @@@ QUEHACERES fuck it, add all the bloody nodes as external data */
-    /* for(unsigned j=0; j<Lower_bulk_elem_pt->nnode(); j++) */
-    /* { */
-    /*   Node* upper_node_pt = bulk_elem_pt->node_pt(j); */
-    /*   Node* lower_node_pt = Lower_bulk_elem_pt->node_pt(j); */
-
-    /*   bool upper_node_in_this = false; */
-
-    /*   // make sure we don't double count */
-    /*   for(unsigned n=0; n<nnode; n++) */
-    /*   { */
-    /*     if(this->node_pt(n) == upper_node_pt) */
-    /*       upper_node_in_this = true; */
-    /*   } */
-	  
-    /*   if(!upper_node_in_this) */
-    /*     this->add_external_data(upper_node_pt); */
-	  
-    /*   this->add_external_data(lower_node_pt); */
-    /* } */
-	
-    // ### QUEHACERES delete
-    /* unsigned j=0; */
-    /* for(std::pair<Node*,Node*> upper_to_lower_node : Upper_to_lower_node_map) */
-    /* { */
-    /*   // ### QUEHACERES delete if the face element stuff works */
-    /*   /\* this->node_pt(j) = upper_edge_nodes_ordered[j]; *\/ */
-
-    /*   // add the lower node as external data and store the equation number */
-    /*   External_eqn_index_lower[j] = */
-    /*     this->add_external_data(upper_to_lower_node.second); */
-
-    /*   // increment the counter */
-    /*   j++; */
-    /* } */
   }
 
   //===========================================================================
@@ -1751,25 +1734,6 @@ namespace oomph
       }
 #endif
     } // end loop over knots
-
-      
-    // ### QUEHACERES delete, moved to constructor
-    /* // and finally, compute the list of nodal indices in this element which */
-    /* // contain pressure */
-    /* Pressure_nodes_index.resize(0); */
-    /* for(unsigned n=0; n<nnode; n++) */
-    /* { */
-    /* 	// get the node number in the bulk element associated with */
-    /* 	// the first knot point (doesn't matter which knot we choose here) */
-    /* 	unsigned n_in_bulk = Node_number_in_normal_bulk_elem_at_knot_map[0].at(n); */
-
-    /* 	// is this a pressure-storing node in the bulk element? */
-    /* 	if(Normal_bulk_elem_at_knot[0]->p_stored_at_node(n_in_bulk)) */
-    /* 	{ */
-    /* 	  // add it to the list and increment the counter */
-    /* 	  Pressure_nodes_index.push_back(n); */
-    /* 	} */
-    /* } */
   }
 
   template <class FACE_ELEMENT>
@@ -1794,7 +1758,7 @@ namespace oomph
     DShape dpsipdx_norm(npres_bulk, Dim);
     
     FACE_ELEMENT* upper_face_elem_pt =
-      dynamic_cast<FACE_ELEMENT*>(this->bulk_element_pt());
+      dynamic_cast<FACE_ELEMENT*>(this->bulk_element_pt()); 
     
     double functional_integral = 0.0;
     
@@ -1831,12 +1795,13 @@ namespace oomph
       // pressure shape function derivatives (only need normal not binormal)
       Normal_bulk_elem_at_knot[ipt]->dpshape_eulerian_nst(Normal_bulk_coords_at_knot[ipt],
 							  psip_bulk_norm, dpsipdx_norm);
-      
+
+      	
       // get the upper and lower shape functions from the respective
       // bulk elements
-      upper_face_elem_pt->pshape_nst(s_face, psip_upper);	
+      upper_face_elem_pt->pshape_nst(s_face, psip_upper);
       Lower_bulk_elem_pt->pshape_nst(Lower_bulk_coords_at_knot[ipt], psip_lower);
-
+      
       // shorthands for the normal vectors
       Vector<double> a1 = Normal_vector_at_knot[ipt];
       Vector<double> a3 = Binormal_vector_at_knot[ipt];
@@ -2013,9 +1978,16 @@ namespace oomph
 
       // get the upper and lower shape functions from the respective
       // bulk elements
-      upper_face_elem_pt->pshape_nst(s_face, psip_upper);	
-      Lower_bulk_elem_pt->pshape_nst(Lower_bulk_coords_at_knot[ipt], psip_lower);
-
+      upper_face_elem_pt->pshape_nst(s_face, psip_upper);
+      try
+      {
+	Lower_bulk_elem_pt->pshape_nst(Lower_bulk_coords_at_knot[ipt], psip_lower);
+      }
+      catch(...)
+      {
+	oomph_info << "functional element pointer: " << this << std::endl;
+	abort();
+      }
       // shorthands for the normal vectors
       Vector<double> a1 = Normal_vector_at_knot[ipt];
       Vector<double> a3 = Binormal_vector_at_knot[ipt];
@@ -2369,27 +2341,13 @@ namespace oomph
     
   } // end of fill_in_generic_residual_contribution_functional()
   
+
   //////////////////////////////////////////////////////////////////////////////
   //////////////////////////////////////////////////////////////////////////////
   //////////////////////////////////////////////////////////////////////////////
   //////////////////////////////////////////////////////////////////////////////
 
-  // ### QUEHACERES delete if the face element stuff works
-  /* template <class FACE_ELEMENT> */
-  /*   class NavierStokesWithSingularityFaceOnFaceElement : */
-  /*   public virtual FaceGeometry<FACE_ELEMENT>, public virtual FaceElement */
-  /* { */
-  /* public: */
-    
-  /*   NavierStokesWithSingularityFaceOnFaceElement(FiniteElement* const& bulk_el_pt, */
-  /* 						 const int& face_index) */
-  /*   {       */
-  /*     // Let the bulk element build the FaceElement, i.e. setup the pointers  */
-  /*     // to its nodes (by referring to the appropriate nodes in the bulk */
-  /*     // element), etc. */
-  /*     bulk_el_pt->build_face_element(face_index, this); */
-  /*   } */
-  /* }; */
+  
   
   //===========================================================================
   // Generic base class for augmented face elements
@@ -2407,11 +2365,7 @@ namespace oomph
 
     // and expose the ELEMENT template
     typedef ELEMENT _ELEMENT_;
-    
-    // QUEHACERES delete
-    /* // shorthand */
-    /* typedef ScalableSingularityForNavierStokesLineElement<NNODE_1D> SingularLineElement; */
-
+  
     typedef void (*ExactTractionFctPt)(const double& t,
 				       const Vector<double>& x,
 				       const Vector<double>& unit_normal,
@@ -3742,41 +3696,13 @@ namespace oomph
     // expose the nestedtemplate arguments
     static const unsigned _NNODE_1D_ = ELEMENT::_NNODE_1D_;
 
-    // ### QUEHACERES delete when functional elements work
-    /* /// \short Function pointer to a function which provides the tangent vector a1 */
-    /* /// at the specified Lagrangian coordinates */
-    /* typedef void (*TangentVectorFctPt)(const LagrangianCoordinates& lagr_coords, */
-    /* 				       Vector<double>& a1); */
-      
-    // QUEHACERES delete
-    /* // shorthand typedef for the baseclass typedef  */
-    /*   typedef typename */
-    /* 	NavierStokesWithSingularityFaceElement<ELEMENT>::SingularLineElement SingularLineElement; */
-      
-      /// \short Constructor, takes the pointer to the "bulk" element and the 
-      /// index of the face to which the element is attached. Optional final
-      /// arg is the identifier for the additional unknowns multiplier
-      NavierStokesWithSingularityBCFaceElement(ELEMENT* const& bulk_el_pt, 
-					       const int& face_index,					       
-					       const unsigned& id = 0,
-					       const bool& is_on_upper_disk_surface = false);
-      // ### QUEHACERES delete when functional elements work
-      /* , */
-      /* 					       const double& grad_u_reg_factor = 0.0, */
-      /* 					       const double& grad_p_reg_factor = 0.0);  */
-
-      /* // version with traction regularisation specified but upper disk flag not specified; */
-      /* // just forward with the default flag supplied */
-      /* NavierStokesWithSingularityBCFaceElement(ELEMENT* const& bulk_el_pt,  */
-      /* 					       const int& face_index,					        */
-      /* 					       const unsigned& id = 0, */
-      /* 					       const double& grad_u_reg_factor = 0.0, */
-      /* 					       const double& grad_p_reg_factor = 0.0) */
-      /* 	: NavierStokesWithSingularityBCFaceElement(bulk_el_pt,  */
-      /* 						   face_index,					        */
-      /* 						   id, */
-      /* 						   false, */
-      /* 						   grad_u_reg_factor) { } */
+    /// \short Constructor, takes the pointer to the "bulk" element and the 
+    /// index of the face to which the element is attached. Optional final
+    /// arg is the identifier for the additional unknowns multiplier
+    NavierStokesWithSingularityBCFaceElement(ELEMENT* const& bulk_el_pt, 
+					     const int& face_index,					       
+					     const unsigned& id = 0,
+					     const bool& is_on_upper_disk_surface = false);
       
       ///\short  Broken empty constructor
       NavierStokesWithSingularityBCFaceElement()
@@ -3922,24 +3848,6 @@ namespace oomph
 	Is_on_upper_disk_surface = true;
       }
 
-      // ### QUEHACERES delete when functional elements work
-      /* void set_velocity_gradient_regularisation_factor(const double& grad_u_reg) */
-      /* { */
-      /* 	Normal_velocity_gradient_regularisation_factor = grad_u_reg; */
-      /* } */
-
-      /* void set_pressure_gradient_regularisation_factor(const double& grad_p_reg) */
-      /* { */
-      /* 	Pressure_gradient_regularisation_factor = grad_p_reg; */
-      /* } */
-
-      /* /// \short Get the function pointer which points to a function which */
-      /* /// provides the tangent vector a1 */
-      /* TangentVectorFctPt& tangent_vector_fct_pt() */
-      /* { */
-      /* 	return A1_tangent_vector_fct_pt; */
-      /* } */
-      
       double compute_l2_traction_fe() const
       {
 	// shorthand
@@ -4012,27 +3920,11 @@ namespace oomph
 	Vector<double>& residuals, DenseMatrix<double>& jacobian, 
 	const unsigned& flag);
 
-      // ### QUEHACERES delete when functional elements work
-      /* /// \short the bulk nodal velocities are external data to this face element */
-      /* /// because the functional we're minimising depends on the traction, i.e. */
-      /* /// the velocity gradient, which is affected by the bulk velocity unknowns */
-      /* Vector<unsigned> External_eqn_index_bulk; */
-	
       /// Desired boundary values at nodes
       DenseMatrix<double> Nodal_boundary_value;
 
       /// are we attached to the upper or lower surface?
       bool Is_on_upper_disk_surface;
-
-      // ### QUEHACERES delete when functional elements work
-      /* /// Multiplication factor for functional Pi = (1/2)|t|^2  */
-      /* double Normal_velocity_gradient_regularisation_factor; */
-
-      /* /// Multiplication factor for functional Pi = (1/2)|(grad P).a_1|^2 */
-      /* double Pressure_gradient_regularisation_factor; */
-
-      /* /// Function pointer to a function which provides the tangent vector a1 */
-      /* TangentVectorFctPt A1_tangent_vector_fct_pt; */
       
   }; // end of NavierStokesWithSingularityBCFaceElement class 
 
@@ -4052,18 +3944,9 @@ namespace oomph
     NavierStokesWithSingularityBCFaceElement(ELEMENT* const& bulk_el_pt, 
 					     const int& face_index,					     
 					     const unsigned& id,
-					     const bool& is_on_upper_disk_surface)
-    // ### QUEHACERES delete when functional elements work
-    /* , */
-    /* 					     const double& grad_u_reg_factor, */
-    /* 					     const double& grad_p_reg_factor) */ : 
+					     const bool& is_on_upper_disk_surface) : 
   NavierStokesWithSingularityFaceElement<ELEMENT>(bulk_el_pt, face_index, id),
     Is_on_upper_disk_surface(is_on_upper_disk_surface)
-      // ### QUEHACERES delete when functional elements work
-      /* , */
-    /* Normal_velocity_gradient_regularisation_factor(grad_u_reg_factor), */
-    /* Pressure_gradient_regularisation_factor(grad_p_reg_factor), */
-    /* A1_tangent_vector_fct_pt(nullptr) */
   { 
     unsigned n_node = this->nnode();
 
@@ -4086,16 +3969,6 @@ namespace oomph
     // the contribution from the functional we're minimising, which depends on
     // the traction, i.e. on the bulk velocity unknowns
     const unsigned n_node_bulk = bulk_el_pt->nnode();
-
-    // ### QUEHACERES delete when functional elements work
-    /* // make enough space  */
-    /* External_eqn_index_bulk.resize(n_node_bulk, 0.0); */
-
-    /* // add the extra equation numbers */
-    /* for(unsigned n=0; n<n_node_bulk; n++) */
-    /* {       */
-    /*   External_eqn_index_bulk[n] = this->add_external_data(bulk_el_pt->node_pt(n)); */
-    /* } */
     
   } // end NavierStokesWithSingularityBCFaceElement constructor
 
@@ -4484,40 +4357,6 @@ namespace oomph
       
       // get the FE traction along this Dirchlet boundary
       bulk_el_pt->get_traction(s_bulk, unit_normal, traction_fe);
-
-      // ### QUEHACERES delete when functional elements work
-      /* // rate of strain tensor */
-      /* DenseMatrix<double> strain_rate_fe(Dim, Dim, 0.0); */
-
-      /* // rate of strain tensor dot unit normal */
-      /* Vector<double> strain_rate_fe_dot_n(Dim, 0.0); */
-      
-      /* bulk_el_pt->strain_rate(s_bulk, strain_rate_fe); */
-
-      /* for(unsigned i=0; i<Dim; i++) */
-      /* { */
-      /* 	for(unsigned j=0; j<Dim; j++) */
-      /* 	{ */
-      /* 	  strain_rate_fe_dot_n[i] += 2.0 * (strain_rate_fe(i,j) * unit_normal[j]); */
-      /* 	} */
-      /* } */
-
-      // ### QUEHACERES delete when functional elements work
-      /* // compute (grad(u).n).n */
-      /* // ------------------------------------- */
-      /* double grad_u_dot_n_dot_n = 0.0; */
-      /* for(unsigned l=0; l<n_node_bulk; l++) */
-      /* { */
-      /* 	for(unsigned i=0; i<Dim; i++) */
-      /* 	{ */
-      /* 	  for(unsigned j=0; j<Dim; j++) */
-      /* 	  { */
-      /* 	    grad_u_dot_n_dot_n += bulk_el_pt->nodal_value(l, i) * */
-      /* 	      dpsidx(l,j) * unit_normal[i] * unit_normal[j]; */
-      /* 	  } */
-      /* 	} */
-      /* } */
-      // ------------------------------------
       
       //Loop over the test functions
       for(unsigned l=0; l<n_node; l++)
@@ -4624,239 +4463,6 @@ namespace oomph
 	  
 	} // end loop over directions	
       } // end loop over nodes
-
-      // ### QUEHACERES delete once functional elements work
-      /* // Now loop over the bulk nodes and add the contributions from the */
-      /* // velocity gradients from the traction in the functional we're minimising */
-      /* for(unsigned l_in_bulk=0; l_in_bulk<n_node_bulk; l_in_bulk++) */
-      /* { */
-      /* 	// loop over the velocity components */
-      /* 	for(unsigned i=0; i<Dim; i++) */
-      /* 	{ */
-      /* 	  unsigned ext_index = External_eqn_index_bulk[l_in_bulk]; */
-      /* 	  int ext_eqn_u_fe = this->external_local_eqn(ext_index, i); */
-
-      /* 	  if(ext_eqn_u_fe >= 0) */
-      /* 	  { */
-      /* 	    // Now add contribution of velocity derivatives from functional @@@ */
-      /* 	    for(unsigned j=0; j<Dim; j++) */
-      /* 	    { */
-      /* 	      // QUEHACERES changing to (grad(u).n).n */
-      /* 	      residuals[ext_eqn_u_fe] += Normal_velocity_gradient_regularisation_factor * */
-      /* 		dpsidx(l_in_bulk, j) * unit_normal[i]*unit_normal[j] * grad_u_dot_n_dot_n * W; */
-	      
-      /* 	      /\* // QUEHACERES changing to strain rate as an experiment *\/ */
-      /* 	      /\* residuals[ext_eqn_u_fe] += Normal_velocity_gradient_regularisation_factor * *\/ */
-      /* 	      /\* 	( dpsidx(l_in_bulk, j) * unit_normal[j] * strain_rate_fe_dot_n[i] + *\/ */
-      /* 	      /\* 	  dpsidx(l_in_bulk, j) * unit_normal[i] * strain_rate_fe_dot_n[j] ) * W; *\/ */
-	      
-      /* 	      /\* residuals[ext_eqn_u_fe] += Normal_velocity_gradient_regularisation_factor * *\/ */
-      /* 	      /\* 	( dpsidx(l_in_bulk, j) * unit_normal[j] * traction_fe[i] + *\/ */
-      /* 	      /\* 	  dpsidx(l_in_bulk, j) * unit_normal[i] * traction_fe[j] ) * W; *\/ */
-      /* 	    } */
-
-      /* 	    if(flag) */
-      /* 	    { */
-      /* 	      // loop over the bulk velocity unknowns again */
-      /* 	      for(unsigned l2_in_bulk=0; l2_in_bulk<n_node_bulk; l2_in_bulk++) */
-      /* 	      { */
-      /* 		// Now the contribution of the velocity gradients to the velocity eqns */
-      /* 		// (via the functional) @@@ */
-      /* 		for(unsigned i2=0; i2<Dim; i2++) */
-      /* 		{ */
-      /* 		  unsigned ext_index2 = External_eqn_index_bulk[l2_in_bulk]; */
-      /* 		  int ext_unknown_u_fe = this->external_local_eqn(ext_index2, i2); */
-
-      /* 		  if(ext_unknown_u_fe >= 0) */
-      /* 		  {		     */
-      /* 		    for(unsigned j=0; j<Dim; j++) */
-      /* 		    { */
-      /* 		      for(unsigned j2=0; j2<Dim; j2++) */
-      /* 		      { */
-      /* 			jacobian(ext_eqn_u_fe, ext_unknown_u_fe) += */
-      /* 			  Normal_velocity_gradient_regularisation_factor * */
-      /* 			  dpsidx(l_in_bulk,j) * unit_normal[i]*unit_normal[j] * */
-      /* 			  dpsidx(l2_in_bulk,j2) * unit_normal[i2] * unit_normal[j2] * W; */
-      /* 		      } */
-      /* 		      // QUEHACERES changing to (grad(u).n).n */
-		      
-      /* 		      /\* jacobian(ext_eqn_u_fe, ext_unknown_u_fe) += *\/ */
-      /* 		      /\* 	Normal_velocity_gradient_regularisation_factor * *\/ */
-      /* 		      /\* 	(dpsidx(l_in_bulk,j)  * dpsidx(l2_in_bulk,i) * unit_normal[j]*unit_normal[i2] + *\/ */
-      /* 		      /\* 	 dpsidx(l_in_bulk,i2) * dpsidx(l2_in_bulk,j) * unit_normal[j]*unit_normal[i] + *\/ */
-      /* 		      /\* 	 dpsidx(l_in_bulk,j)  * dpsidx(l2_in_bulk,j) * unit_normal[i]*unit_normal[i2])*W; *\/ */
-
-      /* 		      /\* if(i == i2) *\/ */
-      /* 		      /\* { *\/ */
-      /* 		      /\* 	for(unsigned m=0; m<Dim; m++) *\/ */
-      /* 		      /\* 	{ *\/ */
-      /* 		      /\* 	  jacobian(ext_eqn_u_fe, ext_unknown_u_fe) += *\/ */
-      /* 		      /\* 	    Normal_velocity_gradient_regularisation_factor * *\/ */
-      /* 		      /\* 	    (dpsidx(l_in_bulk,j) * dpsidx(l2_in_bulk, m)*unit_normal[j]*unit_normal[m])*W; *\/ */
-      /* 		      /\* 	} *\/ */
-      /* 		      /\* } *\/ */
-      /* 		    } */
-      /* 		  } // end loop over unknown pinned check */
-      /* 		} // end loop over unknown velocity components */
-      /* 	      } // end loop over bulk velocity unknowns */
-
-      /* 	      // QUEHACERES taking out while we experiment with just doing strain rate */
-      /* 	      /\* // now add the contribution of the face pressure unknowns to the bulk  *\/ */
-      /* 	      /\* // velocity equations *\/ */
-      /* 	      /\* for(unsigned k=0; k<n_pres; k++) *\/ */
-      /* 	      /\* { *\/ */
-      /* 	      /\* 	// get the bulk node number corresponding to this face element vertex node *\/ */
-      /* 	      /\* 	const unsigned k_in_bulk = this->bulk_node_number(k); *\/ */
-		
-      /* 	      /\* 	// Now the contribution of the pressure to the velocity eqns *\/ */
-      /* 	      /\* 	// (via the functional) @@@ *\/ */
-      /* 	      /\* 	int local_unknown_p = this->nodal_local_eqn(k, this->P_index_nst); *\/ */
-
-      /* 	      /\* 	if(local_unknown_p >= 0) *\/ */
-      /* 	      /\* 	{ *\/ */
-      /* 	      /\* 	  for(unsigned j=0; j<Dim; j++) *\/ */
-      /* 	      /\* 	  { *\/ */
-      /* 	      /\* 	    jacobian(ext_eqn_u_fe, local_unknown_p) += Normal_velocity_gradient_regularisation_factor * *\/ */
-      /* 	      /\* 	      2 * (-dpsidx(l_in_bulk,j)*unit_normal[j]*unit_normal[i]*psip[k_in_bulk] ) * W; *\/ */
-      /* 	      /\* 	  } *\/ */
-      /* 	      /\* 	} *\/ */
-      /* 	      /\* } // end loop over face pressure dofs *\/ */
-	      
-      /* 	    } // end Jacobian check */
-	    
-      /* 	  } // end bulk velocity pinned check */
-      /* 	} // end loop over bulk velocity components   */
-      /* } // end loop over bulk velocity equations */
-      
-      // Boundary contributions of momentum LMs to the pressure residual
-      // --------------------------------------------------------------------
-
-      // ### QUEHACERES delete when functional elements work
-      /* // get the a1 tangent vector at this knot */
-      /* Vector<double> a1(Dim, 0.0); */
-      /* A1_tangent_vector_fct_pt(lagr_coords_at_knot, a1); */
-
-      /* // now compute (grad P).a1 */
-      /* double grad_p_dot_a1 = 0.0; */
-      
-      /* // loop over the pressure shape functions */
-      /* for(unsigned k=0; k<n_pres; k++) */
-      /* { */
-      /* 	// get this node index in the bulk element */
-      /* 	unsigned k_in_bulk = this->bulk_node_number(k); */
-	
-      /* 	// loop over the directions */
-      /* 	for(unsigned j=0; j<Dim; j++) */
-      /* 	{ */
-      /* 	  grad_p_dot_a1 += this->nodal_value(k, this->P_index_nst) * */
-      /* 	    dpsipdx(k_in_bulk, j) * a1[j]; */
-      /* 	} */
-      /* } */
-      
-      // loop over the pressure shape functions
-      // N.B. this works because the vertex nodes are enumerated first, so
-      // looping over the first DIM (=n_pres) nodes gives the nodes which store
-      // the pressure; so the strategy is to take this face element's vertex
-      // node numbers, look up their corresponding numbering in the bulk
-      // element (via bulk_node_number(k)), and then use this index to get
-      // the value of the correct shape function (which we get via the conversion
-      // of the local coordinates of this face element integration point to
-      // bulk local coordinates)
-      for(unsigned k=0; k<n_pres; k++)
-      {
-	// get the bulk node number corresponding to this face element vertex node
-	const unsigned k_in_bulk = this->bulk_node_number(k);
-
-	// get the local equation number for the pressure at this vertex node
-	int local_eqn_p = this->nodal_local_eqn(k, this->P_index_nst);
-
-	if(local_eqn_p >= 0)
-	{
-	  for(unsigned j=0; j<Dim; j++)
-	  {
-	    residuals[local_eqn_p] -=
-	      lambda_momentum[j] * unit_normal[j] * psip[k_in_bulk] * W;
-
-	    // ### QUEHACERES delete when functional elements work
-	    /* residuals[local_eqn_p] += Pressure_gradient_regularisation_factor * */
-	    /*   dpsipdx(k_in_bulk, j) * a1[j] * grad_p_dot_a1 * W; */
-	      
-	    // QUEHACERES taking out while we experiment with strain rate
-	    /* // and the contribution from the functional @@@ */
-	    /* residuals[local_eqn_p] -= Normal_velocity_gradient_regularisation_factor * */
-	    /*   traction_fe[j] * unit_normal[j] * psip[k_in_bulk] * W; */
-	  
-
-	    // no Jacobian contributions to momentum-enforcing LMs,
-	    // since they are zero on Dirchlet boundaries
-
-	    // ### QUEHACERES delete when functional elements work
-	    /* if(flag) */
-	    /* { */
-	    /*   for(unsigned k2=0; k2<n_pres; k2++) */
-	    /*   { */
-	    /* 	const unsigned k2_in_bulk = this->bulk_node_number(k2); */
-
-	    /* 	int local_unknown_p = this->nodal_local_eqn(k2, this->P_index_nst); */
-
-	    /* 	if(local_unknown_p >= 0) */
-	    /* 	{ */
-	    /* 	  for(unsigned j2=0; j2<Dim; j2++) */
-	    /* 	  { */
-	    /* 	    jacobian(local_eqn_p, local_unknown_p) += */
-	    /* 	      Pressure_gradient_regularisation_factor * */
-	    /* 	      dpsipdx(k_in_bulk,j) * dpsipdx(k2_in_bulk, j2) * a1[j] * a1[j2] * W; */
-	    /* 	  } */
-	    /* 	} */
-	    /*   } */
-	    /* } // end Jacobian check */
-	  } // end loop over dimensions
-	  
-	    // QUEHACERES taking out while we experiment with strain rate
-	    /* // only Jacobian contributions from functional @@@ */
-	    /* for(unsigned k2=0; k2<n_pres; k2++) */
-	    /* { */
-	    /*   // get the bulk node number corresponding to this face element pressure unknown */
-	    /*   const unsigned k2_in_bulk = this->bulk_node_number(k2); */
-
-	    /*   int local_unknown_p = this->nodal_local_eqn(k2, this->P_index_nst); */
-
-	    /*   // is it pinned? */
-	    /*   if(local_unknown_p >= 0) */
-	    /*   { */
-	    /* 	for(unsigned i=0; i<Dim; i++) */
-	    /* 	{ */
-	    /* 	  jacobian(local_eqn_p, local_unknown_p) += Normal_velocity_gradient_regularisation_factor * */
-	    /* 	    unit_normal[i] * unit_normal[i] * psip[k_in_bulk] * psip[k2_in_bulk] * W; */
-	    /* 	} */
-	    /*  }  */
-	    /* } // end loop over pressure dofs */
-	    
-	    /* // now loop over the bulk velocity unknowns and add their contribution */
-	    /* // to the pressure (via the traction functional, i.e. velocity gradients) @@@ */
-	    /* for(unsigned l2=0; l2<n_node_bulk; l2++) */
-	    /* { */
-	    /*   // loop over bulk velocity components */
-	    /*   for(unsigned i2=0; i2<Dim; i2++) */
-	    /*   { */
-	    /* 	unsigned ext_index = External_eqn_index_bulk[l2]; */
-	    /* 	int ext_unknown_u = this->external_local_eqn(ext_index, i2); */
-
-	    /* 	if(ext_unknown_u >= 0) */
-	    /* 	{ */
-	    /* 	  for(unsigned j=0; j<Dim; j++) */
-	    /* 	  { */
-	    /* 	    jacobian(local_eqn_p, ext_unknown_u) -= Normal_velocity_gradient_regularisation_factor * */
-	    /* 	      2 * dpsidx(l2,j) * unit_normal[j]*unit_normal[i2] * psip[k_in_bulk] * W; */
-	    /* 	  } */
-	    /* 	} */
-	    /*   } */
-	    /* } // end loop over bulk velocity unknowns */
-	    
-	  /* } // end Jacobian check */
-	} // end pinned pressure check
-	
-      } // end loop over pressure unknowns
       
     } // end loop over integration points
   } // end of fill_in_generic_residual_contribution_navier_stokes_bc()
@@ -7326,14 +6932,11 @@ namespace oomph
     }
 
     void total_singular_velocity_gradient_and_stress_at_knot(const unsigned& ipt,
-							     DenseMatrix<double>&dudx_sing_total,
+							     DenseMatrix<double>& dudx_sing_total,
 							     DenseMatrix<double>& stress_sing_total) const
     {
       // clear eveything out
-      /* ### QUEHACERES delete u_sing_total.resize(DIM+1, 0.0); */
       stress_sing_total.resize(DIM, DIM, 0.0);
-
-      /* ### QUEHACERES delete u_sing_total.initialise(0.0); */
       stress_sing_total.initialise(0.0);
       
       // get the line element and local coordinate which corresponds to the
@@ -7373,13 +6976,6 @@ namespace oomph
       lagr_coords_at_knot = this->lagr_coordinate_at_knot(ipt);
 
       // get 'em
-
-      
-      // ### QUEHACERES delete
-      /* u_sing_total = */
-      /* 	sing_el_pt->total_singular_contribution(lagr_coords_at_knot, */
-      /* 						s_singular_el); */
-      
       dudx_sing_total = sing_el_pt->total_singular_gradient_contribution(lagr_coords_at_knot,
 									 s_singular_el);
 	
@@ -8522,9 +8118,6 @@ namespace oomph
 	DenseMatrix<double> stress_sing_total(DIM, DIM, 0.0);
 	DenseMatrix<double> dudx_sing_total(DIM, DIM, 0.0);
 	
-	// ### QUEHACERES delete	
-	/* DenseMatrix<double> strain_rate_sing_total(DIM, DIM, 0.0); */
-	
 	// get 'em
 	total_singular_velocity_gradient_and_stress_at_knot(ipt, dudx_sing_total,
 							    stress_sing_total);
@@ -8731,7 +8324,7 @@ namespace oomph
 	      // contribution from \lambda_p
 	      residuals[local_eqn] += interpolated_lambda_p * dpsifdx(k,i) * W;
 	      	      
-	      //CALCULATE THE JACOBIAN
+	      // Jacobian?
 	      if(flag)
 	      {
 		//Loop over the velocity shape functions again
