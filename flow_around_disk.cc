@@ -115,6 +115,8 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem() :
   // Set the output directory
   Doc_info.set_directory(Global_Parameters::output_directory);
 
+  Doc_info.enable_error_if_directory_does_not_exist();
+  
   // set the number of dimensions
   Dim = 3;
 
@@ -180,9 +182,23 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem() :
   // Thickness of annular region on disk = radius of torus surrounding the
   // edge
   double h_annulus = Global_Parameters::R_torus;
-  Global_Parameters::Warped_disk_with_boundary_pt = 
-    new CylindricallyWarpedCircularDiskWithAnnularInternalBoundary
-    (h_annulus, Global_Parameters::Radius_of_curvature, Global_Parameters::rotation_matrix);
+
+  if(CommandLineArgs::command_line_flag_has_been_set("--use_axisymmetric_disk"))
+  {
+    Global_Parameters::Warped_disk_with_boundary_pt = 
+      new AxisymmetricallyDeformedDisk(h_annulus,
+				       Global_Parameters::Epsilon,
+				       Global_Parameters::rotation_matrix);
+  }
+  else
+  {
+    Global_Parameters::Warped_disk_with_boundary_pt = 
+      // ### QUEHACERES delete new CylindricallyWarpedCircularDiskWithAnnularInternalBoundary
+      // DeformedCircularDiskWithAnnularInternalBoundary
+      new CylindricallyDeformedDisk(h_annulus,
+				    Global_Parameters::Radius_of_curvature,
+				    Global_Parameters::rotation_matrix);
+  }
   
   // set the private pointer
   Warped_disk_with_boundary_pt = Global_Parameters::Warped_disk_with_boundary_pt;
@@ -341,7 +357,7 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem() :
   duplicate_plate_nodes_and_add_boundaries();
 
   // set the number of singular functions to subtract (for output purposes)
-  Nsingular_function = 6;
+  Nsingular_function = 3; // 6;
 
   // Create face elements that compute contribution to amplitude residual
   //---------------------------------------------------------------------
@@ -401,6 +417,7 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem() :
   add_sub_mesh(Traction_boundary_condition_mesh_pt);
   add_sub_mesh(Face_mesh_for_bc_pt);
   add_sub_mesh(Face_mesh_for_stress_jump_pt);
+  // ### QUEHACERES delete
   // add_sub_mesh(Face_mesh_for_pressure_jump_pt);
     
   build_global_mesh(); 
@@ -415,9 +432,20 @@ FlowAroundDiskProblem<ELEMENT>::FlowAroundDiskProblem() :
 #ifdef OOMPH_HAS_MUMPS
     if(!CommandLineArgs::command_line_flag_has_been_set("--use_superlu_solver"))
     {
-      oomph_info << "Using MUMPS linear solver\n\n";
-  
+      oomph_info << "\nUsing MUMPS linear solver\n";
+
       MumpsSolver* mumps_linear_solver_pt = new MumpsSolver;
+      
+      if(!CommandLineArgs::command_line_flag_has_been_set("--asymmetric_mumps_jacobian"))
+      {
+	// tell MUMPS we've got a symmetric Jacobian
+	mumps_linear_solver_pt->jacobian_is_symmetric();
+	
+	oomph_info << "with symmetric Jacobian (N.B. if the Jacobian isn't actually "
+		   << "symmetric, the solve will not converge!)\n";
+      }
+      
+      oomph_info << std::endl;
 
       mumps_linear_solver_pt->enable_suppress_warning_about_MPI_COMM_WORLD();
   
@@ -2067,16 +2095,32 @@ void FlowAroundDiskProblem<ELEMENT>::get_bulk_elements_and_normal_vectors_at_dis
     
     normal_geom_obj_pt->locate_zeta(x0, normal_geom_obj_pt, s_bulk_at_knot_normal[ipt]);
     binormal_geom_obj_pt->locate_zeta(x0, binormal_geom_obj_pt, s_bulk_at_knot_binormal[ipt]);
-    
+
+    // did we find the coordinates in the a1-containing element?
     if(normal_geom_obj_pt == nullptr)
     {
-      std::ostringstream error_message;
-      error_message << "Line element knot point not found in bulk element "
-		    << "containing a1 vector." << std::endl;
+      // backup the current tolerance
+      double locate_zeta_tol_backup = Locate_zeta_helpers::Newton_tolerance;
+
+      // try again with a slightly looser tolerance
+      Locate_zeta_helpers::Newton_tolerance = 1e-6;
+
+      normal_geom_obj_pt_backup->locate_zeta(x0, normal_geom_obj_pt, s_bulk_at_knot_normal[ipt]);
+       
+      // restore the original tolerance
+      Locate_zeta_helpers::Newton_tolerance = locate_zeta_tol_backup;
+
+      // still didn't find it?
+      if(normal_geom_obj_pt == nullptr)
+      {
+	std::ostringstream error_message;
+	error_message << "Line element knot point not found in bulk element "
+		      << "containing a1 vector." << std::endl;
       
-      throw OomphLibError(error_message.str(),
-			  OOMPH_CURRENT_FUNCTION,
-			  OOMPH_EXCEPTION_LOCATION);
+	throw OomphLibError(error_message.str(),
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
+      }
     }
 
     if(binormal_geom_obj_pt == nullptr)
@@ -2090,6 +2134,9 @@ void FlowAroundDiskProblem<ELEMENT>::get_bulk_elements_and_normal_vectors_at_dis
       binormal_geom_obj_pt_backup->locate_zeta(
 	x0, binormal_geom_obj_pt, s_bulk_at_knot_binormal[ipt]);
 
+      // restore the original tolerance
+      Locate_zeta_helpers::Newton_tolerance = locate_zeta_tol_backup;
+      
       if(binormal_geom_obj_pt == nullptr)
       {
 	std::ostringstream error_message;
@@ -2100,9 +2147,6 @@ void FlowAroundDiskProblem<ELEMENT>::get_bulk_elements_and_normal_vectors_at_dis
 			    OOMPH_CURRENT_FUNCTION,
 			    OOMPH_EXCEPTION_LOCATION);
       }
-
-      // restore the original tolerance
-      Locate_zeta_helpers::Newton_tolerance = locate_zeta_tol_backup;
     }      
   } // end loop over integration points
 }
@@ -2281,6 +2325,39 @@ create_one_d_singular_element_mesh(const unsigned& nsingular_el)
     // set the amplitude regularisation factor
     elem_pt->set_amplitude_regularisation_factor(
       Global_Parameters::Amplitude_gradient_regularisation_factor);
+
+    elem_pt->set_amplitude_gradient_jump_regularisation_factor(
+      Global_Parameters::Amplitude_gradient_jump_regularisation_factor);
+    
+    // set the pointer to the element to the "left" of this element,
+    // i.e. anticlockwise in azimuthal angle
+    unsigned e_left = e==0 ? nsingular_el-1 : e-1;
+
+    auto left_elem_pt = dynamic_cast<SingularLineElement*>(
+      Singular_fct_element_mesh_pt->element_pt(e_left));
+    
+    // double check
+    {
+      Node* zeroth_node_pt = elem_pt->node_pt(0);
+      bool found_node_in_left_elem = false;
+      
+      for(unsigned n=0; n<left_elem_pt->nnode(); n++)
+      {
+	if(left_elem_pt->node_pt(n) == zeroth_node_pt)
+	{
+	  found_node_in_left_elem = true;
+	  break;
+	}
+      }
+
+      if(!found_node_in_left_elem)
+      {
+	// QUEHACERES
+	abort();
+      }
+    }
+    
+    elem_pt->set_left_element_pt(left_elem_pt);
     
     // now set the nodal zeta coordinates for all but the last element
     if(e < (nsingular_el - 1))
@@ -2337,13 +2414,54 @@ void FlowAroundDiskProblem<ELEMENT>::create_one_d_functional_element_mesh()
 				     lower_disk_face_el_pt,
 				     upper_to_lower_face_node_index_map))
     {
-      std::ostringstream error_message;
-      error_message << "Upper and lower disk elements for creating the "
-		    << "functional elements do not correspond to each other.";
+      // if we haven't found the corresponding element with the standard offset,
+      // let's search through the rest just in case before we throw
+      bool found = false;
+      for(unsigned e2=half_n_el; e2<2*half_n_el; e2++)
+      {
+	lower_disk_face_el_pt = dynamic_cast<BC_ELEMENT*>
+	  (Face_mesh_for_bc_pt->element_pt(e2));
+	
+	if(check_elements_are_coincident(upper_disk_face_el_pt,
+					 lower_disk_face_el_pt,
+					 upper_to_lower_face_node_index_map))
+	{
+	  found = true;
+	  break;
+	}
+      }
+
+      // if we still haven't found it then something weird has happened, throw
+      if(!found)
+      {
+	std::ostringstream error_message;
+	error_message << "Upper and lower disk elements for creating the "
+		      << "functional elements do not correspond to each other.\n\n"
+		      << "Upper element nodes: \n";
+
+	for(unsigned n=0; n<upper_disk_face_el_pt->nnode(); n++)
+	{
+	  error_message << "\t";
+	  for(unsigned i=0; i<3; i++)
+	    error_message << upper_disk_face_el_pt->node_pt(n)->x(i) << " ";
+	  error_message << "\n";
+	}
+
+	error_message << "\nLower element nodes: \n";
       
-      throw OomphLibError(error_message.str(),
-			  OOMPH_CURRENT_FUNCTION,
-			  OOMPH_EXCEPTION_LOCATION);
+	for(unsigned n=0; n<lower_disk_face_el_pt->nnode(); n++)
+	{
+	  error_message << "\t";
+	  for(unsigned i=0; i<3; i++)
+	    error_message << lower_disk_face_el_pt->node_pt(n)->x(i) << " ";
+	  error_message << "\n";
+	}
+	error_message << std::endl;
+      
+	throw OomphLibError(error_message.str(),
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
+      }
     }
 
     const unsigned nnode = upper_disk_face_el_pt->nnode();
@@ -2933,15 +3051,16 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
     //   &SingularFunctions::gradient_of_singular_fct_exact_broadside_rotation,
     //   Sing_fct_id_broadside_rotation);
 
-    sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-      &SingularFunctions::singular_fct_exact_broadside_rotation_no_az,
-      &SingularFunctions::gradient_of_singular_fct_exact_broadside_rotation_no_az,
-      Sing_fct_id_broadside_rotation_no_az);
+    // QUEHACERES taking this out now with functional elements line, so using 3 sing fcts
+    // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+    //   &SingularFunctions::singular_fct_exact_broadside_rotation_no_az,
+    //   &SingularFunctions::gradient_of_singular_fct_exact_broadside_rotation_no_az,
+    //   Sing_fct_id_broadside_rotation_no_az);
 
-    sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-      &SingularFunctions::singular_fct_exact_broadside_rotation_az,
-      &SingularFunctions::gradient_of_singular_fct_exact_broadside_rotation_az,
-      Sing_fct_id_broadside_rotation_az_only);
+    // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+    //   &SingularFunctions::singular_fct_exact_broadside_rotation_az,
+    //   &SingularFunctions::gradient_of_singular_fct_exact_broadside_rotation_az,
+    //   Sing_fct_id_broadside_rotation_az_only);
 	
     // QUEHACERES
     // // In-plane singular function -------------------------------------------
@@ -2962,12 +3081,12 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
       &SingularFunctions::gradient_of_singular_fct_exact_in_plane_translation_az,
       Sing_fct_id_in_plane_az_only);   
 
-    // // QUEHACERES taking this back out for a sec, so we're using 5 sing fcts
-    // In-plane rotation singular function ----------------------------------
-    sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
-      &SingularFunctions::singular_fct_exact_in_plane_rotation,
-      &SingularFunctions::gradient_of_singular_fct_exact_in_plane_rotation,
-      Sing_fct_id_in_plane_rotation);
+    // QUEHACERES taking this out now with functional elements line, so using 3 sing fcts
+    // // In-plane rotation singular function ----------------------------------
+    // sing_el_pt->add_unscaled_singular_fct_and_gradient_pt(
+    //   &SingularFunctions::singular_fct_exact_in_plane_rotation,
+    //   &SingularFunctions::gradient_of_singular_fct_exact_in_plane_rotation,
+    //   Sing_fct_id_in_plane_rotation);
     
     // set the function pointer to the function which computes dzeta/dx
     sing_el_pt->dzeta_dx_fct_pt() = &CoordinateConversions::dzeta_dx;
@@ -3032,6 +3151,9 @@ void FlowAroundDiskProblem<ELEMENT>::complete_problem_setup()
 
   // now we've setup the Lagrangian coordinates, can create the functional element mesh
   create_one_d_functional_element_mesh();
+
+  // QUEHACERES
+  check_singular_line_elements_have_associated_bulk_knots();
 }
 
 //==start_of_find_corresponding_element_on_bulk_side_of_augmented_boundary==
@@ -3100,6 +3222,134 @@ find_corresponding_element_on_bulk_side_of_augmented_boundary(ELEMENT* const& au
 			OOMPH_CURRENT_FUNCTION,
 			OOMPH_EXCEPTION_LOCATION);
   }
+}
+
+//==start_of_check_singular_line_elements_have_associated_bulk_knots======
+/// \short brute force check that all the singular line elements are
+/// associated with a knot of one of the bulk elements
+//========================================================================
+template <class ELEMENT>
+Vector<SingularLineElement*> FlowAroundDiskProblem<ELEMENT>::
+check_singular_line_elements_have_associated_bulk_knots() const
+{
+  std::map<SingularLineElement*, unsigned> line_element_to_knot_count_map;
+
+  Vector<SingularLineElement*> empty_sing_elems;
+  
+  // first, assemble the count of how many bulk knots each singular
+  // line element has conributing to its nodal values
+  for(unsigned e=0; e<Torus_region_mesh_pt->nelement(); e++)
+  {
+    ELEMENT* elem_pt = dynamic_cast<ELEMENT*>(Torus_region_mesh_pt->element_pt(e));
+
+    const unsigned nknot = elem_pt->integral_pt()->nweight();
+    for(unsigned ipt=0; ipt<nknot; ipt++)
+    {
+      LagrangianCoordinates lagr_coords;
+      SingularLineElement* sing_el_pt = nullptr;
+      Vector<double> s_singular_el(1,0);
+      
+      elem_pt->lagr_coords_and_singular_element_at_knot(ipt,
+							lagr_coords,
+							sing_el_pt,
+							s_singular_el);
+
+      auto it = line_element_to_knot_count_map.find(sing_el_pt);
+
+      if(it == line_element_to_knot_count_map.end())
+	line_element_to_knot_count_map[sing_el_pt] = 1;
+      else
+	// add it to the count if we've found it
+	it->second++;
+    }
+  }
+
+  // same again for BC face elements  
+  for(unsigned e=0; e<Face_mesh_for_bc_pt->nelement(); e++)
+  {
+    auto elem_pt = dynamic_cast<FACE_ELEMENT*>(Face_mesh_for_bc_pt->element_pt(e));
+
+    const unsigned nknot = elem_pt->integral_pt()->nweight();
+    for(unsigned ipt=0; ipt<nknot; ipt++)
+    {
+      LagrangianCoordinates lagr_coords;
+      SingularLineElement* sing_el_pt = nullptr;
+      Vector<double> s_singular_el(1,0);
+      
+      elem_pt->lagr_coords_and_singular_element_at_knot(ipt,
+							lagr_coords,
+							sing_el_pt,
+							s_singular_el);
+
+      auto it = line_element_to_knot_count_map.find(sing_el_pt);
+
+      if(it == line_element_to_knot_count_map.end())
+	line_element_to_knot_count_map[sing_el_pt] = 1;
+      else
+	// add it to the count if we've found it
+	it->second++;
+    }
+  }
+
+  // and one more time for stress jump
+  for(unsigned e=0; e<Face_mesh_for_stress_jump_pt->nelement(); e++)
+  {
+    auto elem_pt = dynamic_cast<FACE_ELEMENT*>(Face_mesh_for_stress_jump_pt->element_pt(e));
+
+    const unsigned nknot = elem_pt->integral_pt()->nweight();
+    for(unsigned ipt=0; ipt<nknot; ipt++)
+    {
+      LagrangianCoordinates lagr_coords;
+      SingularLineElement* sing_el_pt = nullptr;
+      Vector<double> s_singular_el(1,0);
+      
+      elem_pt->lagr_coords_and_singular_element_at_knot(ipt,
+							lagr_coords,
+							sing_el_pt,
+							s_singular_el);
+
+      auto it = line_element_to_knot_count_map.find(sing_el_pt);
+
+      if(it == line_element_to_knot_count_map.end())
+	line_element_to_knot_count_map[sing_el_pt] = 1;
+      else
+	// add it to the count if we've found it
+	it->second++;
+    }
+  }
+  
+  // Now loop over the singular line mesh and look up the counts for each
+  // in the map
+
+  unsigned sing_elems_with_no_bulk_knots = 0;
+  for(unsigned e=0; e<Singular_fct_element_mesh_pt->nelement(); e++)
+  {
+    auto sing_el_pt = dynamic_cast<SingularLineElement*>(
+      Singular_fct_element_mesh_pt->element_pt(e));
+
+    auto it = line_element_to_knot_count_map.find(sing_el_pt);
+    
+    unsigned count = 0;
+
+    if(it != line_element_to_knot_count_map.end())
+      count = it->second;
+    
+    //oomph_info << sing_el_pt << "\t" << count << "\t";
+    
+    if(count == 0)
+    {
+      empty_sing_elems.push_back(sing_el_pt);
+      
+      //oomph_info << "***"; 
+      sing_elems_with_no_bulk_knots++;
+    }
+    //oomph_info << std::endl;
+  }
+
+  oomph_info << "Number of singular elements with no associated bulk knots: "
+	     << sing_elems_with_no_bulk_knots << std::endl;
+
+  return empty_sing_elems;  
 }
 
 //==start_of_create_face_elements=========================================
@@ -3566,23 +3816,24 @@ void FlowAroundDiskProblem<ELEMENT>::apply_boundary_conditions()
 			  Global_Parameters::in_plane_amplitude_pin);
   }
 
-  // --------------------
-  // We're now defaulting to only having the above 3 sing fcts; so only
-  // unpin the rotational modes if explicitly requested
-  // --------------------
-  if(!CommandLineArgs::command_line_flag_has_been_set("--unpin_broadside_rotation_amplitude"))
-  {
-    pin_singular_function(Sing_fct_id_broadside_rotation_no_az,
-			  Global_Parameters::broadside_rotation_amplitude_pin);
+  // QUEHACERES actually we're just hardcoding 3
+  // // --------------------
+  // // We're now defaulting to only having the above 3 sing fcts; so only
+  // // unpin the rotational modes if explicitly requested
+  // // --------------------
+  // if(!CommandLineArgs::command_line_flag_has_been_set("--unpin_broadside_rotation_amplitude"))
+  // {
+  //   pin_singular_function(Sing_fct_id_broadside_rotation_no_az,
+  // 			  Global_Parameters::broadside_rotation_amplitude_pin);
     
-    pin_singular_function(Sing_fct_id_broadside_rotation_az_only,
-			  Global_Parameters::broadside_rotation_amplitude_pin);
-  }  
-  if(!CommandLineArgs::command_line_flag_has_been_set("--unpin_in_plane_rotation_amplitude"))
-  {
-    pin_singular_function(Sing_fct_id_in_plane_rotation,
-			  Global_Parameters::in_plane_rotation_amplitude_pin);
-  }
+  //   pin_singular_function(Sing_fct_id_broadside_rotation_az_only,
+  // 			  Global_Parameters::broadside_rotation_amplitude_pin);
+  // }  
+  // if(!CommandLineArgs::command_line_flag_has_been_set("--unpin_in_plane_rotation_amplitude"))
+  // {
+  //   pin_singular_function(Sing_fct_id_in_plane_rotation,
+  // 			  Global_Parameters::in_plane_rotation_amplitude_pin);
+  // }
 
 } // end apply BCs
 
@@ -3784,13 +4035,22 @@ void FlowAroundDiskProblem<ELEMENT>::doc_solution(const unsigned& nplot)
   if(Doc_info.number() == 0)
     SingularFunctions::dr = pow(volume_in_torus_region / n_el, 1./3.)/50.;
 
+  filename.str("");
+    filename << Doc_info.directory() << "/functional_vs_aziumuth"
+	     << Doc_info.number() << ".dat";
+    some_file.open(filename.str().c_str());
+    
   for(unsigned e=0; e<Line_mesh_for_functional_minimisation_pt->nelement(); e++)
   {
-    auto functional_el_pt = dynamic_cast<FunctionalMinimisingLineElement<FACE_ELEMENT>*>(
+    auto functional_el_pt =
+      dynamic_cast<FunctionalMinimisingLineElement<FACE_ELEMENT>*>(
       Line_mesh_for_functional_minimisation_pt->element_pt(e));
 
     functional_integral += functional_el_pt->contribution_to_functional_integral();
+    
+    functional_el_pt->output_functional_at_knots(some_file);
   }
+  some_file.close();
 
   oomph_info << "Functional integral: " << functional_integral << std::endl;
   
@@ -4641,6 +4901,12 @@ int main(int argc, char* argv[])
   // Physical problem parameters
   // ==========================================================================
 
+  // use an axisymmetrically deformed disk rather than a cylindrically deformed one
+  CommandLineArgs::specify_command_line_flag("--use_axisymmetric_disk");
+
+  // the scaling parameter for axisymmetric deformation, w = epsilon * r^2
+  CommandLineArgs::specify_command_line_flag("--epsilon", &Global_Parameters::Epsilon);
+  
   CommandLineArgs::specify_command_line_flag("--no_slip_boundaries");
 
   // do a fixed-point iteration FSI solve, using any velocities
@@ -4718,11 +4984,12 @@ int main(int argc, char* argv[])
   // pin different singular functions to zero, for debug
   CommandLineArgs::specify_command_line_flag("--pin_broadside_amplitude",
 					     &Global_Parameters::broadside_amplitude_pin);  
-  CommandLineArgs::specify_command_line_flag("--unpin_broadside_rotation_amplitude"); //,
+  // CommandLineArgs::specify_command_line_flag("--unpin_broadside_rotation_amplitude");
+  //,
 					     // &Global_Parameters::broadside_rotation_amplitude_pin);
   CommandLineArgs::specify_command_line_flag("--pin_in_plane_amplitude",
 					     &Global_Parameters::in_plane_amplitude_pin);
-CommandLineArgs::specify_command_line_flag("--unpin_in_plane_rotation_amplitude"); // ,
+  // CommandLineArgs::specify_command_line_flag("--unpin_in_plane_rotation_amplitude"); // ,
 					     // &Global_Parameters::in_plane_rotation_amplitude_pin);
     
   // Value of the fake singular amplitude of the broadside mode
@@ -4743,6 +5010,10 @@ CommandLineArgs::specify_command_line_flag("--unpin_in_plane_rotation_amplitude"
   CommandLineArgs::specify_command_line_flag(
     "--amplitude_gradient_regularisation_factor", 
     &Global_Parameters::Amplitude_gradient_regularisation_factor);
+
+  CommandLineArgs::specify_command_line_flag(
+    "--amplitude_gradient_jump_regularisation_factor", 
+    &Global_Parameters::Amplitude_gradient_jump_regularisation_factor);
   
   CommandLineArgs::specify_command_line_flag(
     "--velocity_gradient_regularisation_factor",

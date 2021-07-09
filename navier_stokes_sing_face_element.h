@@ -251,6 +251,27 @@ namespace oomph
       Amplitude_gradient_regularisation_factor = grad_c_reg;
     }
 
+    void set_amplitude_gradient_jump_regularisation_factor(const double& grad_c_jump_reg)
+    {
+      Amplitude_gradient_jump_regularisation_factor = grad_c_jump_reg;
+    }
+
+    void set_left_element_pt(
+      ScalableSingularityForNavierStokesLineElement<NNODE_1D>* const& left_elem_pt)
+    {
+      Left_elem_pt = left_elem_pt;
+
+      const unsigned nnode = left_elem_pt->nnode();
+      
+      Left_elem_external_data_index.resize(nnode, -1);
+      
+      // now add it's nodes as external data and save the index
+      for(unsigned n=0; n<nnode; n++)
+      {
+	Left_elem_external_data_index[n] =
+	  this->add_external_data(left_elem_pt->node_pt(n));
+      }
+    }
     
     void add_unscaled_singular_fct_and_gradient_pt(
       const UnscaledSingSolnFctPt& sing_fct_pt,
@@ -543,7 +564,7 @@ namespace oomph
       const unsigned sing_fct_index = Singular_fct_index_map.at(sing_fct_id);
 
       // shorthand
-      unsigned nnode = this->nnode();
+      const unsigned nnode = this->nnode();
       
       // make space for the shape functions and their derivatives
       Shape psi(nnode);      
@@ -750,8 +771,110 @@ namespace oomph
 
       Shape psi(nnode);
       DShape dpsi_dzeta(nnode, 1);
-	
+      DShape dpsi_dzeta_left(nnode, 1);
+      
       const unsigned n_intpt = this->integral_pt()->nweight();
+
+      // local coordinates of the 0th node in this element, and the
+      // corresponding coordinates of the same node in the left element
+      Vector<double> s_this(1,-1);
+      Vector<double> s_left(1,1);
+      
+      // get the shape function derivatives at the end point
+      dshape_dzeta(s_this, dpsi_dzeta);
+      Left_elem_pt->dshape_dzeta(s_left, dpsi_dzeta_left);
+      
+      for(const std::pair<unsigned,unsigned>& id_index_pair : Singular_fct_index_map)
+      {
+	// get the singular function ID
+	unsigned sing_fct_id = id_index_pair.first;
+
+	// and the corresponding nodal index
+	unsigned sing_index = id_index_pair.second;
+	
+	// get the gradient at the end point
+	double dc_dzeta_this = interpolated_dc_dzeta(s_this, sing_fct_id);
+	double dc_dzeta_left = Left_elem_pt->interpolated_dc_dzeta(s_left, sing_fct_id);
+
+	// compute the jump in the amplitude gradient as computed from
+	// the left element and this element
+	double amplitude_gradient_jump = dc_dzeta_left - dc_dzeta_this;
+
+	for(unsigned l=0; l<nnode; l++)
+	{
+	  // equation number of the sing_index'th amplitude at the
+	  // 0th node in this element
+	  int local_eqn = this->nodal_local_eqn(l, sing_index);
+
+	  // is the amplitude pinned?
+	  if(local_eqn >= 0)
+	  {
+	    residuals[local_eqn] -= Amplitude_gradient_jump_regularisation_factor *
+	      dpsi_dzeta(l,0) * amplitude_gradient_jump; // weight is 1 for a point
+
+	    if(flag)
+	    {
+	      for(unsigned l2=0; l2<nnode; l2++)
+	      {
+		// dC^right_l/dC^right_l2
+		int local_unknown = this->nodal_local_eqn(l2, sing_index);
+
+		if(local_unknown >= 0)
+		{
+		  jacobian(local_eqn, local_unknown) +=
+		    Amplitude_gradient_jump_regularisation_factor *
+		    dpsi_dzeta(l,0) * dpsi_dzeta(l2,0);
+		}
+
+		// dC^right_l/dC^left_l2
+		int ext_unknown = this->external_local_eqn(Left_elem_external_data_index[l2],
+						 sing_index);
+
+		if(ext_unknown >= 0)
+		{
+		  jacobian(local_eqn, ext_unknown) -=
+		    Amplitude_gradient_jump_regularisation_factor *
+		    dpsi_dzeta(l,0) * dpsi_dzeta_left(l2,0);
+		}
+	      }
+	    }
+	  }
+
+	  // and again for the left element
+	  int ext_eqn = this->external_local_eqn(Left_elem_external_data_index[l],
+						 sing_index);
+	  if(ext_eqn >= 0)
+	  {
+	    residuals[ext_eqn] += Amplitude_gradient_jump_regularisation_factor *
+	      dpsi_dzeta_left(l,0) * amplitude_gradient_jump; // weight is 1 for a point;
+	    
+	    if(flag)
+	    {
+	      for(unsigned l2=0; l2<nnode; l2++)
+	      {
+		int local_unknown = this->nodal_local_eqn(l2, sing_index);
+
+		if(local_unknown >= 0)
+		{
+		  jacobian(ext_eqn, local_unknown) -=
+		    Amplitude_gradient_jump_regularisation_factor *
+		    dpsi_dzeta_left(l,0) * dpsi_dzeta(l2,0);
+		}
+
+		int ext_unknown = this->external_local_eqn(Left_elem_external_data_index[l2],
+						 sing_index);
+
+		if(ext_unknown >= 0)
+		{
+		  jacobian(ext_eqn, ext_unknown) +=
+		    Amplitude_gradient_jump_regularisation_factor *
+		    dpsi_dzeta_left(l,0) * dpsi_dzeta_left(l2,0);
+		}
+	      }
+	    }
+	  }
+	}
+      }
       
       //Loop over the integration points
       for(unsigned ipt=0; ipt<n_intpt; ipt++)
@@ -799,7 +922,7 @@ namespace oomph
 
 	      residuals[local_eqn] += Amplitude_gradient_regularisation_factor *
 		interpolated_dc_dzeta[ising] * dpsi_dzeta(j,0) * W;
-	      
+
 	      // Jacobian?
 	      if(flag)
 	      {
@@ -1059,6 +1182,13 @@ namespace oomph
     double Amplitude_regularisation_factor;
     
     double Amplitude_gradient_regularisation_factor;
+
+    double Amplitude_gradient_jump_regularisation_factor;
+    
+    // QUEHACERES
+    ScalableSingularityForNavierStokesLineElement<NNODE_1D>* Left_elem_pt;
+
+    Vector<unsigned> Left_elem_external_data_index;
     
     /// Pointers to the singular functions
     Vector<UnscaledSingSolnFctPt> Unscaled_singular_fct_pt;
@@ -1221,10 +1351,32 @@ namespace oomph
       write_tecplot_zone_footer(outfile, nplot);   
     }
 
-    /* void output(std::ofstream& outfile, const unsigned& nplot = 2) */
-    /* { */
-    /*   output(outfile, nplot); */
-    /* } */
+    void output_functional_at_knots(std::ostream& outfile) const
+    {
+      // Number of knots in this element
+      const unsigned nknot = this->integral_pt()->nweight();
+    
+      // loop over the integration points
+      for(unsigned ipt=0; ipt<nknot; ipt++)
+      {
+	// get the local coordinates of this knot
+	Vector<double> s(Dim_element, 0.0);
+	
+	for(unsigned i=0; i<Dim_element; i++) 
+	  s[i] = this->integral_pt()->knot(ipt, i);
+	
+	// Eulerian position of this integration point
+	Vector<double> x(Dim, 0.0);
+	
+	for(unsigned i=0; i<Dim; i++)
+	  x[i] = this->interpolated_x(s,i);
+	
+	double functional_val = functional_value_at_knot(ipt);
+	double az = atan2(x[1],x[0]);
+
+	outfile << az << " " << functional_val << std::endl;
+      }
+    }
     
     void validate_shit()
     {
@@ -1312,6 +1464,10 @@ namespace oomph
     // compute this element's contribution to the integral of the functional
     // around the edge of the disk
     double contribution_to_functional_integral() const;
+
+    // compute the interpolated value of the functional at a given
+    // local coordinate
+    double functional_value_at_knot(const unsigned& knot) const;
     
   private:
 
@@ -1736,12 +1892,13 @@ namespace oomph
     } // end loop over knots
   }
 
+  //===========================================================================
+  // Compute the value of the functional at a specified integration point
+  //===========================================================================
   template <class FACE_ELEMENT>
     double FunctionalMinimisingLineElement<FACE_ELEMENT>::
-    contribution_to_functional_integral() const
+    functional_value_at_knot(const unsigned& ipt) const
   {
-    // Number of knots in this element
-    const unsigned nknot       = this->integral_pt()->nweight();
     const unsigned npres_bulk  = Normal_bulk_elem_at_knot[0]->npres_nst();
     const unsigned nnode_bulk  = Normal_bulk_elem_at_knot[0]->nnode();
     
@@ -1760,143 +1917,172 @@ namespace oomph
     FACE_ELEMENT* upper_face_elem_pt =
       dynamic_cast<FACE_ELEMENT*>(this->bulk_element_pt()); 
     
+    double functional_at_knot = 0.0;
+
+    // get the local coordinates of this knot
+    Vector<double> s(Dim_element, 0.0);
+
+    // local coordinates in the upper face element we're attached to
+    Vector<double> s_face(Dim_element+1, 0.0);
+      
+    for(unsigned i=0; i<Dim_element; i++) 
+      s[i] = this->integral_pt()->knot(ipt, i);
+
+    this->get_local_coordinate_in_bulk(s, s_face);
+      
+    // get the integral weight
+    double w = this->integral_pt()->weight(ipt);
+
+    // get the Jacobian of the mapping from Eulerian -> local coords
+    double J = this->J_eulerian(s);
+
+    // premultiply the weights and the Jacobian
+    double W = w * J;
+
+    // get the shape functions and derivatives from the bulk elements
+    Normal_bulk_elem_at_knot[ipt]->dshape_eulerian(Normal_bulk_coords_at_knot[ipt],
+						   psi_bulk_norm, dpsidx_norm);
+      
+    Binormal_bulk_elem_at_knot[ipt]->dshape_eulerian(Binormal_bulk_coords_at_knot[ipt],
+						     psi_bulk_binorm, dpsidx_binorm);
+
+    // pressure shape function derivatives (only need normal not binormal)
+    Normal_bulk_elem_at_knot[ipt]->dpshape_eulerian_nst(Normal_bulk_coords_at_knot[ipt],
+							psip_bulk_norm, dpsipdx_norm);
+
+      	
+    // get the upper and lower shape functions from the respective
+    // bulk elements
+    upper_face_elem_pt->pshape_nst(s_face, psip_upper);
+    Lower_bulk_elem_pt->pshape_nst(Lower_bulk_coords_at_knot[ipt], psip_lower);
+      
+    // shorthands for the normal vectors
+    Vector<double> a1 = Normal_vector_at_knot[ipt];
+    Vector<double> a3 = Binormal_vector_at_knot[ipt];
+
+    // pressure jump
+    // ----------------------------------------------
+      
+    // interpolated pressures on the upper and lower sides of the disk at
+    // this integration point
+    double interpolated_p_upper = 0.0;
+    double interpolated_p_lower = 0.0;
+
+    // compute the interpolated pressure. Need to be careful here;
+    // we're getting the upper nodal pressure values from this elements nodes,
+    // and the lower nodal pressure values from the upper->lower node map;
+    // but we also need to convert the node number in this element to the
+    // node number in the bulk element so that we index the shape functions correctly.
+    for(unsigned n : Pressure_nodes_index)
+    {
+      // indices of this node in the upper and lower bulk elements
+      const unsigned n_bulk_upper =
+	upper_face_elem_pt->bulk_node_number(this->bulk_node_number(n));
+	
+      const unsigned n_bulk_lower = Node_number_in_lower_bulk[n];
+	
+      // upper pressure is straight forward since this line element
+      // shares its nodes with the upper face element
+      interpolated_p_upper +=
+	this->nodal_value(n, P_index) * psip_upper[n_bulk_upper];
+
+      // for the lower pressure we need to get the corresponding node from the
+      // map, but the shape functions are the same.
+      interpolated_p_lower +=
+	Upper_to_lower_node_map.at(this->node_pt(n))->value(P_index) *
+	psip_lower[n_bulk_lower];
+    }
+
+    // now compute the pressure jump 
+    double p_jump = interpolated_p_upper - interpolated_p_lower;
+
+    // (1/2)|\Delta p.a1|^2
+    functional_at_knot +=
+      0.5 * Pressure_jump_regularisation_factor * pow(p_jump, 2);
+
+    // pressure gradient
+    // ----------------------------------------------
+    double grad_p_dot_a1 = 0.0;
+	
+    // loop over the normal bulk elements pressure nodes
+    for(unsigned n=0; n<npres_bulk; n++)
+    {
+      for(unsigned i=0; i<Dim; i++)
+      {
+	grad_p_dot_a1  += a1[i] * 
+	  Normal_bulk_elem_at_knot[ipt]->nodal_value(n,P_index) * dpsipdx_norm(n,i);
+      }
+    }
+
+    // (1/2)|(grad p).n|^2
+    functional_at_knot +=
+      0.5 * Pressure_gradient_regularisation_factor * pow(grad_p_dot_a1,2);
+      
+    // Velocity gradient
+    // --------------------------------------
+
+    Vector<double> grad_u_dot_a3(Dim, 0.0);
+    Vector<double> grad_u_T_dot_a3(Dim, 0.0);
+      
+    // loop over the binormal bulk elements velocity nodes
+    for(unsigned n=0; n<nnode_bulk; n++)
+    {
+      for(unsigned i=0; i<Dim; i++)
+      {
+	for(unsigned j=0; j<Dim; j++)
+	{
+	  grad_u_dot_a3[i] += Binormal_bulk_elem_at_knot[ipt]->nodal_value(n,i) *
+	    dpsidx_binorm(n,j) * a3[j];
+	    
+	  grad_u_T_dot_a3[i] += Binormal_bulk_elem_at_knot[ipt]->nodal_value(n,j) *
+	    dpsidx_binorm(n,i) * a3[j];
+	}
+      }
+    }
+
+    // (1/2)|(grad u).n|^2 + (1/2)|grad u)^T.n|^2
+    for(unsigned i=0; i<Dim; i++)
+    {
+      functional_at_knot += 0.5 * Velocity_gradient_regularisation_factor *
+	(pow(grad_u_dot_a3[i],2) /* + pow(grad_u_T_dot_a3[i],2) */ );
+    }
+
+    return functional_at_knot;
+  }
+
+  //===========================================================================
+  /// \short compute the contribution of this element to the integral of the
+  /// functional around the edge of the disk
+  //===========================================================================
+  template <class FACE_ELEMENT>
+    double FunctionalMinimisingLineElement<FACE_ELEMENT>::
+    contribution_to_functional_integral() const
+  {
+    // Number of knots in this element
+    const unsigned nknot = this->integral_pt()->nweight();
+    
     double functional_integral = 0.0;
     
     // loop over the integration points
     for(unsigned ipt=0; ipt<nknot; ipt++)
-    {
-      // get the local coordinates of this knot
-      Vector<double> s(Dim_element, 0.0);
-
-      // local coordinates in the upper face element we're attached to
-      Vector<double> s_face(Dim_element+1, 0.0);
-      
-      for(unsigned i=0; i<Dim_element; i++) 
-	s[i] = this->integral_pt()->knot(ipt, i);
-
-      this->get_local_coordinate_in_bulk(s, s_face);
-      
+    {      
       // get the integral weight
       double w = this->integral_pt()->weight(ipt);
 
-      // get the Jacobian of the mapping from Eulerian -> local coords
-      double J = this->J_eulerian(s);
-
+      // get the Jacobian of the mapping from Eulerian -> local coords     
+      double J = this->J_eulerian_at_knot(ipt);
+      
       // premultiply the weights and the Jacobian
       double W = w * J;
 
-      // get the shape functions and derivatives from the bulk elements
-      Normal_bulk_elem_at_knot[ipt]->dshape_eulerian(Normal_bulk_coords_at_knot[ipt],
-						     psi_bulk_norm, dpsidx_norm);
-      
-      Binormal_bulk_elem_at_knot[ipt]->dshape_eulerian(Binormal_bulk_coords_at_knot[ipt],
-						       psi_bulk_binorm, dpsidx_binorm);
-
-      // pressure shape function derivatives (only need normal not binormal)
-      Normal_bulk_elem_at_knot[ipt]->dpshape_eulerian_nst(Normal_bulk_coords_at_knot[ipt],
-							  psip_bulk_norm, dpsipdx_norm);
-
-      	
-      // get the upper and lower shape functions from the respective
-      // bulk elements
-      upper_face_elem_pt->pshape_nst(s_face, psip_upper);
-      Lower_bulk_elem_pt->pshape_nst(Lower_bulk_coords_at_knot[ipt], psip_lower);
-      
-      // shorthands for the normal vectors
-      Vector<double> a1 = Normal_vector_at_knot[ipt];
-      Vector<double> a3 = Binormal_vector_at_knot[ipt];
-      
-      // pressure jump
-      // ----------------------------------------------
-      
-      // interpolated pressures on the upper and lower sides of the disk at
-      // this integration point
-      double interpolated_p_upper = 0.0;
-      double interpolated_p_lower = 0.0;
-
-      // compute the interpolated pressure. Need to be careful here;
-      // we're getting the upper nodal pressure values from this elements nodes,
-      // and the lower nodal pressure values from the upper->lower node map;
-      // but we also need to convert the node number in this element to the
-      // node number in the bulk element so that we index the shape functions correctly.
-      for(unsigned n : Pressure_nodes_index)
-      {
-	// indices of this node in the upper and lower bulk elements
-	const unsigned n_bulk_upper =
-	  upper_face_elem_pt->bulk_node_number(this->bulk_node_number(n));
-	
-	const unsigned n_bulk_lower = Node_number_in_lower_bulk[n];
-	
-	// upper pressure is straight forward since this line element
-	// shares its nodes with the upper face element
-	interpolated_p_upper +=
-	  this->nodal_value(n, P_index) * psip_upper[n_bulk_upper];
-
-	// for the lower pressure we need to get the corresponding node from the
-	// map, but the shape functions are the same.
-	interpolated_p_lower +=
-	  Upper_to_lower_node_map.at(this->node_pt(n))->value(P_index) *
-	  psip_lower[n_bulk_lower];
-      }
-
-      // now compute the pressure jump 
-      double p_jump = interpolated_p_upper - interpolated_p_lower;
-
-      // (1/2)|\Delta p.a1|^2
-      functional_integral +=
-	0.5 * Pressure_jump_regularisation_factor * pow(p_jump, 2) * W;
-
-      // pressure gradient
-      // ----------------------------------------------
-      double grad_p_dot_a1 = 0.0;
-	
-      // loop over the normal bulk elements pressure nodes
-      for(unsigned n=0; n<npres_bulk; n++)
-      {
-	for(unsigned i=0; i<Dim; i++)
-	{
-	  grad_p_dot_a1  += a1[i] * 
-	    Normal_bulk_elem_at_knot[ipt]->nodal_value(n,P_index) * dpsipdx_norm(n,i);
-	}
-      }
-
-      // (1/2)|(grad p).n|^2
-      functional_integral +=
-	0.5 * Pressure_gradient_regularisation_factor * pow(grad_p_dot_a1,2) * W;
-      
-      // Velocity gradient
-      // --------------------------------------
-
-      Vector<double> grad_u_dot_a3(Dim, 0.0);
-      Vector<double> grad_u_T_dot_a3(Dim, 0.0);
-      
-      // loop over the binormal bulk elements velocity nodes
-      for(unsigned n=0; n<nnode_bulk; n++)
-      {
-	for(unsigned i=0; i<Dim; i++)
-	{
-	  for(unsigned j=0; j<Dim; j++)
-	  {
-	    grad_u_dot_a3[i] += Binormal_bulk_elem_at_knot[ipt]->nodal_value(n,i) *
-	      dpsidx_binorm(n,j) * a3[j];
-	    
-	    grad_u_T_dot_a3[i] += Binormal_bulk_elem_at_knot[ipt]->nodal_value(n,j) *
-	      dpsidx_binorm(n,i) * a3[j];
-	  }
-	}
-      }
-
-      // (1/2)|(grad u).n|^2 + (1/2)|grad u)^T.n|^2
-      for(unsigned i=0; i<Dim; i++)
-      {
-	functional_integral += 0.5 * Velocity_gradient_regularisation_factor *
-	  (pow(grad_u_dot_a3[i],2) + pow(grad_u_T_dot_a3[i],2) ) * W;
-      }
-    } // end loop over knots
+      functional_integral += functional_value_at_knot(ipt) * W;
+    }
 
     return functional_integral;
   }
 
+  
+  
   //===========================================================================
   /// \short Compute the element's residual vector and the Jacobian matrix.
   /// Here we add the contributions from the functional, i.e.
@@ -2266,71 +2452,166 @@ namespace oomph
       // loop over all the nodes in the (binormal) bulk element 
       for(unsigned l=0; l<nnode_bulk; l++)
       {
+	unsigned ext_index = External_eqn_index_at_knot_bulk_binormal[ipt].at(l);
+	
 	for(unsigned i=0; i<Dim; i++)
 	{
-	  unsigned ext_index = External_eqn_index_at_knot_bulk_binormal[ipt].at(l);
-	  
 	  // get the local velocity equation number for the external bulk element
 	  int ext_eqn_u = this->external_local_eqn(ext_index, i);
 
+	  // QUEHACERES debug
+	  volatile int global_eqn = this->eqn_number(ext_eqn_u);
+	    
 	  // is this velocity dof pinned?
 	  if(ext_eqn_u >= 0)
 	  {
+	    // extra loop for dot product
 	    for(unsigned j=0; j<Dim; j++)
 	    {
 	      // QUEHACERES changing to |(grad u.n + (grad u)^T.n)|^2
 	      /* residuals[ext_eqn_u] += Velocity_gradient_regularisation_factor * */
 	      /* 	dpsidx_binorm(l, j) * Binormal_vector_at_knot[ipt][i] * */
 	      /* 	Binormal_vector_at_knot[ipt][j] * grad_u_dot_a3_dot_a3 * W; */
-      
-	      residuals[ext_eqn_u] += Velocity_gradient_regularisation_factor *
-	      	dpsidx_binorm(l, j) * a3[j] * (grad_u_dot_a3[i] + grad_u_T_dot_a3[i]) * W;
+
+	      /* // QUEHACERES apparently asym version (added 0.5 factor for sym) */
+	      /* residuals[ext_eqn_u] += 0.5 * Velocity_gradient_regularisation_factor * */
+	      /* 	dpsidx_binorm(l, j) * a3[j] * (grad_u_dot_a3[i] + grad_u_T_dot_a3[i]) * W; */
+
+	      // QUEHACERES grad u only version
+	       residuals[ext_eqn_u] += Velocity_gradient_regularisation_factor *
+		 dpsidx_binorm(l, j) * a3[j] * grad_u_dot_a3[i] * W;
+
+	       
+	      /* // QUEHACERES extra contribution for sym(?) version ~~~~~~~~~~~~~~~~~~~~~~~~~ */
+
+	      /* double U_il = Binormal_bulk_elem_at_knot[ipt]->nodal_value(l,i); */
+	      /* double U_jl = Binormal_bulk_elem_at_knot[ipt]->nodal_value(l,j); */
+	      
+	      /* for(unsigned k=0; k<nnode_bulk; k++) */
+	      /* { */
+	      /* 	for(unsigned j2=0; j2<Dim; j2++) */
+	      /* 	{ */
+	      /* 	  // ||(grad u).n||^2 */
+	      /* 	  residuals[ext_eqn_u] += 0.5 * Velocity_gradient_regularisation_factor * */
+	      /* 	    U_il * dpsidx_binorm(k,j)*a3[j] * dpsidx_binorm(k,j2)*a3[j2] * W; */
+		  
+	      /* 	  // ||(grad u)^T.n||^2 */
+	      /* 	  residuals[ext_eqn_u] += 0.5 * Velocity_gradient_regularisation_factor * */
+	      /* 	    U_jl * dpsidx_binorm(k,i)*a3[j] * dpsidx_binorm(k,j2)*a3[j2] * W; */
+	      /* 	} */
+	      /* } */
+
+	      /* // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 	    }
 
 	    if(flag)
 	    {
 	      // loop over the bulk velocity unknowns again
-	      for(unsigned l2=0; l2<nnode_bulk; l2++)
+	      for(unsigned l2=0; l2<nnode_bulk; l2++) 
 	      {		
 		unsigned ext_index2 = External_eqn_index_at_knot_bulk_binormal[ipt].at(l2);
 
-		for(unsigned i2=0; i2<Dim; i2++)
-		{
-		  int ext_unknown_u = this->external_local_eqn(ext_index2, i2);
+		// QUEHACERES only depends on i now @@@
+		int ext_unknown_u = this->external_local_eqn(ext_index2, i);
 
-		  // external velocity unknown pinned?
-		  if(ext_unknown_u >= 0)
-		  {		    
-		    for(unsigned j=0; j<Dim; j++)
+		if(ext_unknown_u >= 0)
+		{
+		  for(unsigned j=0; j<Dim; j++)
+		  {
+		    for(unsigned j2=0; j2<Dim; j2++)
 		    {
 		      jacobian(ext_eqn_u, ext_unknown_u) +=
-		      	Velocity_gradient_regularisation_factor *
-		      	dpsidx_binorm(l,j) * dpsidx_binorm(l2, i) *
-		      	a3[j] * a3[i2] * W;
-
-		      if(i == i2)
-		      {
-		      	for(unsigned j2=0; j2<Dim; j2++)
-		      	{
-		      	  jacobian(ext_eqn_u, ext_unknown_u) +=
-		      	    Velocity_gradient_regularisation_factor *
-		      	    dpsidx_binorm(l,j) * dpsidx_binorm(l2, j2) *
-		      	    a3[j] * a3[j2] * W;
-		      	}
-		      }
-
-		      // QUEHACERES changing to |(grad u.n|^2 + |(grad u)^T.n)|^2
-		      /* for(unsigned j2=0; j2<Dim; j2++) */
-		      /* { */
-		      /* 	jacobian(ext_eqn_u, ext_unknown_u) += */
-		      /* 	  Velocity_gradient_regularisation_factor * */
-		      /* 	  dpsidx_binorm(l,j) * Binormal_vector_at_knot[ipt][i] * */
-		      /* 	  Binormal_vector_at_knot[ipt][j] * dpsidx_binorm(l2,j2) * */
-		      /* 	  Binormal_vector_at_knot[ipt][i2] * Binormal_vector_at_knot[ipt][j2] * W; */
-		      /* } */
+			Velocity_gradient_regularisation_factor *
+			dpsidx_binorm(l,j)*a3[j] * dpsidx_binorm(l2,j2)*a3[j2] * W;
 		    }
 		  }
 		}
+		/* for(unsigned i2=0; i2<Dim; i2++) */
+		/* { */
+		/*   int ext_unknown_u = this->external_local_eqn(ext_index2, i2); */
+
+		/*   // QUEHACERES debug */
+		/*   volatile int global_unknown = this->eqn_number(ext_unknown_u);	   */
+		/*   volatile double drUil_dUi2l2 = 0.0; */
+		    
+		/*   // external velocity unknown pinned? */
+		/*   if(ext_unknown_u >= 0) */
+		/*   { */
+		/*     // extra loop for dot product */
+		/*     for(unsigned j=0; j<Dim; j++) */
+
+		/*     { */
+		/*       // ||(grad u)^T.n||^2 */
+		/*       // QUEHACERES apparently asym version (added 0.5 factor for sym) */
+		/*       volatile double jac = 0.5 *  */
+		/*       	Velocity_gradient_regularisation_factor * */
+		/*       	dpsidx_binorm(l,j) * dpsidx_binorm(l2, i) * */
+		/*       	a3[j] * a3[i2] * W; */
+		      
+		/*       jacobian(ext_eqn_u, ext_unknown_u) += jac; */
+		/*       drUil_dUi2l2 += jac; */
+		      
+		/*       // QUEHACERES extra contribution for sym(?) version ~~~~~~~~~~~~~~~~~~~ */
+		/*       // ||(grad u)^T.n||^2 */
+		/*       if(l == l2) */
+		/*       {			 */
+		/* 	for(unsigned k=0; k<nnode_bulk; k++) */
+		/* 	{ */
+		/* 	  jac = 0.5* */
+		/* 	    Velocity_gradient_regularisation_factor * */
+		/* 	    dpsidx_binorm(k,i)*a3[i2] * dpsidx_binorm(k,j)*a3[j] * W; */
+
+		/* 	  jacobian(ext_eqn_u, ext_unknown_u) += jac; */
+		/* 	  drUil_dUi2l2 += jac; */
+		/* 	} */
+		/*       } */
+		/*       // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+		      
+		/*       if(i == i2) */
+		/*       { */
+		/*       	for(unsigned j2=0; j2<Dim; j2++) */
+		/*       	{ */
+		/* 	  // QUEHACERES apparently asym version (added 0.5 factor for sym) */
+		/*       	  jac = 0.5 *  */
+		/*       	    Velocity_gradient_regularisation_factor * */
+		/*       	    dpsidx_binorm(l,j) * dpsidx_binorm(l2, j2) * */
+		/*       	    a3[j] * a3[j2] * W; */
+
+		/* 	  jacobian(ext_eqn_u, ext_unknown_u) += jac; */
+		/* 	  drUil_dUi2l2 += jac; */
+			  
+		/* 	  // QUEHACERES extra contribution for sym(?) version ~~~~~~~~~~~~~~~~~~~ */
+		/* 	  if(l == l2) */
+		/* 	  { */
+		/* 	    for(unsigned k=0; k<nnode_bulk; k++) */
+		/* 	    { */
+		/* 	      // ||(grad u).n||^2 */
+		/* 	      jac = 0.5 *  */
+		/* 		Velocity_gradient_regularisation_factor * */
+		/* 		dpsidx_binorm(k,j)*a3[j] * dpsidx_binorm(k,j2)*a3[j2] * W; */
+
+		/* 	      jacobian(ext_eqn_u, ext_unknown_u) += jac; */
+		/* 	      drUil_dUi2l2 += jac; */
+		/* 	    } */
+		/* 	  } */
+		/* 	  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+		/*       	} */
+		/*       } */
+
+		/*       // QUEHACERES changing to |(grad u.n|^2 + |(grad u)^T.n)|^2 */
+		/*       /\* for(unsigned j2=0; j2<Dim; j2++) *\/ */
+		/*       /\* { *\/ */
+		/*       /\* 	jacobian(ext_eqn_u, ext_unknown_u) += *\/ */
+		/*       /\* 	  Velocity_gradient_regularisation_factor * *\/ */
+		/*       /\* 	  dpsidx_binorm(l,j) * Binormal_vector_at_knot[ipt][i] * *\/ */
+		/*       /\* 	  Binormal_vector_at_knot[ipt][j] * dpsidx_binorm(l2,j2) * *\/ */
+		/*       /\* 	  Binormal_vector_at_knot[ipt][i2] * Binormal_vector_at_knot[ipt][j2] * W; *\/ */
+		/*       /\* } *\/ */
+		/*     } */
+
+		/*     unsigned breakpoint = 1; */
+		/*   } */
+		/* } */
 	      } 
 	    } // end Jacobian check
 	  } // end pinned velocity dof check

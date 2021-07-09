@@ -8,11 +8,17 @@ namespace CoordinateConversions
 {
   const double PI = MathematicalConstants::Pi;
 
-  // QUEHACERES change this to something more generic at some point
-  // pointer to a geometric object which provides things like
-  // boundary triad vectors and their derivatives
-  CylindricallyWarpedCircularDiskWithAnnularInternalBoundary* disk_geom_obj_pt = nullptr;
-    
+  // ### QUEHACERES delete
+  /* // QUEHACERES change this to something more generic at some point */
+  /* // pointer to a geometric object which provides things like */
+  /* // boundary triad vectors and their derivatives */
+  /* // ### QUEHACERES delete CylindricallyWarpedCircularDiskWithAnnularInternalBoundary */
+  /* typedef CylindricallyDeformedDisk DEFORMED_DISK; */
+
+  // QUEHACERES delete
+  /* DEFORMED_DISK* */
+  DeformedCircularDiskWithAnnularInternalBoundary* disk_geom_obj_pt = nullptr;
+  
   // ==========================================================================
   // Function which returns a cartesian unit vector in the i direction
   // ==========================================================================
@@ -179,14 +185,18 @@ namespace CoordinateConversions
 
     // keep track of the last good values we had
     Vector<double> previous_converged_unknowns = unknowns;
-      
-    // back up the actual disk object
-    CylindricallyWarpedCircularDiskWithAnnularInternalBoundary* warped_disk_backup_pt =
-      disk_geom_obj_pt;
+
+    // ### QUEHACERES delete
+    /* // back up the actual disk object */
+    /* DEFORMED_DISK* warped_disk_backup_pt = */
+    /*   disk_geom_obj_pt; */
   
-    // disk parameters we're keeping fixed
-    const double target_r_curvature = warped_disk_backup_pt->radius_of_curvature();
-    const double r_torus = warped_disk_backup_pt->h_annulus();
+    // disk parameters we're keeping fixedx
+    const double target_r_curvature = disk_geom_obj_pt->deformation_parameter();
+
+    // ### QUEHACERES delete
+    // warped_disk_backup_pt->radius_of_curvature();
+    /* const double r_torus = warped_disk_backup_pt->h_annulus(); */
     
     // number of sequential attempts without convergence before
     // we give up and decide something more fundamental has gone wrong
@@ -201,14 +211,19 @@ namespace CoordinateConversions
       
     while (true)
     {
-      // make a temporary copy to work with
-      auto temp_disk_pt = std::make_unique<
-	CylindricallyWarpedCircularDiskWithAnnularInternalBoundary>
-	(r_torus, current_r_curvature, rotation_matrix);
+      // ### QUEHACERES delete
+      /* // make a temporary copy to work with */
+      /* auto temp_disk_pt = std::make_unique<DEFORMED_DISK>(r_torus, */
+      /* 							  current_r_curvature, */
+      /* 							  rotation_matrix); */
 
-      // slightly hacky, but grab the and assign the raw pointer, since the
-      // black-box residual fct uses the raw disk_geom_obj_pt pointer
-      disk_geom_obj_pt = temp_disk_pt.get();
+      // update the deformation parameter
+      disk_geom_obj_pt->set_deformation_parameter(current_r_curvature);
+
+      // ### QUEHACERES delete
+      /* // slightly hacky, but grab the and assign the raw pointer, since the */
+      /* // black-box residual fct uses the raw disk_geom_obj_pt pointer */
+      /* disk_geom_obj_pt = temp_disk_pt.get(); */
 	
       // hit it with Newton's method with a finite-diff'd Jacobian
       try
@@ -266,10 +281,14 @@ namespace CoordinateConversions
 
     // did we get a solution with xi1 < 0?
     if(unknowns[0] < 0)
-    {  
-      // reset the raw disk pointer
-      disk_geom_obj_pt = warped_disk_backup_pt;
-	
+    {
+      // ### QUEHACERES delete
+      /* // reset the raw disk pointer */
+      /* disk_geom_obj_pt = warped_disk_backup_pt; */
+
+      // reset the deformation parameter
+      disk_geom_obj_pt->set_deformation_parameter(target_r_curvature);
+      
       std::ostringstream error_message;
       error_message << "Lagrangian coordinate solve returned a negative radial coordinate\n";
 
@@ -283,8 +302,12 @@ namespace CoordinateConversions
     lagr_coords.xi2 = map_angle_to_range_0_to_2pi(unknowns[1]);
     lagr_coords.xi3 = unknowns[2];
 
-    // reset the raw disk pointer
-    disk_geom_obj_pt = warped_disk_backup_pt;
+    // ### QUEHACERES delete
+    /* // reset the raw disk pointer */
+    /* disk_geom_obj_pt = warped_disk_backup_pt; */
+
+    // reset the deformation parameter
+    disk_geom_obj_pt->set_deformation_parameter(target_r_curvature);
   }
   
   // ==========================================================================
@@ -294,9 +317,7 @@ namespace CoordinateConversions
   DenseMatrix<double> dx_dxi(const LagrangianCoordinates& lagr_coords)
   {
     // basis vectors
-    Vector<double> a1(3, 0.0),
-      a2 = a1,
-      a3 = a1;
+    Vector<double> a1(3, 0.0), a2 = a1, a3 = a1;
 
     // derivatives of basis vectors w.r.t. curvilinear coords
     DenseMatrix<double> da1_dxi(3, 2, 0.0),

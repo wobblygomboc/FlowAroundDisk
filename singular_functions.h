@@ -21,8 +21,9 @@ namespace SingularFunctions
 
   // store the warped disk object so that we can use it to get
   // surface normals
-  CylindricallyWarpedCircularDiskWithAnnularInternalBoundary*
-  warped_disk_with_boundary_pt = nullptr;
+  // ### QUEHACERES delete CylindricallyWarpedCircularDiskWithAnnularInternalBoundary
+  DeformedCircularDiskWithAnnularInternalBoundary*  
+    warped_disk_with_boundary_pt = nullptr;
   
   // typedefs
   // --------------------------------------------------------------------------
@@ -37,73 +38,74 @@ namespace SingularFunctions
 
   // --------------------------------------------------------------------------
 
-  // ==========================================================================
-  // generic function to compute velocity gradient via finite difference
-  // ==========================================================================
-  void generic_dudx_finite_diff(const LagrangianCoordinates& lagr_coords,
-				const SingularFctPt& sing_fct_pt,
-				DenseMatrix<double>& du_dx)
-  {
-    // coordinate increment for finite-difference gradient
-    const double fd_dx = 1e-8;
+  // ### QUEHACERES delete
+  /* // ========================================================================== */
+  /* // generic function to compute velocity gradient via finite difference */
+  /* // ========================================================================== */
+  /* void generic_dudx_finite_diff(const LagrangianCoordinates& lagr_coords, */
+  /* 				const SingularFctPt& sing_fct_pt, */
+  /* 				DenseMatrix<double>& du_dx) */
+  /* { */
+  /*   // coordinate increment for finite-difference gradient */
+  /*   const double fd_dx = 1e-8; */
     
-    // make sure we've got enough space
-    du_dx.resize(3,3, 0.0);
+  /*   // make sure we've got enough space */
+  /*   du_dx.resize(3,3, 0.0); */
     
-    // solution at the current point
-    Vector<double> u0 = (*sing_fct_pt)(lagr_coords);
+  /*   // solution at the current point */
+  /*   Vector<double> u0 = (*sing_fct_pt)(lagr_coords); */
 
-    // get the Cartesian coords of this point
-    Vector<double> x(3, 0.0);
-    CoordinateConversions::lagrangian_to_eulerian_coordinates(lagr_coords, x);
+  /*   // get the Cartesian coords of this point */
+  /*   Vector<double> x(3, 0.0); */
+  /*   CoordinateConversions::lagrangian_to_eulerian_coordinates(lagr_coords, x); */
 
-    /* // compute dzeta/dx at this Lagrangian point */
-    /* Vector<double> dzeta_dx = compute_dzeta_dx(edge_coords); */
+  /*   /\* // compute dzeta/dx at this Lagrangian point *\/ */
+  /*   /\* Vector<double> dzeta_dx = compute_dzeta_dx(edge_coords); *\/ */
 
-    // get the sign of the normal coordinate; +ve => upper disk, -ve => lower disk
-    int sign_of_xi3 = lagr_coords.sign_of_xi3();
+  /*   // get the sign of the normal coordinate; +ve => upper disk, -ve => lower disk */
+  /*   int sign_of_xi3 = lagr_coords.sign_of_xi3(); */
      
-    // now compute the solution at a small increment in each Cartesian direction
-    for(unsigned j=0; j<3; j++)
-    {
-      // coordinate vectors with increments applied to their components
-      Vector<double> x_plus_dx = x;
+  /*   // now compute the solution at a small increment in each Cartesian direction */
+  /*   for(unsigned j=0; j<3; j++) */
+  /*   { */
+  /*     // coordinate vectors with increments applied to their components */
+  /*     Vector<double> x_plus_dx = x; */
 
-      // add the increments in each direction
-      x_plus_dx[j] += fd_dx;
+  /*     // add the increments in each direction */
+  /*     x_plus_dx[j] += fd_dx; */
 
-      // convert the incremented position into Lagrangian coords
-      LagrangianCoordinates lagr_coords_plus_dx;      
-      CoordinateConversions::eulerian_to_lagrangian_coordinates(
-	x_plus_dx, lagr_coords_plus_dx);
+  /*     // convert the incremented position into Lagrangian coords */
+  /*     LagrangianCoordinates lagr_coords_plus_dx;       */
+  /*     CoordinateConversions::eulerian_to_lagrangian_coordinates( */
+  /* 	x_plus_dx, lagr_coords_plus_dx); */
 
-      // get the sign of phi after the dx shift
-      int sign_of_xi3_at_dx = lagr_coords_plus_dx.sign_of_xi3();
+  /*     // get the sign of phi after the dx shift */
+  /*     int sign_of_xi3_at_dx = lagr_coords_plus_dx.sign_of_xi3(); */
 
-      // direction of the increment w.r.t. the +ve coordinate axis
-      int direction = 1;
+  /*     // direction of the increment w.r.t. the +ve coordinate axis */
+  /*     int direction = 1; */
 
-      // did the dx increment move the point to the other side of the disk?
-      if (sign_of_xi3 != sign_of_xi3_at_dx)
-      {
-	// if it did, flip the direction sign
-	direction = -1;
+  /*     // did the dx increment move the point to the other side of the disk? */
+  /*     if (sign_of_xi3 != sign_of_xi3_at_dx) */
+  /*     { */
+  /* 	// if it did, flip the direction sign */
+  /* 	direction = -1; */
 
-	// take the FD step in the opposite direction instead
-	x_plus_dx[j] -= 2 * fd_dx;
+  /* 	// take the FD step in the opposite direction instead */
+  /* 	x_plus_dx[j] -= 2 * fd_dx; */
 
-	CoordinateConversions::eulerian_to_lagrangian_coordinates(
-	x_plus_dx, lagr_coords_plus_dx);
-      }
+  /* 	CoordinateConversions::eulerian_to_lagrangian_coordinates( */
+  /* 	x_plus_dx, lagr_coords_plus_dx); */
+  /*     } */
       
-      // get the solution at the incremented position
-      Vector<double> u_plus_dx = (*sing_fct_pt)(lagr_coords_plus_dx);
+  /*     // get the solution at the incremented position */
+  /*     Vector<double> u_plus_dx = (*sing_fct_pt)(lagr_coords_plus_dx); */
 	
-      // now do the finite diff to get the velocity gradients
-      for(unsigned i=0; i<3; i++)
-    	du_dx(i,j) = double(direction) * (u_plus_dx[i] - u0[i]) / fd_dx;
-    }
-  }
+  /*     // now do the finite diff to get the velocity gradients */
+  /*     for(unsigned i=0; i<3; i++) */
+  /*   	du_dx(i,j) = double(direction) * (u_plus_dx[i] - u0[i]) / fd_dx; */
+  /*   } */
+  /* } */
   
   // ==========================================================================
   // ==========================================================================
@@ -1428,87 +1430,88 @@ namespace SingularFunctions
     
     return du_dx_sing;
   }
+
+  // ### QUEHACERES delete
+  /* // @@@@@@@@ */
+  /* // FD versions - keep around for the time being */
   
-  // @@@@@@@@
-  // FD versions - keep around for the time being
-  
-  DenseMatrix<double> __gradient_of_singular_fct_exact_broadside_translation(
-    const LagrangianCoordinates& lagr_coords)
-  {
-    DenseMatrix<double> du_dx(3, 3, 0.0);
+  /* DenseMatrix<double> __gradient_of_singular_fct_exact_broadside_translation( */
+  /*   const LagrangianCoordinates& lagr_coords) */
+  /* { */
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
     
-    // compute the velocity gradient via finite difference
-    generic_dudx_finite_diff(lagr_coords,
-  			     &singular_fct_exact_broadside_translation,
-  			     du_dx);
+  /*   // compute the velocity gradient via finite difference */
+  /*   generic_dudx_finite_diff(lagr_coords, */
+  /* 			     &singular_fct_exact_broadside_translation, */
+  /* 			     du_dx); */
 
-    return du_dx;
-  }
+  /*   return du_dx; */
+  /* } */
 
-  DenseMatrix<double> __gradient_of_singular_fct_exact_broadside_rotation(
-    const LagrangianCoordinates& lagr_coords)
-  {
-    DenseMatrix<double> du_dx(3, 3, 0.0);
+  /* DenseMatrix<double> __gradient_of_singular_fct_exact_broadside_rotation( */
+  /*   const LagrangianCoordinates& lagr_coords) */
+  /* { */
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
     
-    // compute the velocity gradient via finite difference
-    generic_dudx_finite_diff(lagr_coords,
-  			     &singular_fct_exact_broadside_rotation,
-  			     du_dx);
+  /*   // compute the velocity gradient via finite difference */
+  /*   generic_dudx_finite_diff(lagr_coords, */
+  /* 			     &singular_fct_exact_broadside_rotation, */
+  /* 			     du_dx); */
 
-    return du_dx;
-  }
+  /*   return du_dx; */
+  /* } */
 
-  DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_translation(
-    const LagrangianCoordinates& lagr_coords)
-  {
-    DenseMatrix<double> du_dx(3, 3, 0.0);
+  /* DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_translation( */
+  /*   const LagrangianCoordinates& lagr_coords) */
+  /* { */
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
     
-    // compute the velocity gradient via finite difference
-    generic_dudx_finite_diff(lagr_coords,
-  			     &singular_fct_exact_in_plane_translation,
-  			     du_dx);
+  /*   // compute the velocity gradient via finite difference */
+  /*   generic_dudx_finite_diff(lagr_coords, */
+  /* 			     &singular_fct_exact_in_plane_translation, */
+  /* 			     du_dx); */
 
-    return du_dx;
-  }
+  /*   return du_dx; */
+  /* } */
 
-  DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_rotation(
-    const LagrangianCoordinates& lagr_coords)
-  {
-    DenseMatrix<double> du_dx(3, 3, 0.0);
+  /* DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_rotation( */
+  /*   const LagrangianCoordinates& lagr_coords) */
+  /* { */
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
     
-    // compute the velocity gradient via finite difference
-    generic_dudx_finite_diff(lagr_coords,
-  			     &singular_fct_exact_in_plane_rotation,
-  			     du_dx);
+  /*   // compute the velocity gradient via finite difference */
+  /*   generic_dudx_finite_diff(lagr_coords, */
+  /* 			     &singular_fct_exact_in_plane_rotation, */
+  /* 			     du_dx); */
 
-    return du_dx;
-  }
+  /*   return du_dx; */
+  /* } */
 
-  DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_translation_az(
-    const LagrangianCoordinates& lagr_coords)
-  {
-    DenseMatrix<double> du_dx(3, 3, 0.0);
+  /* DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_translation_az( */
+  /*   const LagrangianCoordinates& lagr_coords) */
+  /* { */
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
     
-    // compute the velocity gradient via finite difference
-    generic_dudx_finite_diff(lagr_coords,
-  			     &singular_fct_exact_in_plane_translation_az,
-  			     du_dx);
+  /*   // compute the velocity gradient via finite difference */
+  /*   generic_dudx_finite_diff(lagr_coords, */
+  /* 			     &singular_fct_exact_in_plane_translation_az, */
+  /* 			     du_dx); */
 
-    return du_dx;
-  }
+  /*   return du_dx; */
+  /* } */
     
-  DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_translation_no_az(
-    const LagrangianCoordinates& lagr_coords)
-  {
-    DenseMatrix<double> du_dx(3, 3, 0.0);
+  /* DenseMatrix<double> __gradient_of_singular_fct_exact_in_plane_translation_no_az( */
+  /*   const LagrangianCoordinates& lagr_coords) */
+  /* { */
+  /*   DenseMatrix<double> du_dx(3, 3, 0.0); */
     
-    // compute the velocity gradient via finite difference
-    generic_dudx_finite_diff(lagr_coords,
-  			     &singular_fct_exact_in_plane_translation_no_az,
-  			     du_dx);
+  /*   // compute the velocity gradient via finite difference */
+  /*   generic_dudx_finite_diff(lagr_coords, */
+  /* 			     &singular_fct_exact_in_plane_translation_no_az, */
+  /* 			     du_dx); */
 
-    return du_dx;
-  }
+  /*   return du_dx; */
+  /* } */
   
   
 }

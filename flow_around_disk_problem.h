@@ -104,6 +104,10 @@ namespace Global_Parameters
   // Default is ~inf, i.e. flat disk
   double Radius_of_curvature = 1e5;
 
+  // parameter for an axisymmetrically deformed disk with a
+  // height profile w = epsilon * r^2
+  double Epsilon = 0.0;
+  
   // amount of regularisation of each quantity to add to the functional which we're
   // minimising in the torus region,
   // \Pi = (1/2)|u|^2 + (1/2)|p|^2 + (1/2)|dp|^2 + (1/2)|t|^2
@@ -114,6 +118,7 @@ namespace Global_Parameters
   double Velocity_regularisation_factor           = 0.0;
   double Amplitude_regularisation_factor          = 0.0;
   double Amplitude_gradient_regularisation_factor = 0.0;
+  double Amplitude_gradient_jump_regularisation_factor = 0.0;
   
   // Convergence tolerance for the outer FSI Newton solve
   double FSI_convergence_tol = 1e-6;
@@ -177,7 +182,7 @@ namespace Global_Parameters
   double Imposed_singular_amplitude_broadside = 0;
   double Imposed_singular_amplitude_in_plane  = 0;
   
-  // split corner elements which have all their nodes pinned on the outer boundary
+  // split corner elements which have all their nodes pinned on thxe outer boundary
   bool Split_corner_elements = true; 
 
   // do the disk-on-disk plots (expensive so default off)
@@ -185,8 +190,9 @@ namespace Global_Parameters
   
   // store the warped disk object so that we can use it to get
   // surface normals
-  CylindricallyWarpedCircularDiskWithAnnularInternalBoundary*
-  Warped_disk_with_boundary_pt = nullptr;
+
+  // ### QUEHACERES delete CylindricallyWarpedCircularDiskWithAnnularInternalBoundary*
+  DeformedCircularDiskWithAnnularInternalBoundary* Warped_disk_with_boundary_pt = nullptr;
 
   MeshAsGeomObject* mesh_as_geom_object_pt = nullptr;
 
@@ -627,7 +633,9 @@ private:
   void create_singular_drag_integration_elements(const double& r_torus,
 						 const unsigned& nel_xi1,
 						 const unsigned& nel_xi2);
-      
+
+  Vector<SingularLineElement*> check_singular_line_elements_have_associated_bulk_knots() const;
+  
   /// Setup disk on disk plots
   void setup_disk_on_disk_plots();
 
@@ -679,7 +687,8 @@ private:
   /* Mesh* Singular_drag_integration_mesh_lower_pt; */
 
   // pointer to the GeomObject which characterises the disk
-  CylindricallyWarpedCircularDiskWithAnnularInternalBoundary* Warped_disk_with_boundary_pt;
+  // ### QUEHACERES delete CylindricallyWarpedCircularDiskWithAnnularInternalBoundary
+  DeformedCircularDiskWithAnnularInternalBoundary* Warped_disk_with_boundary_pt;
   
   /// \short Enumeration for IDs of FaceElements (used to figure out
   /// who's added what additional nodal data...)

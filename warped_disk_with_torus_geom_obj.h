@@ -70,34 +70,24 @@ namespace oomph
     double R_curvature;
     
   };
-  
-  //=========================================================================
-  /// \short Warped disk in 3d: zeta[0]=x; zeta[1]=y (so it doesn't have 
-  /// coordinate singularities), with specification of two boundaries (b=0,1)
-  /// that turn the whole thing into a circular disk. 
-  //=========================================================================
-  class CylindricallyWarpedCircularDisk : public DiskLikeGeomObjectWithBoundaries
-  {
 
+
+  ////=========================================================================
+  /// \short Abstract base class for a warped disk in 3d, disk with boundaries -
+  /// provides the interface for computing quantities such as dx/dxi in
+  /// a generalised way. zeta[0]=x; zeta[1]=y (so it doesn't have 
+  /// coordinate singularities), with specification of two boundaries (b=0,1)
+  /// that turn the whole thing into a circular disk.
+  ////=========================================================================
+  class DeformedCircularDisk :
+    public virtual DiskLikeGeomObjectWithBoundaries
+  {
   public:
 
-    /// \short Constructor. Pass radius of curvature and a rotation matrix
-    /// which will be applied to the position, basis vectors etc.
-  CylindricallyWarpedCircularDisk(const double& radius_of_curvature,
-				  const DenseMatrix<double>& rotation_matrix) :
-    R(radius_of_curvature), Rotation_matrix(rotation_matrix)
+    DeformedCircularDisk()
     {
-      if( ! check_transformation_matrix_is_pure_rotation())
-      {
-	throw OomphLibError("Transformation matrix supplied to "
-			    "CylindricallyWarpedCircularDisk does not "
-			    "correspond to a pure rotation.",
-			    OOMPH_CURRENT_FUNCTION,
-			    OOMPH_EXCEPTION_LOCATION);
-      }
-      
       // How many boundaries do we have?
-      unsigned nb = 2;
+      const unsigned nb = 2;
       Boundary_parametrising_geom_object_pt.resize(nb);
       Zeta_boundary_start.resize(nb,0.0);
       Zeta_boundary_end.resize(nb,0.0);
@@ -113,364 +103,46 @@ namespace oomph
 	/* new XYProjectionOfCylindricallyWarpedCircle(1.0, radius_of_curvature); */
       Zeta_boundary_start[1] = MathematicalConstants::Pi;
       Zeta_boundary_end[1] = 2.0*MathematicalConstants::Pi;
-
+      
     }
+    
+    /// \short Eulerian position Vector at Lagrangian coordinates xi 
+    virtual void position(const LagrangianCoordinates& xi,
+			  Vector<double>& r) const = 0;
 
-    // 1 arg version to handle the default of a zero rotation matrix
-  CylindricallyWarpedCircularDisk(const double& radius_of_curvature) :
-    CylindricallyWarpedCircularDisk(radius_of_curvature, identity_matrix() ) { }
-
-    /// Empty default constructor.
-    CylindricallyWarpedCircularDisk()
-    {
-      throw OomphLibError("Don't call default constructor!",
-			  OOMPH_CURRENT_FUNCTION,
-			  OOMPH_EXCEPTION_LOCATION);
-    }
-
+    virtual void dposition_dxi(const LagrangianCoordinates& lagr_coords,
+			       DenseMatrix<double>& dr_dxi) const = 0;
+    
+    virtual void basis_vectors(const LagrangianCoordinates& lagr_coords,
+			       Vector<double>& a1,
+			       Vector<double>& a2,
+			       Vector<double>& a3) const = 0;
+    
+    virtual void da_dxi(const LagrangianCoordinates& lagr_coords,
+			DenseMatrix<double>& da1_dxi,
+			DenseMatrix<double>& da2_dxi,
+			DenseMatrix<double>& da3_dxi) const = 0;
 
     /// Broken copy constructor
-    CylindricallyWarpedCircularDisk(const CylindricallyWarpedCircularDisk& dummy) 
+    DeformedCircularDisk(const DeformedCircularDisk&) 
     { 
-      BrokenCopy::broken_copy("CylindricallyWarpedCircularDisk");
+      BrokenCopy::broken_copy("DeformedCircularDisk");
     } 
  
     /// Broken assignment operator
-    void operator=(const CylindricallyWarpedCircularDisk&) 
+    void operator=(const DeformedCircularDisk&) 
       {
-	BrokenCopy::broken_assign("CylindricallyWarpedCircularDisk");
+	BrokenCopy::broken_assign("DeformedCircularDisk");
       }
 
-    /// Destructor
-    virtual ~CylindricallyWarpedCircularDisk()
-    {
-      unsigned n = nboundary();
-      for (unsigned b=0; b<n; b++)
-      {
-	delete Boundary_parametrising_geom_object_pt[b];
-	Boundary_parametrising_geom_object_pt[b] = 0;
-      }
-    }
-
-    /// Access fct to radius of curvature of disk warping
-    double& radius_of_curvature()
-    {
-      return R;
-    }
-
-    // in-place rotation of a vector by the rotation matrix
-    void rotate_vector(Vector<double>& vec) const
-    {
-      Vector<double> vec_rotated(3, 0.0);
-
-      // Apply the rotation matrix to the Eulerian vector
-      for(unsigned i=0; i<3; i++)
-      {
-	for(unsigned j=0; j<3; j++)
-	{
-	  vec_rotated[i] += Rotation_matrix(i,j) * vec[j];
-	}
-      }
-
-      vec = vec_rotated;
-    }
-      
-    /// \short Eulerian position Vector at Lagrangian coordinates xi 
-    void position(const LagrangianCoordinates& xi, Vector<double>& r) const
-    {
-      // get polar coords
-      const double xi1 = xi.xi1;
-      const double xi2 = xi.xi2;
-   
-      const double x0 = xi1 * cos(xi2);
-      
-      r[0] = R * sin(x0/R);
-      r[1] = xi1 * sin(xi2);
-      r[2] = R - R * sqrt(1.0 - pow(sin(x0/R),2));
-
-      // now rotate the Eulerian position 
-      rotate_vector(r);
-    }
-  
-    void position(const Vector<double>& x, Vector<double>& r) const
-    {
-      const double xi1 = sqrt(x[0]*x[0] + x[1]*x[1]);
-      const double xi2 = atan2(x[1], x[0]);
-
-      LagrangianCoordinates lagr_coords(xi1, xi2, 0.0);
-      position(lagr_coords, r);      
-    }
-
-    /// \short Parametrised position on object: r(zeta). Evaluated at
-    /// previous timestep. t=0: current time; t>0: previous
-    /// timestep. Object is steady so calls time-independent version
-    void position(const unsigned& t, const Vector<double>& x, 
-		  Vector<double>& r) const
-    {
-      position(x, r);
-    }
-
-    void dposition_dxi(const LagrangianCoordinates& lagr_coords, DenseMatrix<double>& dr_dxi)
-    {
-      // shorthand interpretation
-      const double xi1 = lagr_coords.xi1;
-      const double xi2 = lagr_coords.xi2;
-
-      const double x0 = xi1 * cos(xi2);
-      	
-      dr_dxi.resize(3, 2, 0.0);
-
-      Vector<double> dr_dxi1(3, 0.0);
-      Vector<double> dr_dxi2(3, 0.0);
-      
-      // dr_x/dxi_1
-      /* dr_dxi(0,0) =  */
-      dr_dxi1[0] = Cos(xi2)*Cos((xi1*Cos(xi2))/R);
-	
-      // dr_x/dxi_2
-      /* dr_dxi(0,1) */
-      dr_dxi2[0] = -(xi1*Cos((xi1*Cos(xi2))/R)*Sin(xi2));
-
-      // dr_y/dx_1
-      /* dr_dxi(1,0) */
-      dr_dxi1[1] = Sin(xi2);
-
-      // dr_y/dxi_2
-      /* dr_dxi(1,1) */
-      dr_dxi2[1] = xi1*Cos(xi2);
-
-      // dr_z/dxi_1
-      /* dr_dxi(2,0) */
-      dr_dxi1[2] = cos(xi2) * sin(x0/R);
-	/* ### QUEHACERES delete (xi1*Power(Cos(xi2),2))/ */
-	/* Sqrt(Power(R,2) - Power(xi1,2)*Power(Cos(xi2),2)); */
-
-      // dr_z/dxi_2
-      /* dr_dxi(2,1) */
-      dr_dxi2[2] = -xi1 * sin(xi2) * sin(x0/R);
-	/* ### QUEHACERES delete -((Power(xi1,2)*Cos(xi2)*Sin(xi2))/ */
-	/*   Sqrt(Power(R,2) - Power(xi1,2)*Power(Cos(xi2),2))); */
-
-      // Now account for the any rotation
-      rotate_vector(dr_dxi1);
-      rotate_vector(dr_dxi2);
-
-      // and assemble the matrix
-      for(unsigned i=0; i<3; i++)
-      {
-	dr_dxi(i,0) = dr_dxi1[i];     
-	dr_dxi(i,1) = dr_dxi2[i];
-      }
-    }
-    
-    // compute the basis vectors a_i(\xi_1, \xi_2) = dr/dxi_i
-    void basis_vectors(const LagrangianCoordinates& lagr_coords,
-		       Vector<double>& a1,
-		       Vector<double>& a2,
-		       Vector<double>& a3) const
-    { 
-      // shorthand interpretation
-      const double xi1 = lagr_coords.xi1;
-      const double xi2 = lagr_coords.xi2;
-
-      const double x0 = xi1 * cos(xi2);
-   
-      // make enough space
-      a1.resize(3, 0.0);
-      a2.resize(3, 0.0);
-      a3.resize(3, 0.0);
-
-      // dr/dxi_1
-      a1[0] = cos(xi2) * cos(x0/R);
-      a1[1] = sin(xi2);
-      a1[2] = cos(xi2) * sin(x0/R);
-
-      // dr/dxi_2
-      a2[0] = -xi1 * sin(xi2) * cos(x0/R);
-      a2[1] = xi1 * cos(xi2);
-      a2[2] = -xi1 * sin(xi2) * sin(x0/R);
-
-      // a3 = a1 ^ a2
-      a3[0] = -xi1 * sin(x0/R);
-      a3[1] = 0;
-      a3[2] = xi1 * cos(x0/R);
-
-      // normalise the basis vectors
-      // ----------------------------------------
-      double norm = VectorHelpers::magnitude(a1);
-      for(double& ai : a1)
-	ai /= norm;
-
-      norm = VectorHelpers::magnitude(a2);
-      for(double& ai : a2)
-	ai /= norm;
-
-      norm = VectorHelpers::magnitude(a3);
-      for(double& ai : a3)
-	ai /= norm;
-
-      // now account for the rotation of the disk
-      rotate_vector(a1);
-      rotate_vector(a2);
-      rotate_vector(a3);
-    }
-
-    // compute the derivatives of the basis vectors w.r.t. the two
-    // curvilinear coordinates defining the disk surface
-    void da_dxi(const LagrangianCoordinates& lagr_coords,
-		DenseMatrix<double>& da1_dxi,
-		DenseMatrix<double>& da2_dxi,
-		DenseMatrix<double>& da3_dxi)
-    {
-      const double xi1 = lagr_coords.xi1;
-      const double xi2 = lagr_coords.xi2;
-
-      // make space; matrices are really 3x2: da_{x,y,z}/dxi_{1,2}
-      // adding third column to prevent indexing issues wherever this is called,
-      // but da/dxi3 = 0 by definition of {xi_j}
-      da1_dxi.resize(3, 3, 0.0);
-      da2_dxi.resize(3, 3, 0.0);
-      da3_dxi.resize(3, 3, 0.0);
-
-      Vector<double> da1_dxi1(3, 0.0), da1_dxi2(3, 0.0),
-	da2_dxi1(3, 0.0), da2_dxi2(3, 0.0),
-	da3_dxi1(3, 0.0), da3_dxi2(3, 0.0);
-      
-      // ====================
-      // da_1
-      // ====================
-
-      // da_1/dxi_1
-      // ---------
-  
-      // da1_x/dxi_1
-      /* da1_dxi(0,0) */
-      da1_dxi1[0] = -((pow(cos(xi2),2)*sin((xi1*cos(xi2))/R))/R);
-
-      // da1_y/dxi_1
-      /* da1_dxi(1,0) */
-      da1_dxi1[1] = 0.0;
-
-      // da1_z/dxi_1
-      /* da1_dxi(2,0)  */
-      da1_dxi1[2] = (pow(cos(xi2),2)*cos((xi1*cos(xi2))/R))/R;
-
-      // da_1/dxi_2
-      // ----------
-  
-      // da1_x/dxi_2
-      /* da1_dxi(0,1) */
-      da1_dxi2[0] = sin(xi2)*(-cos((xi1*cos(xi2))/R) + 
-			      (xi1*cos(xi2)*sin((xi1*cos(xi2))/R))/R);
-
-      // da1_y/dxi_2
-      /* da1_dxi(1,1) */
-      da1_dxi2[1] = cos(xi2);
-   
-      // da1_z/dxi_2
-      /* da1_dxi(2,1) */
-      da1_dxi2[2] = -((sin(xi2)*(xi1*cos(xi2)*cos((xi1*cos(xi2))/R) + R*sin((xi1*cos(xi2))/R)))/
-		      R);
-   
-      // ====================
-      // da_2
-      // ====================
-  
-      // da_2/dxi_1
-      // ---------
-  
-      // da2_x/dxi_1
-      /* da2_dxi(0,0) */
-      da2_dxi1[0] = (Cos(xi2)*Sin(xi2)*Sin((xi1*Cos(xi2))/R))/R;
-
-      // da2_y/dxi_1
-      /* da2_dxi(1,0) */
-      da2_dxi1[1] = 0.0;
-
-      // da2_z/dxi_1
-      /* da2_dxi(2,0) */
-      da2_dxi1[2] = -((Cos(xi2)*Cos((xi1*Cos(xi2))/R)*Sin(xi2))/R);
-
-      // da_2/dxi_2
-      // ----------
-   
-      // da2_x/dxi_2
-      /* da2_dxi(0,1) */
-      da2_dxi2[0] = -((R*Cos(xi2)*Cos((xi1*Cos(xi2))/R) +
-		       xi1*Power(Sin(xi2),2)*Sin((xi1*Cos(xi2))/R))/R);
-
-      // da2_y/dxi_2
-      /* da2_dxi(1,1) */
-      da2_dxi2[1] = -Sin(xi2);
-   
-      // da2_z/dxi_2
-      /* da2_dxi(2,1) */
-      da2_dxi2[2] = (xi1*Cos((xi1*Cos(xi2))/R)*Power(Sin(xi2),2))/R -
-	Cos(xi2)*Sin((xi1*Cos(xi2))/R);
-
-      // ====================
-      // da_3
-      // ====================
-
-      // da_3/dxi_1
-      // ---------
-  
-      // da3_x/dxi_1
-      /* da3_dxi(0,0) */
-      da3_dxi1[0] = -((Cos(xi2)*Cos((xi1*Cos(xi2))/R))/R);
-   
-      // da3_y/dxi_1
-      /* da3_dxi(1,0) */
-      da3_dxi1[1] = 0.0;
-
-      // da3_z/dxi_1
-      /* da3_dxi(2,0) */
-      da3_dxi1[2] = -((Cos(xi2)*Sin((xi1*Cos(xi2))/R))/R);
-   
-      // da_3/dxi_2
-      // ----------
-
-      // da3_x/dxi_2
-      /* da3_dxi(0,1) */
-      da3_dxi2[0] = (xi1*Cos((xi1*Cos(xi2))/R)*Sin(xi2))/R;
-
-      // da3_y/dxi_2
-      /* da3_dxi(1,1) */
-      da3_dxi2[1] = 0.0;
-   
-      // da3_z/dxi_2
-      /* da3_dxi(2,1) */
-      da3_dxi2[2] = (xi1*Sin(xi2)*Sin((xi1*Cos(xi2))/R))/R;
-
-      // now rotate the vectors
-      rotate_vector(da1_dxi1);
-      rotate_vector(da1_dxi2);
-      rotate_vector(da2_dxi1);
-      rotate_vector(da2_dxi2);
-      rotate_vector(da3_dxi1);
-      rotate_vector(da3_dxi2);
-
-      // and assemble the matrices
-      for(unsigned i=0; i<3; i++)
-      {
-	da1_dxi(i,0) = da1_dxi1[i];
-	da1_dxi(i,1) = da1_dxi2[i];
-
-	da2_dxi(i,0) = da2_dxi1[i];
-	da2_dxi(i,1) = da2_dxi2[i];
-
-	da3_dxi(i,0) = da3_dxi1[i];
-	da3_dxi(i,1) = da3_dxi2[i];
-      }
-    }
-
-    /// Boundary triad on boundary b at boundary coordinate zeta_bound
-    void boundary_triad(const unsigned& b,
-			const double& zeta_bound,
-			Vector<double>& r,
-			Vector<double>& tangent,
-			Vector<double>& normal,
-			Vector<double>& binormal)
+    /// \short Boundary triad on boundary b at boundary coordinate zeta_bound
+    /// Default implementation - just call the basis vectors with xi1=1
+    virtual void boundary_triad(const unsigned& b,
+				const double& zeta_bound,
+				Vector<double>& r,
+				Vector<double>& tangent,
+				Vector<double>& normal,
+				Vector<double>& binormal)
     {      
       LagrangianCoordinates lagr_coords(1, zeta_bound, 0.0);
       
@@ -485,10 +157,10 @@ namespace oomph
     /// - boundary_tangent_file : x, y, z, dtxi_dxj
     /// - boundary_normal_file  : x, y, z, dsi_dxj
     /// - boundary_binormal_file: x, y, z, dni_dxj
-    void output_dboundary_triad_dx_csv(const unsigned& nplot,
-				       std::ofstream& boundary_dtangent_dx_file,
-				       std::ofstream& boundary_dnormal_dx_file,
-				       std::ofstream& boundary_dbinormal_dx_file)
+    virtual void output_dboundary_triad_dx_csv(const unsigned& nplot,
+					       std::ofstream& boundary_dtangent_dx_file,
+					       std::ofstream& boundary_dnormal_dx_file,
+					       std::ofstream& boundary_dbinormal_dx_file)
     {
       std::ostringstream error_message;
       error_message << "Output_dboundary_triad_dx_csv() currently broken\n\n";
@@ -606,15 +278,133 @@ namespace oomph
 	}
       }       
     }
+  };
+
+  /////////////////////////////////////////////////////////////////////
+  /////////////////////////////////////////////////////////////////////
+  /////////////////////////////////////////////////////////////////////
+
+
+   //=========================================================================
+  /// \short Warped disk in 3d: zeta[0]=x; zeta[1]=y (so it doesn't have 
+  /// coordinate singularities), with specification of two boundaries (b=0,1)
+  /// that turn the whole thing into a circular disk. In addition
+  /// has two internal boundaries (b=2,3), a distance h_annulus from 
+  /// the outer edge. Annual (outer) region is region 1.
+  //=========================================================================
+  class DeformedCircularDiskWithAnnularInternalBoundary : 
+    public virtual DeformedCircularDisk
+  {
+
+  public:
+
+    /// \short Constructor. Pass radius of internal boundary as first argument.
+    /// Full version with rotation matrix included
+  DeformedCircularDiskWithAnnularInternalBoundary(const double& h_annulus,
+						  const DenseMatrix<double>& rotation_matrix)
+    : H_annulus(h_annulus), Rotation_matrix(rotation_matrix)
+    {
+      if( ! check_transformation_matrix_is_pure_rotation())
+      {
+	throw OomphLibError("Transformation matrix supplied to "
+			    "DeformedCircularDiskWithAnnularInternalBoundary does not "
+			    "correspond to a pure rotation.",
+			    OOMPH_CURRENT_FUNCTION,
+			    OOMPH_EXCEPTION_LOCATION);
+      }
       
+      // We have two more boundaries!
+      Boundary_parametrising_geom_object_pt.resize(4);
+      Zeta_boundary_start.resize(4);
+      Zeta_boundary_end.resize(4);
+
+      // Radius of the internal annular boundary
+      double r_annulus = 1.0-h_annulus;
+
+      // GeomObject<1,2> representing the third boundary
+      Boundary_parametrising_geom_object_pt[2] = new Ellipse(r_annulus,r_annulus);
+	/* new XYProjectionOfCylindricallyWarpedCircle(r_annulus, radius_of_curvature); */
+      Zeta_boundary_start[2] = 0.0;
+      Zeta_boundary_end[2] = MathematicalConstants::Pi;
+
+      // GeomObject<1,2> representing the fourth boundary
+      Boundary_parametrising_geom_object_pt[3] = new Ellipse(r_annulus,r_annulus);
+	/* new XYProjectionOfCylindricallyWarpedCircle(r_annulus, radius_of_curvature); */
+      Zeta_boundary_start[3] = MathematicalConstants::Pi;
+      Zeta_boundary_end[3] = 2.0*MathematicalConstants::Pi;
+
+      // Region 1 is the annular region; identify it by a point in 
+      // this region. 
+      unsigned r = 1;
+      Vector<double> zeta_in_region(2);
+      zeta_in_region[0] = 0.0;
+      zeta_in_region[0] = 1.0-0.5*h_annulus;
+      add_region_coordinates(r,zeta_in_region);
+    }
+
+    DeformedCircularDiskWithAnnularInternalBoundary()
+    {
+      throw OomphLibError("Don't call DeformedCircularDiskWithAnnularInternalBoundary "
+			  "empty constructor!",
+			  OOMPH_CURRENT_FUNCTION,
+			  OOMPH_EXCEPTION_LOCATION);
+    }
     
+    /// Broken copy constructor
+    DeformedCircularDiskWithAnnularInternalBoundary
+      (const DeformedCircularDiskWithAnnularInternalBoundary& dummy) 
+    { 
+      BrokenCopy::broken_copy("DeformedCircularDiskWithAnnularInternalBoundary");
+    } 
+ 
+    /// Broken assignment operator
+    void operator=(const DeformedCircularDiskWithAnnularInternalBoundary&) 
+      {
+	BrokenCopy::broken_assign("DeformedCircularDiskWithAnnularInternalBoundary");
+      }
+
+    /// Destructor (empty; cleanup happens in base class)
+    virtual ~DeformedCircularDiskWithAnnularInternalBoundary()
+    {}
+
+    /// \short access function which returns the parameter which characterises
+    /// the deformation; pure virtual since this needs to be implemented
+    /// for specific deformations, e.g. the radius of curvature for a cylindrical
+    /// deformation    
+    virtual double deformation_parameter() const = 0;
+
+    /// \short function to set the deformation parameter
+    virtual void set_deformation_parameter(const double& param) = 0;
+    
+    /// \short Thickness of annular region (distance of internal boundary
+    /// from outer edge of unit circle)
+    double h_annulus() const
+    {
+      return H_annulus;
+    }
+
+    // in-place rotation of a vector by the rotation matrix
+    void rotate_vector(Vector<double>& vec) const
+    {
+      Vector<double> vec_rotated(3, 0.0);
+
+      // Apply the rotation matrix to the Eulerian vector
+      for(unsigned i=0; i<3; i++)
+      {
+	for(unsigned j=0; j<3; j++)
+	{
+	  vec_rotated[i] += Rotation_matrix(i,j) * vec[j];
+	}
+      }
+
+      vec = vec_rotated;
+    }
+
     // access function for the rotation matrix
     DenseMatrix<double> rotation_matrix() const
     {
       return Rotation_matrix;
     }
-    
-  private:
 
     // make sure the matrix provided doesn't warp the shape in any way,
     // since this would cock up our basis vectors, derivatives etc.
@@ -628,7 +418,7 @@ namespace oomph
       
       // Calculate the determinant of the matrix
       const double det =
-	  M(0,0) * M(1,1) * M(2,2) 
+	M(0,0) * M(1,1) * M(2,2) 
 	+ M(0,1) * M(1,2) * M(2,0) 
 	+ M(0,2) * M(1,0) * M(2,1) 
 	- M(0,0) * M(1,2) * M(2,1) 
@@ -672,110 +462,684 @@ namespace oomph
       return true;
     }
     
-    /// Radius of curvature (x-z plane)
-    double R;
-
-    /// rotations of the whole shape about the x/y axes
-    DenseMatrix<double> Rotation_matrix;
-  };
-
-  /////////////////////////////////////////////////////////////////////
-  /////////////////////////////////////////////////////////////////////
-  /////////////////////////////////////////////////////////////////////
-
-  //=========================================================================
-  /// \short Warped disk in 3d: zeta[0]=x; zeta[1]=y (so it doesn't have 
-  /// coordinate singularities), with specification of two boundaries (b=0,1)
-  /// that turn the whole thing into a circular disk. In addition
-  /// has two internal boundaries (b=2,3), a distance h_annulus from 
-  /// the outer edge. Annual (outer) region is region 1.
-  //=========================================================================
-  class CylindricallyWarpedCircularDiskWithAnnularInternalBoundary : 
-    public virtual CylindricallyWarpedCircularDisk
-  {
-
-  public:
-
-    /// Constructor. Pass radius of internal boundary and the
-    /// (cylindrical) radius of curvature as arguments. Full version with
-    /// rotation matrix included
-    CylindricallyWarpedCircularDiskWithAnnularInternalBoundary
-      (const double& h_annulus,
-       const double& radius_of_curvature,
-       const DenseMatrix<double>& rotation_matrix) :
-    CylindricallyWarpedCircularDisk(radius_of_curvature, rotation_matrix), H_annulus(h_annulus)
-    {  
-      // We have two more boundaries!
-      Boundary_parametrising_geom_object_pt.resize(4);
-      Zeta_boundary_start.resize(4);
-      Zeta_boundary_end.resize(4);
-
-      // Radius of the internal annular boundary
-      double r_annulus = 1.0-h_annulus;
-
-      // GeomObject<1,2> representing the third boundary
-      Boundary_parametrising_geom_object_pt[2] = new Ellipse(r_annulus,r_annulus);
-	/* new XYProjectionOfCylindricallyWarpedCircle(r_annulus, radius_of_curvature); */
-      Zeta_boundary_start[2] = 0.0;
-      Zeta_boundary_end[2] = MathematicalConstants::Pi;
-
-      // GeomObject<1,2> representing the fourth boundary
-      Boundary_parametrising_geom_object_pt[3] = new Ellipse(r_annulus,r_annulus);
-	/* new XYProjectionOfCylindricallyWarpedCircle(r_annulus, radius_of_curvature); */
-      Zeta_boundary_start[3] = MathematicalConstants::Pi;
-      Zeta_boundary_end[3] = 2.0*MathematicalConstants::Pi;
-
-      // Region 1 is the annular region; identify it by a point in 
-      // this region. 
-      unsigned r = 1;
-      Vector<double> zeta_in_region(2);
-      zeta_in_region[0] = 0.0;
-      zeta_in_region[0] = 1.0-0.5*h_annulus;
-      add_region_coordinates(r,zeta_in_region);
-    }
-
-    /// Two-argument constructor, which passes the default identity matrix
-    /// as the rotation matrix
-    CylindricallyWarpedCircularDiskWithAnnularInternalBoundary
-      (const double& h_annulus, const double& radius_of_curvature) :
-    CylindricallyWarpedCircularDiskWithAnnularInternalBoundary
-      (h_annulus, radius_of_curvature, identity_matrix()) { }
-    
-    /// Broken copy constructor
-    CylindricallyWarpedCircularDiskWithAnnularInternalBoundary
-      (const CylindricallyWarpedCircularDiskWithAnnularInternalBoundary& dummy) 
-    { 
-      BrokenCopy::broken_copy("CylindricallyWarpedCircularDiskWithAnnularInternalBoundary");
-    } 
- 
-    /// Broken assignment operator
-    void operator=(const CylindricallyWarpedCircularDiskWithAnnularInternalBoundary&) 
-      {
-	BrokenCopy::broken_assign("CylindricallyWarpedCircularDiskWithAnnularInternalBoundary");
-      }
-
-    /// Destructor (empty; cleanup happens in base class)
-    virtual ~CylindricallyWarpedCircularDiskWithAnnularInternalBoundary()
-    {}
-
-
-    /// \short Thickness of annular region (distance of internal boundary
-    /// from outer edge of unit circle)
-    double h_annulus() const
-    {
-      return H_annulus;
-    }
-
   protected:
 
     /// \short Thickness of annular region (distance of internal boundary
     /// from outer edge of unit circle)
     double H_annulus;
 
+    /// rotations of the whole shape about the x/y axes
+    DenseMatrix<double> Rotation_matrix;
+  };
 
+  
+  //=========================================================================
+  /// \short Specialisation, provides the specific geometry for a
+  /// circular disk deformed around a cylinder who's axis lies along the y-axis
+  //=========================================================================
+  class CylindricallyDeformedDisk : public DeformedCircularDiskWithAnnularInternalBoundary
+  {
+  public:
+
+    /// \short Constructor. Pass radius of curvature and a rotation matrix
+    /// which will be applied to the position, basis vectors etc.
+  CylindricallyDeformedDisk(const double& r_annulus,
+			    const double& radius_of_curvature,
+			    const DenseMatrix<double>& rotation_matrix) :
+    DeformedCircularDiskWithAnnularInternalBoundary(r_annulus, rotation_matrix),
+      R(radius_of_curvature) { }
+    
+    // 2 arg version to handle the default of a zero rotation matrix
+  CylindricallyDeformedDisk(const double& r_annulus,
+			    const double& radius_of_curvature) :
+    CylindricallyDeformedDisk(r_annulus, radius_of_curvature, identity_matrix() ) { }
+
+    /// Empty default constructor.
+    CylindricallyDeformedDisk()
+    {
+      throw OomphLibError("Don't call CylindricallyDeformedDisk default constructor!",
+			  OOMPH_CURRENT_FUNCTION,
+			  OOMPH_EXCEPTION_LOCATION);
+    }
+
+    /// Broken copy constructor
+    CylindricallyDeformedDisk(const CylindricallyDeformedDisk& dummy) 
+    { 
+      BrokenCopy::broken_copy("CylindricallyDeformedDisk");
+    } 
+ 
+    /// Broken assignment operator
+    void operator=(const CylindricallyDeformedDisk&) 
+      {
+	BrokenCopy::broken_assign("CylindricallyDeformedDisk");
+      }
+
+    /// Destructor
+    virtual ~CylindricallyDeformedDisk()
+    {
+      unsigned n = nboundary();
+      for (unsigned b=0; b<n; b++)
+      {
+	delete Boundary_parametrising_geom_object_pt[b];
+	Boundary_parametrising_geom_object_pt[b] = 0;
+      }
+    }
+
+    /// Access fct to radius of curvature of disk warping
+    double& radius_of_curvature()
+    {
+      return R;
+    }
+
+    void set_deformation_parameter(const double& r)
+    {
+      R = r;
+    }
+    
+    // the radius of curvature is the parameter which defines the deformation
+    double deformation_parameter() const
+    {
+      return R;
+    }
+    
+    /// \short Eulerian position Vector at Lagrangian coordinates xi 
+    void position(const LagrangianCoordinates& xi, Vector<double>& r) const
+    {
+      // get polar coords
+      const double xi1 = xi.xi1;
+      const double xi2 = xi.xi2;
+   
+      const double x0 = xi1 * cos(xi2);
+      
+      r[0] = R * sin(x0/R);
+      r[1] = xi1 * sin(xi2);
+      r[2] = R - R * sqrt(1.0 - pow(sin(x0/R),2));
+
+      // now rotate the Eulerian position 
+      rotate_vector(r);
+    }
+  
+    void position(const Vector<double>& x, Vector<double>& r) const
+    {
+      const double xi1 = sqrt(x[0]*x[0] + x[1]*x[1]);
+      const double xi2 = atan2(x[1], x[0]);
+
+      LagrangianCoordinates lagr_coords(xi1, xi2, 0.0);
+      position(lagr_coords, r);      
+    }
+
+    /// \short Parametrised position on object: r(zeta). Evaluated at
+    /// previous timestep. t=0: current time; t>0: previous
+    /// timestep. Object is steady so calls time-independent version
+    void position(const unsigned& t, const Vector<double>& x, 
+		  Vector<double>& r) const
+    {
+      position(x, r);
+    }
+
+    void dposition_dxi(const LagrangianCoordinates& lagr_coords, DenseMatrix<double>& dr_dxi) const
+    {
+      // shorthand interpretation
+      const double xi1 = lagr_coords.xi1;
+      const double xi2 = lagr_coords.xi2;
+
+      const double x0 = xi1 * cos(xi2);
+      	
+      dr_dxi.resize(3, 2, 0.0);
+
+      Vector<double> dr_dxi1(3, 0.0);
+      Vector<double> dr_dxi2(3, 0.0);
+      
+      // dr_x/dxi_1
+      dr_dxi1[0] = Cos(xi2)*Cos((xi1*Cos(xi2))/R);
+	
+      // dr_x/dxi_2
+      dr_dxi2[0] = -(xi1*Cos((xi1*Cos(xi2))/R)*Sin(xi2));
+
+      // dr_y/dx_1
+      dr_dxi1[1] = Sin(xi2);
+
+      // dr_y/dxi_2
+      dr_dxi2[1] = xi1*Cos(xi2);
+
+      // dr_z/dxi_1
+      dr_dxi1[2] = cos(xi2) * sin(x0/R);
+
+      // dr_z/dxi_2
+      dr_dxi2[2] = -xi1 * sin(xi2) * sin(x0/R);
+
+      // Now account for the any rotation
+      rotate_vector(dr_dxi1);
+      rotate_vector(dr_dxi2);
+
+      // and assemble the matrix
+      for(unsigned i=0; i<3; i++)
+      {
+	dr_dxi(i,0) = dr_dxi1[i];     
+	dr_dxi(i,1) = dr_dxi2[i];
+      }
+    }
+    
+    // compute the basis vectors a_i(\xi_1, \xi_2) = dr/dxi_i
+    void basis_vectors(const LagrangianCoordinates& lagr_coords,
+		       Vector<double>& a1,
+		       Vector<double>& a2,
+		       Vector<double>& a3) const
+    { 
+      // shorthand interpretation
+      const double xi1 = lagr_coords.xi1;
+      const double xi2 = lagr_coords.xi2;
+
+      const double x0 = xi1 * cos(xi2);
+   
+      // make enough space
+      a1.resize(3, 0.0);
+      a2.resize(3, 0.0);
+      a3.resize(3, 0.0);
+
+      // dr/dxi_1
+      a1[0] = cos(xi2) * cos(x0/R);
+      a1[1] = sin(xi2);
+      a1[2] = cos(xi2) * sin(x0/R);
+
+      // dr/dxi_2
+      a2[0] = -xi1 * sin(xi2) * cos(x0/R);
+      a2[1] = xi1 * cos(xi2);
+      a2[2] = -xi1 * sin(xi2) * sin(x0/R);
+
+      // a3 = a1 ^ a2
+      a3[0] = -xi1 * sin(x0/R);
+      a3[1] = 0;
+      a3[2] = xi1 * cos(x0/R);
+
+      // normalise the basis vectors
+      // ----------------------------------------
+      double norm = VectorHelpers::magnitude(a1);
+      for(double& ai : a1)
+	ai /= norm;
+
+      norm = VectorHelpers::magnitude(a2);
+      for(double& ai : a2)
+	ai /= norm;
+
+      norm = VectorHelpers::magnitude(a3);
+      for(double& ai : a3)
+	ai /= norm;
+
+      // now account for the rotation of the disk
+      rotate_vector(a1);
+      rotate_vector(a2);
+      rotate_vector(a3);
+    }
+
+    // compute the derivatives of the basis vectors w.r.t. the two
+    // curvilinear coordinates defining the disk surface
+    void da_dxi(const LagrangianCoordinates& lagr_coords,
+		DenseMatrix<double>& da1_dxi,
+		DenseMatrix<double>& da2_dxi,
+		DenseMatrix<double>& da3_dxi) const
+    {
+      const double xi1 = lagr_coords.xi1;
+      const double xi2 = lagr_coords.xi2;
+
+      // make space; matrices are really 3x2: da_{x,y,z}/dxi_{1,2}
+      // adding third column to prevent indexing issues wherever this is called,
+      // but da/dxi3 = 0 by definition of {xi_j}
+      da1_dxi.resize(3, 3, 0.0);
+      da2_dxi.resize(3, 3, 0.0);
+      da3_dxi.resize(3, 3, 0.0);
+
+      Vector<double> da1_dxi1(3, 0.0), da1_dxi2(3, 0.0),
+	da2_dxi1(3, 0.0), da2_dxi2(3, 0.0),
+	da3_dxi1(3, 0.0), da3_dxi2(3, 0.0);
+      
+      // ====================
+      // da_1
+      // ====================
+
+      // da_1/dxi_1
+      // ---------
+  
+      // da1_x/dxi_1
+      da1_dxi1[0] = -((pow(cos(xi2),2)*sin((xi1*cos(xi2))/R))/R);
+
+      // da1_y/dxi_1
+      da1_dxi1[1] = 0.0;
+
+      // da1_z/dxi_1
+      da1_dxi1[2] = (pow(cos(xi2),2)*cos((xi1*cos(xi2))/R))/R;
+
+      // da_1/dxi_2
+      // ----------
+  
+      // da1_x/dxi_2
+      da1_dxi2[0] = sin(xi2)*(-cos((xi1*cos(xi2))/R) + 
+			      (xi1*cos(xi2)*sin((xi1*cos(xi2))/R))/R);
+
+      // da1_y/dxi_2
+      da1_dxi2[1] = cos(xi2);
+   
+      // da1_z/dxi_2
+      da1_dxi2[2] = -((sin(xi2)*(xi1*cos(xi2)*cos((xi1*cos(xi2))/R) + R*sin((xi1*cos(xi2))/R)))/
+		      R);
+   
+      // ====================
+      // da_2
+      // ====================
+  
+      // da_2/dxi_1
+      // ---------
+  
+      // da2_x/dxi_1
+      da2_dxi1[0] = (Cos(xi2)*Sin(xi2)*Sin((xi1*Cos(xi2))/R))/R;
+
+      // da2_y/dxi_1
+      da2_dxi1[1] = 0.0;
+
+      // da2_z/dxi_1
+      da2_dxi1[2] = -((Cos(xi2)*Cos((xi1*Cos(xi2))/R)*Sin(xi2))/R);
+
+      // da_2/dxi_2
+      // ----------
+   
+      // da2_x/dxi_2
+      da2_dxi2[0] = -((R*Cos(xi2)*Cos((xi1*Cos(xi2))/R) +
+		       xi1*Power(Sin(xi2),2)*Sin((xi1*Cos(xi2))/R))/R);
+
+      // da2_y/dxi_2
+      da2_dxi2[1] = -Sin(xi2);
+   
+      // da2_z/dxi_2
+      da2_dxi2[2] = (xi1*Cos((xi1*Cos(xi2))/R)*Power(Sin(xi2),2))/R -
+	Cos(xi2)*Sin((xi1*Cos(xi2))/R);
+
+      // ====================
+      // da_3
+      // ====================
+
+      // da_3/dxi_1
+      // ---------
+  
+      // da3_x/dxi_1
+      da3_dxi1[0] = -((Cos(xi2)*Cos((xi1*Cos(xi2))/R))/R);
+   
+      // da3_y/dxi_1
+      da3_dxi1[1] = 0.0;
+
+      // da3_z/dxi_1
+      da3_dxi1[2] = -((Cos(xi2)*Sin((xi1*Cos(xi2))/R))/R);
+   
+      // da_3/dxi_2
+      // ----------
+
+      // da3_x/dxi_2
+      da3_dxi2[0] = (xi1*Cos((xi1*Cos(xi2))/R)*Sin(xi2))/R;
+
+      // da3_y/dxi_2
+      da3_dxi2[1] = 0.0;
+   
+      // da3_z/dxi_2
+      da3_dxi2[2] = (xi1*Sin(xi2)*Sin((xi1*Cos(xi2))/R))/R;
+
+      // now rotate the vectors
+      rotate_vector(da1_dxi1);
+      rotate_vector(da1_dxi2);
+      rotate_vector(da2_dxi1);
+      rotate_vector(da2_dxi2);
+      rotate_vector(da3_dxi1);
+      rotate_vector(da3_dxi2);
+
+      // and assemble the matrices
+      for(unsigned i=0; i<3; i++)
+      {
+	da1_dxi(i,0) = da1_dxi1[i];
+	da1_dxi(i,1) = da1_dxi2[i];
+
+	da2_dxi(i,0) = da2_dxi1[i];
+	da2_dxi(i,1) = da2_dxi2[i];
+
+	da3_dxi(i,0) = da3_dxi1[i];
+	da3_dxi(i,1) = da3_dxi2[i];
+      }
+    }
+    
+  private:
+
+    /// Radius of curvature (x-z plane)
+    double R;
   };
 
 
+  //=========================================================================
+  /// \short Specialisation, provides the specific geometry for an
+  /// axisymmetrically deformed disk, with a heght profile w = epsilon * r^2
+  //=========================================================================
+  class AxisymmetricallyDeformedDisk : public DeformedCircularDiskWithAnnularInternalBoundary
+  {
+  public:
+
+    /// \short Constructor. Pass radius of curvature and a rotation matrix
+    /// which will be applied to the position, basis vectors etc.
+  AxisymmetricallyDeformedDisk(const double& r_annulus,
+			    const double& epsilon,
+			    const DenseMatrix<double>& rotation_matrix) :
+    DeformedCircularDiskWithAnnularInternalBoundary(r_annulus, rotation_matrix),
+      Epsilon(epsilon) { }
+    
+    // 2 arg version to handle the default of a zero rotation matrix
+  AxisymmetricallyDeformedDisk(const double& r_annulus,
+			    const double& epsilon) :
+    AxisymmetricallyDeformedDisk(r_annulus, epsilon, identity_matrix() ) { }
+
+    /// Empty default constructor.
+    AxisymmetricallyDeformedDisk()
+    {
+      throw OomphLibError("Don't call AxisymmetricallyDeformedDisk default constructor!",
+			  OOMPH_CURRENT_FUNCTION,
+			  OOMPH_EXCEPTION_LOCATION);
+    }
+
+    /// Broken copy constructor
+    AxisymmetricallyDeformedDisk(const AxisymmetricallyDeformedDisk& dummy) 
+    { 
+      BrokenCopy::broken_copy("AxisymmetricallyDeformedDisk");
+    } 
+ 
+    /// Broken assignment operator
+    void operator=(const AxisymmetricallyDeformedDisk&) 
+      {
+	BrokenCopy::broken_assign("AxisymmetricallyDeformedDisk");
+      }
+
+    /// Destructor
+    virtual ~AxisymmetricallyDeformedDisk()
+    {
+      unsigned n = nboundary();
+      for (unsigned b=0; b<n; b++)
+      {
+	delete Boundary_parametrising_geom_object_pt[b];
+	Boundary_parametrising_geom_object_pt[b] = 0;
+      }
+    }
+
+    /// Access fct to radius of curvature of disk warping
+    double& epsilon()
+    {
+      return Epsilon;
+    }
+
+    void set_deformation_parameter(const double& epsilon)
+    {
+      Epsilon = epsilon;
+    }
+    
+    // Epsilon is the parameter which defines the deformation
+    double deformation_parameter() const
+    {
+      return Epsilon;
+    }
+    
+    /// \short Eulerian position Vector at Lagrangian coordinates xi 
+    void position(const LagrangianCoordinates& xi, Vector<double>& r) const
+    {
+      // get polar coords
+      const double xi1 = xi.xi1;
+      const double xi2 = xi.xi2;
+   
+      r[0] = xi1 * cos(xi2);
+      r[1] = xi1 * sin(xi2);
+      r[2] = Epsilon * xi1*xi1;
+
+      // now rotate the Eulerian position 
+      rotate_vector(r);
+    }
+  
+    void position(const Vector<double>& x, Vector<double>& r) const
+    {
+      const double xi1 = sqrt(x[0]*x[0] + x[1]*x[1]);
+      const double xi2 = atan2(x[1], x[0]);
+
+      LagrangianCoordinates lagr_coords(xi1, xi2, 0.0);
+      position(lagr_coords, r);      
+    }
+
+    /// \short Parametrised position on object: r(zeta). Evaluated at
+    /// previous timestep. t=0: current time; t>0: previous
+    /// timestep. Object is steady so calls time-independent version
+    void position(const unsigned& t, const Vector<double>& x, 
+		  Vector<double>& r) const
+    {
+      position(x, r);
+    }
+
+    // derivatives of the position vector w.r.t. the Lagrangian coordinates
+    void dposition_dxi(const LagrangianCoordinates& lagr_coords, DenseMatrix<double>& dr_dxi) const
+    {
+      // shorthand interpretation
+      const double xi1 = lagr_coords.xi1;
+      const double xi2 = lagr_coords.xi2;
+
+      dr_dxi.resize(3, 2, 0.0);
+
+      Vector<double> dr_dxi1(3, 0.0);
+      Vector<double> dr_dxi2(3, 0.0);
+      
+      // dr_x/dxi_1      
+      dr_dxi1[0] = cos(xi2);
+	
+      // dr_x/dxi_2
+      dr_dxi2[0] = -xi1 * sin(xi2);
+
+      // dr_y/dx_1
+      dr_dxi1[1] = sin(xi2);
+
+      // dr_y/dxi_2
+      dr_dxi2[1] = xi1 * cos(xi2);
+
+      // dr_z/dxi_1
+      dr_dxi1[2] = 2 * xi1 * Epsilon;
+
+      // dr_z/dxi_2
+      dr_dxi2[2] = 0.0;
+
+      // Now account for the any rotation
+      rotate_vector(dr_dxi1);
+      rotate_vector(dr_dxi2);
+
+      // and assemble the matrix
+      for(unsigned i=0; i<3; i++)
+      {
+	dr_dxi(i,0) = dr_dxi1[i];     
+	dr_dxi(i,1) = dr_dxi2[i];
+      }
+    }
+
+    // basis vectors as a function of the Lagrangian coordinates
+    void basis_vectors(const LagrangianCoordinates& lagr_coords,
+			       Vector<double>& a1,
+			       Vector<double>& a2,
+			       Vector<double>& a3) const
+    {
+      // shorthands
+      const double xi1 = lagr_coords.xi1;
+      const double xi2 = lagr_coords.xi2;
+      
+      // make enough space
+      a1.resize(3, 0.0);
+      a2.resize(3, 0.0);
+      a3.resize(3, 0.0);
+      
+      // dr/dxi_1
+      a1[0] = cos(xi2)/sqrt(1 + 4*pow(xi1,2)*pow(Epsilon,2));
+      a1[1] = sin(xi2)/sqrt(1 + 4*pow(xi1,2)*pow(Epsilon,2));
+      a1[2] = (2*xi1*Epsilon)/sqrt(1 + 4*pow(xi1,2)*pow(Epsilon,2));
+    
+      // dr/dxi_2
+      a2[0] = -sin(xi2);
+      a2[1] = cos(xi2);
+      a2[2] = 0.0;
+  
+      // a3 = a1 ^ a2
+      a3[0] = (-2*xi1*Epsilon*cos(xi2))/sqrt(1 + 4*pow(xi1,2)*pow(Epsilon,2));
+      a3[1] = (-2*xi1*Epsilon*sin(xi2))/sqrt(1 + 4*pow(xi1,2)*pow(Epsilon,2));
+      a3[2] = 1/sqrt(1 + 4*pow(xi1,2)*pow(Epsilon,2));
+
+      // now account for the rotation of the disk
+      rotate_vector(a1);
+      rotate_vector(a2);
+      rotate_vector(a3);
+    }
+
+    /// Boundary triad on boundary b at boundary coordinate zeta_bound
+    void boundary_triad(const unsigned& b,
+			const double& zeta_bound,
+			Vector<double>& r,
+			Vector<double>& tangent,
+			Vector<double>& normal,
+			Vector<double>& binormal)
+    {      
+      LagrangianCoordinates lagr_coords(1, zeta_bound, 0.0);
+      
+      // get the Eulerian position
+      position(lagr_coords, r);
+
+      // and get the triad vectors
+      basis_vectors(lagr_coords, normal, tangent, binormal);
+    }
+    
+    // derivatives of the basis vectors w.r.t. the Lagrangian coordinates
+    void da_dxi(const LagrangianCoordinates& lagr_coords,
+		DenseMatrix<double>& da1_dxi,
+		DenseMatrix<double>& da2_dxi,
+		DenseMatrix<double>& da3_dxi) const
+    {
+      // shorthands
+      const double xi1 = lagr_coords.xi1;
+      const double xi2 = lagr_coords.xi2;
+      
+      // make space; matrices are really 3x2: da_{x,y,z}/dxi_{1,2}
+      // adding third column to prevent indexing issues wherever this is called,
+      // but da/dxi3 = 0 by definition of {xi_j}
+      da1_dxi.resize(3, 3, 0.0);
+      da2_dxi.resize(3, 3, 0.0);
+      da3_dxi.resize(3, 3, 0.0);
+
+      Vector<double> da1_dxi1(3, 0.0), da1_dxi2(3, 0.0),
+	da2_dxi1(3, 0.0), da2_dxi2(3, 0.0),
+	da3_dxi1(3, 0.0), da3_dxi2(3, 0.0);
+
+      // ====================
+      // da_1
+      // ====================
+
+      // da_1/dxi_1
+      // ---------
+   
+      // da1_x/dxi_1
+      da1_dxi1[0] = (-4*xi1*pow(Epsilon,2)*cos(xi2))/pow(1 + 4*pow(xi1,2)*pow(Epsilon,2),1.5);
+
+      // da1_y/dxi_1
+      da1_dxi1[1] = (-4*xi1*pow(Epsilon,2)*sin(xi2))/pow(1 + 4*pow(xi1,2)*pow(Epsilon,2),1.5);
+
+      // da1_z/dxi_1
+      da1_dxi1[2] = (2*Epsilon)/pow(1 + 4*pow(xi1,2)*pow(Epsilon,2),1.5);
+
+      // da_1/dxi_2
+      // ----------
+
+      // da1_x/dxi_2
+      da1_dxi2[0] = -(sin(xi2)/sqrt(1 + 4*pow(xi1,2)*pow(Epsilon,2)));
+
+      // da1_y/dxi_2
+      da1_dxi2[1] = cos(xi2)/sqrt(1 + 4*pow(xi1,2)*pow(Epsilon,2));
+   
+      // da1_z/dxi_2
+      da1_dxi2[2] = 0.0;
+   
+      // ====================
+      // da_2
+      // ====================
+  
+      // da_2/dxi_1
+      // ---------
+  
+      // da2_x/dxi_1
+      da2_dxi1[0] = 0.0;
+
+      // da2_y/dxi_1
+      da2_dxi1[1] = 0.0;
+
+      // da2_z/dxi_1
+      da2_dxi1[2] = 0.0;
+
+      // da_2/dxi_2
+      // ----------
+   
+      // da2_x/dxi_2
+      da2_dxi2[0] = -cos(xi2);
+
+      // da2_y/dxi_2
+      da2_dxi2[1] = -sin(xi2);
+   
+      // da2_z/dxi_2
+      da2_dxi2[2] = 0.0;
+
+      // ====================
+      // da_3
+      // ====================
+
+      // da_3/dxi_1
+      // ---------
+  
+      // da3_x/dxi_1
+      da3_dxi1[0] = (-2*Epsilon*cos(xi2))/pow(1 + 4*pow(xi1,2)*pow(Epsilon,2),1.5);
+   
+      // da3_y/dxi_1
+      da3_dxi1[1] = (-2*Epsilon*sin(xi2))/pow(1 + 4*pow(xi1,2)*pow(Epsilon,2),1.5);
+
+      // da3_z/dxi_1
+      da3_dxi1[2] = (-4*xi1*pow(Epsilon,2))/pow(1 + 4*pow(xi1,2)*pow(Epsilon,2),1.5);
+   
+      // da_3/dxi_2
+      // ----------
+   
+      // da3_x/dxi_2
+      da3_dxi2[0] = (2*xi1*Epsilon*sin(xi2))/sqrt(1 + 4*pow(xi1,2)*pow(Epsilon,2));
+
+      // da3_y/dxi_2
+      da3_dxi2[1] = (-2*xi1*Epsilon*cos(xi2))/sqrt(1 + 4*pow(xi1,2)*pow(Epsilon,2));
+   
+      // da3_z/dxi_2
+      da3_dxi2[2] = 0.0;
+
+      // now rotate the vectors
+      rotate_vector(da1_dxi1);
+      rotate_vector(da1_dxi2);
+      rotate_vector(da2_dxi1);
+      rotate_vector(da2_dxi2);
+      rotate_vector(da3_dxi1);
+      rotate_vector(da3_dxi2);
+
+      // and assemble the matrices
+      for(unsigned i=0; i<3; i++)
+      {
+	da1_dxi(i,0) = da1_dxi1[i];
+	da1_dxi(i,1) = da1_dxi2[i];
+
+	da2_dxi(i,0) = da2_dxi1[i];
+	da2_dxi(i,1) = da2_dxi2[i];
+
+	da3_dxi(i,0) = da3_dxi1[i];
+	da3_dxi(i,1) = da3_dxi2[i];
+      }
+    }
+
+  private:
+    
+    // scaling factor for axisymmetric height profile w = epsilon * r^2
+    double Epsilon;
+  };
+  
 }
 
 #endif
